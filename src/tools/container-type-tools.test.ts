@@ -28,6 +28,7 @@ import * as graph from "../graph-client.js";
 import { grantContainerTypeOwnerTool, listContainerTypeOwnersTool, revokeContainerTypeOwnerTool } from "../tools/container-type-permissions.js";
 import { getContainerTypeTool, updateContainerTypeTool, deleteContainerTypeTool } from "../tools/container-type-crud.js";
 import { getSessionId } from "../session.js";
+import type { ContainerType } from "../types.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -185,8 +186,9 @@ describe("container_type_get / update", () => {
 });
 
 describe("container_type_delete — trial-only policy", () => {
-  it("requires confirmation", async () => {
-    const r = await deleteContainerTypeTool.handler({});
+  it.each([undefined, false, "true", 1, null])("requires literal confirm=true, not %j, even with an override", async (confirm) => {
+    const r = await deleteContainerTypeTool.handler({ confirm, deleteStandard: true });
+    expect(r.isError).toBeFalsy();
     expect(r.content[0].text).toContain("Confirm delete");
     expect(graph.deleteContainerType).not.toHaveBeenCalled();
   });
@@ -194,24 +196,96 @@ describe("container_type_delete — trial-only policy", () => {
   it("deletes a trial container type with confirm=true", async () => {
     const r = await deleteContainerTypeTool.handler({ confirm: true });
     expect(graph.deleteContainerType).toHaveBeenCalledWith("ct-1");
+    expect(graph.deleteContainerType).toHaveBeenCalledTimes(1);
     expect(r.isError).toBeFalsy();
+    expect(r.content[0].text).toContain("(trial)");
   });
 
-  it("PROTECTS a standard container type without the override", async () => {
+  it.each(["standard", "directToCustomer"] as const)("PROTECTS a %s container type without the override", async (billingClassification) => {
     vi.mocked(graph.listContainerTypes).mockResolvedValueOnce([
-      { containerTypeId: "ct-1", owningAppId: "app-1", displayName: "CT", billingClassification: "standard" },
+      { containerTypeId: "ct-1", owningAppId: "app-1", displayName: "CT", billingClassification },
     ]);
     const r = await deleteContainerTypeTool.handler({ confirm: true });
     expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain(`**${billingClassification}**`);
+    expect(r.content[0].text).toContain("deleteStandard=true");
     expect(graph.deleteContainerType).not.toHaveBeenCalled();
   });
 
-  it("deletes a standard container type with deleteStandard=true", async () => {
+  it.each(["standard", "directToCustomer"] as const)("deletes a %s container type with deleteStandard=true", async (billingClassification) => {
     vi.mocked(graph.listContainerTypes).mockResolvedValueOnce([
-      { containerTypeId: "ct-1", owningAppId: "app-1", displayName: "CT", billingClassification: "standard" },
+      { containerTypeId: "ct-1", owningAppId: "app-1", displayName: "CT", billingClassification },
     ]);
     const r = await deleteContainerTypeTool.handler({ confirm: true, deleteStandard: true });
     expect(graph.deleteContainerType).toHaveBeenCalledWith("ct-1");
+    expect(graph.deleteContainerType).toHaveBeenCalledTimes(1);
     expect(r.isError).toBeFalsy();
+    expect(r.content[0].text).toContain(`**${billingClassification}**`);
+    expect(r.content[0].text).toContain("override");
+  });
+
+  it.each([false, "true", 1, null])("rejects a non-true override (%j) for a protected type", async (deleteStandard) => {
+    vi.mocked(graph.listContainerTypes).mockResolvedValueOnce([
+      { containerTypeId: "ct-1", owningAppId: "app-1", displayName: "CT", billingClassification: "directToCustomer" },
+    ]);
+    const r = await deleteContainerTypeTool.handler({ confirm: true, deleteStandard });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("deleteStandard=true");
+    expect(graph.deleteContainerType).not.toHaveBeenCalled();
+  });
+
+  it.each(["directToCustomer", undefined] as const)("previews a protected %s type without deleting, even with an override", async (billingClassification) => {
+    vi.mocked(graph.listContainerTypes).mockResolvedValueOnce([
+      { containerTypeId: "ct-1", owningAppId: "app-1", displayName: "CT", billingClassification },
+    ]);
+    const r = await deleteContainerTypeTool.handler({ deleteStandard: true });
+    expect(r.isError).toBeFalsy();
+    expect(r.content[0].text).toContain("Confirm delete");
+    expect(r.content[0].text).toContain(`**${billingClassification ?? "unknown"}**`);
+    expect(r.content[0].text).toContain("confirm=true");
+    expect(r.content[0].text).toContain("deleteStandard=true");
+    expect(graph.deleteContainerType).not.toHaveBeenCalled();
+  });
+
+  const unknownClassifications: { scenario: string; containerTypes: ContainerType[] }[] = [
+    { scenario: "missing billing classification", containerTypes: [
+      { containerTypeId: "ct-1", owningAppId: "app-1", displayName: "CT" },
+    ] },
+    { scenario: "target absent from the list", containerTypes: [
+      { containerTypeId: "other-ct", owningAppId: "app-1", displayName: "Other", billingClassification: "trial" },
+    ] },
+  ];
+
+  it.each(unknownClassifications)("protects an unknown type ($scenario)", async ({ containerTypes }) => {
+    vi.mocked(graph.listContainerTypes).mockResolvedValueOnce(containerTypes);
+    const r = await deleteContainerTypeTool.handler({ confirm: true });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("**unknown**");
+    expect(r.content[0].text).toContain("deleteStandard=true");
+    expect(graph.deleteContainerType).not.toHaveBeenCalled();
+  });
+
+  it.each(unknownClassifications)("preserves explicit override for an unknown type ($scenario)", async ({ containerTypes }) => {
+    vi.mocked(graph.listContainerTypes).mockResolvedValueOnce(containerTypes);
+    const r = await deleteContainerTypeTool.handler({ confirm: true, deleteStandard: true });
+    expect(r.isError).toBeFalsy();
+    expect(graph.deleteContainerType).toHaveBeenCalledExactlyOnceWith("ct-1");
+  });
+
+  it("protects the type when the container-type list lookup fails", async () => {
+    vi.mocked(graph.listContainerTypes).mockRejectedValueOnce(new Error("Container-type lookup failed"));
+    const r = await deleteContainerTypeTool.handler({ confirm: true });
+    expect(graph.listContainerTypes).toHaveBeenCalledTimes(1);
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("**unknown**");
+    expect(r.content[0].text).toContain("deleteStandard=true");
+    expect(graph.deleteContainerType).not.toHaveBeenCalled();
+  });
+
+  it("preserves explicit override after a failed container-type list lookup", async () => {
+    vi.mocked(graph.listContainerTypes).mockRejectedValueOnce(new Error("Container-type lookup failed"));
+    const r = await deleteContainerTypeTool.handler({ confirm: true, deleteStandard: true });
+    expect(r.isError).toBeFalsy();
+    expect(graph.deleteContainerType).toHaveBeenCalledExactlyOnceWith("ct-1");
   });
 });
