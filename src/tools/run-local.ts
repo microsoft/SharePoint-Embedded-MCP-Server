@@ -5,16 +5,16 @@
  * Tool: project_run_local
  *
  * Installs dependencies and starts the scaffolded reference app locally, then
- * reports the local URL(s). Detects the project type (Node vs .NET) and derives
- * the correct dev-server port from the project (e.g. Vite serves 5173, not 3000).
+ * reports a candidate local URL. Detects the project type (Node vs .NET) and
+ * derives a likely dev-server port (e.g. Vite serves 5173, not 3000).
  * Ports EVAL.md `run-local`.
  *
  * The dev server is started detached so the MCP server stays responsive. The
  * tool waits for the immediate spawn outcome so a failed launch (e.g. a missing
  * toolchain / ENOENT) is reflected as an error instead of a false "running"
- * success, and then probes the derived port for readiness (a bounded TCP
- * connect poll) so the URL is only returned once the server is actually
- * accepting connections — never a URL that refuses.
+ * success, and then probes the derived port with a bounded TCP connect poll.
+ * A listener may belong to another process, so startup remains explicitly
+ * unverified rather than claiming the launched app owns that URL.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -35,8 +35,8 @@ interface DetectedProject {
 }
 
 /**
- * Derive the dev-server port a Node project actually serves on, instead of
- * assuming 3000. An explicit `--port N` in the dev/start script wins; otherwise
+ * Derive a candidate dev-server port instead of assuming 3000.
+ * An explicit `--port N` in the dev script wins; otherwise
  * a Vite project serves 5173 by default and other Node servers fall back to 3000.
  */
 function detectNodePort(dir: string): number {
@@ -46,18 +46,16 @@ function detectNodePort(dir: string): number {
     };
     const scripts = pkg.scripts ?? {};
     const dev = String(scripts.dev ?? "");
-    const start = String(scripts.start ?? "");
-    const combined = `${dev} ${start}`;
 
     // Explicit port flag in the script (e.g. "vite --port 4280") takes priority.
-    const portFlag = combined.match(/--port[=\s]+(\d{2,5})/);
+    const portFlag = dev.match(/--port[=\s]+(\d{2,5})/);
     if (portFlag) return Number(portFlag[1]);
 
     // Vite's dev server port — our scaffold pins it to LOCAL_DEV_PORT in
     // vite.config.
-    if (/\bvite\b/.test(combined)) return LOCAL_DEV_PORT;
+    if (/\bvite\b/.test(dev)) return LOCAL_DEV_PORT;
     // create-react-app / Next.js default to 3000.
-    if (/\b(react-scripts|next)\b/.test(combined)) return 3000;
+    if (/\b(react-scripts|next)\b/.test(dev)) return 3000;
   } catch {
     // Fall through to the generic Node default on any parse/read failure.
   }
@@ -84,26 +82,31 @@ interface SpawnOutcome {
 /**
  * Spawn a detached process and resolve with its immediate launch outcome:
  * `ok:false` if the OS could not start it (e.g. ENOENT for a missing command)
- * OR if it exits with a non-zero code within the grace window (a missing
+ * OR if it exits within the grace window (a missing
  * toolchain can surface only via an early non-zero exit code); `ok:true` once it
- * has spawned and survived the grace window without an early non-zero exit.
+ * has survived the grace window without an early exit.
  * Resolves optimistically after the short grace period so we never block the MCP
  * server.
  *
  * Note: we deliberately do NOT resolve success on `'spawn'` alone — `'spawn'`
  * only means the OS created the process, not that the underlying command
- * exists. We wait out the grace window so an early non-zero exit can still flip
- * the outcome to failure.
+ * exists. Later errors/exits continue updating the outcome while the caller
+ * checks readiness.
  */
 function startDetached(command: string, args: string[], cwd: string): Promise<SpawnOutcome> {
   return new Promise((resolveOutcome) => {
     let settled = false;
+    const result: SpawnOutcome = { ok: true };
     let grace: NodeJS.Timeout | undefined;
     const finish = (outcome: SpawnOutcome): void => {
+      if (!outcome.ok) {
+        result.ok = false;
+        result.error = outcome.error;
+      }
       if (settled) return;
       settled = true;
       if (grace) clearTimeout(grace);
-      resolveOutcome(outcome);
+      resolveOutcome(result);
     };
 
     let child;
@@ -120,7 +123,7 @@ function startDetached(command: string, args: string[], cwd: string): Promise<Sp
 
     const detachedChild = child;
     grace = setTimeout(() => {
-      // Survived the grace window with no error or early non-zero exit — treat
+      // Survived the grace window with no error or early exit — treat
       // as launched and detach so it outlives this process.
       try {
         detachedChild.unref();
@@ -135,21 +138,16 @@ function startDetached(command: string, args: string[], cwd: string): Promise<Sp
       finish({ ok: false, error: error.message });
     });
 
-    // A non-zero exit/close within the grace window means the launch failed
-    // (the primary launch false-success path). A clean (code 0) or
-    // signal-terminated early exit is unusual for a dev server but not an error
-    // we can attribute, so we let the grace timer resolve optimistically.
-    const onEarlyExit = (code: number | null): void => {
-      if (typeof code === "number" && code !== 0) {
-        finish({ ok: false, error: `process exited with code ${code} before startup completed` });
-      }
+    const onEarlyExit = (code: number | null, signal: NodeJS.Signals | null): void => {
+      const reason = signal ? `signal ${signal}` : `code ${code ?? "unknown"}`;
+      finish({ ok: false, error: `process exited with ${reason} before startup completed` });
     };
     child.once("exit", onEarlyExit);
     child.once("close", onEarlyExit);
 
     child.once("spawn", () => {
       // Detach early so a successful server is unref'd, but do NOT resolve here:
-      // wait for the grace window so an early non-zero exit can still win.
+      // wait for the grace window so an early exit can still win.
       try {
         detachedChild.unref();
       } catch {
@@ -167,9 +165,8 @@ function startDetached(command: string, args: string[], cwd: string): Promise<Sp
  * `node_modules` (e.g. Vite's `node_modules/.vite` dependency-optimization
  * cache) makes the dev server re-optimize/stall and never bind its port — a
  * fresh scaffold then fails readiness even though the toolchain is fine. Running
- * install first eliminates that race. Resolves `ok:false` (non-fatal) on a
- * spawn error or non-zero exit so the caller can still attempt the dev server
- * (e.g. when dependencies are already present and only the dev launch matters).
+ * install first eliminates that race. A failed or interrupted installation
+ * must be reported before attempting to launch the dev server.
  */
 function runToCompletion(command: string, args: string[], cwd: string): Promise<SpawnOutcome> {
   return new Promise((resolveOutcome) => {
@@ -192,10 +189,10 @@ function runToCompletion(command: string, args: string[], cwd: string): Promise<
     }
 
     child.once("error", (error: Error) => finish({ ok: false, error: error.message }));
-    const onDone = (code: number | null): void => {
-      finish(typeof code === "number" && code !== 0
-        ? { ok: false, error: `process exited with code ${code}` }
-        : { ok: true });
+    const onDone = (code: number | null, signal: NodeJS.Signals | null): void => {
+      finish(code === 0 && !signal
+        ? { ok: true }
+        : { ok: false, error: `process exited with ${signal ? `signal ${signal}` : `code ${code ?? "unknown"}`}` });
     };
     child.once("exit", onDone);
     child.once("close", onDone);
@@ -207,8 +204,9 @@ export const runLocalTool: McpTool = {
   annotations: { localRequired: true },
   description:
     "Install dependencies and start the scaffolded SharePoint Embedded app locally, returning the " +
-    "local URL. Detects Node (npm) or .NET (dotnet) projects and reports the actual dev-server port " +
-    "(e.g. Vite's 5173). Run after scaffolding and hydrating config.",
+    "candidate local URL. Detects Node (npm) or .NET (dotnet) projects and probes the expected port " +
+    "(e.g. Vite's 5173). Startup is unverified because a TCP listener may belong to another app. " +
+    "Run after scaffolding and hydrating config.",
   inputSchema: {
     type: "object" as const,
     properties: {
@@ -229,58 +227,52 @@ export const runLocalTool: McpTool = {
 
     try {
       let outcome: SpawnOutcome;
+      let cmd: string;
       if (project.kind === "node") {
-        // Install dependencies to COMPLETION first, THEN start the dev server.
-        // Running them concurrently lets `npm install` mutate node_modules while
-        // the dev server is optimizing dependencies, which stalls the server so
-        // it never binds its port (a fresh scaffold then fails readiness). The
-        // install outcome is non-fatal — if deps are already present a failed/
-        // partial install still lets the dev server launch — so we proceed and
-        // let the dev server's own launch + readiness drive success/failure.
-        await runToCompletion("npm", ["install"], dir);
-        outcome = await startDetached("npm", ["run", "dev"], dir);
+        cmd = "npm install";
+        outcome = await runToCompletion("npm", ["install"], dir);
+        if (outcome.ok) {
+          cmd = "npm run dev";
+          outcome = await startDetached("npm", ["run", "dev"], dir);
+        }
       } else {
+        cmd = "dotnet run";
         outcome = await startDetached("dotnet", ["run"], dir);
       }
 
+      const ready = outcome.ok ? await waitForServerReady(project.port) : false;
       if (!outcome.ok) {
-        const cmd = project.kind === "node" ? "npm run dev" : "dotnet run";
         return {
           content: [{
             type: "text" as const,
             text:
               `Error: failed to start the ${project.kind === "node" ? "Node" : ".NET"} app in \`${dir}\`.\n\n` +
-              `\`${cmd}\` could not be launched: ${outcome.error ?? "unknown error"}.\n\n` +
+              `\`${cmd}\` failed: ${outcome.error ?? "unknown error"}.\n\n` +
               `> Ensure the required toolchain (${project.kind === "node" ? "Node.js / npm" : ".NET SDK"}) is installed and on PATH, then retry.`,
           }],
           isError: true,
         };
       }
 
-      // The process launched and survived the spawn grace window, but that does
-      // NOT mean it is accepting connections yet (or that it won't crash during
-      // startup). Probe the derived port for readiness before handing back a URL
-      // so we never report a URL that refuses connections.
-      const ready = await waitForServerReady(project.port);
       if (!ready) {
-        const cmd = project.kind === "node" ? "npm run dev" : "dotnet run";
         return {
           content: [{
             type: "text" as const,
             text:
-              `Error: the ${project.kind === "node" ? "Node" : ".NET"} app in \`${dir}\` launched but never became ready on ${project.url}.\n\n` +
-              `\`${cmd}\` did not start accepting connections in time.\n\n` +
-              `> Check the dev server output for a startup error (e.g. a missing dependency or a port conflict), then retry.`,
+              `Error: startup is unverified for the ${project.kind === "node" ? "Node" : ".NET"} app in \`${dir}\`; the expected endpoint never became ready on ${project.url}.\n\n` +
+              `No TCP listener was detected at the candidate URL in time after \`${cmd}\`.\n\n` +
+              `> Check the dev server output for startup errors and the actual listening URL; configuration or launch settings may select a different port.`,
           }],
           isError: true,
         };
       }
 
       const output =
-        "## App Running Locally 🚀\n\n" +
-        `The ${project.kind === "node" ? "Node" : ".NET"} app in \`${dir}\` is up and accepting connections.\n\n` +
-        `→ ${project.url}\n\n` +
-        "> The dev server is running in the background. Open the URL above.\n\n" +
+        "## Local Startup Attempted\n\n" +
+        `The ${project.kind === "node" ? "Node" : ".NET"} launch command in \`${dir}\` survived the initial startup checks.\n\n` +
+        `Candidate URL: ${project.url}\n\n` +
+        "> Startup is unverified: a TCP listener was detected at this candidate port, but it may belong to another process. " +
+        "Configuration, port fallback, or .NET launch settings may select a different URL. Confirm the app and actual listening URL before using it.\n\n" +
         "> Sign-in note: if sign-in fails with `AADSTS9002326` (cross-origin SPA token " +
         "redemption) or `AADSTS50011` (redirect URI mismatch), that is a **server-side " +
         "Entra app-registration** change — the owning app must list this origin as a " +

@@ -7,8 +7,8 @@
  * Focus:
  *   - The reported URL/port is derived from the detected project type
  *     (Vite → 5173, not the old hardcoded 3000; Node default 3000; .NET 5000).
- *   - A failed process launch (spawn error / ENOENT) is reflected as isError
- *     instead of a false "running" success.
+ *   - Failed installation or terminated launch is reflected as isError.
+ *   - An open candidate port is not presented as verified application startup.
  *
  * ../proc-exec.js and node:fs are mocked so nothing actually spawns.
  */
@@ -17,7 +17,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "node:events";
 
 let files: Record<string, string> = {};
-let spawnBehavior: "spawn" | "error" | "exit-nonzero" | "throw" = "spawn";
+type SpawnBehavior = "spawn" | "error" | "exit-nonzero" | "exit-zero" | "signal" | "throw";
+let spawnBehavior: SpawnBehavior = "spawn";
+let installBehavior: SpawnBehavior = "spawn";
+let devChild: EventEmitter | undefined;
 const spawnError = "spawn npm ENOENT";
 
 vi.mock("node:fs", () => ({
@@ -30,28 +33,31 @@ vi.mock("node:fs", () => ({
 }));
 
 vi.mock("../proc-exec.js", () => ({
-  spawnProcess: vi.fn(() => {
-    if (spawnBehavior === "throw") {
+  spawnProcess: vi.fn((_command: string, args: string[]) => {
+    const installing = args[0] === "install";
+    const behavior = installing ? installBehavior : spawnBehavior;
+    if (behavior === "throw") {
       throw Object.assign(new Error("untrusted executable resolution"), {
         code: "ERR_UNTRUSTED_EXECUTABLE",
       });
     }
     const child = new EventEmitter() as EventEmitter & { unref: () => void };
     child.unref = () => {};
+    if (!installing) devChild = child;
     queueMicrotask(() => {
-      if (spawnBehavior === "error") {
+      if (behavior === "error") {
         child.emit("error", new Error(spawnError));
-      } else if (spawnBehavior === "exit-nonzero") {
+      } else if (behavior === "exit-nonzero") {
         // Early non-zero exit path: 'spawn' fires, then the child exits
         // non-zero because the toolchain is missing.
         child.emit("spawn");
         child.emit("exit", 1, null);
-      } else {
-        // Healthy launch: 'spawn' fires, then a clean exit. The dev server uses
-        // startDetached (ignores a code-0 close and resolves on its grace timer),
-        // while `npm install` uses runToCompletion (resolves on this close).
+      } else if (behavior === "exit-zero" || behavior === "signal") {
         child.emit("spawn");
-        child.emit("close", 0, null);
+        child.emit("exit", behavior === "signal" ? null : 0, behavior === "signal" ? "SIGTERM" : null);
+      } else {
+        child.emit("spawn");
+        if (installing) child.emit("close", 0, null);
       }
     });
     return child;
@@ -77,7 +83,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   files = {};
   spawnBehavior = "spawn";
+  installBehavior = "spawn";
+  devChild = undefined;
   serverReady = true;
+  vi.mocked(waitForServerReady).mockImplementation(async () => serverReady);
 });
 
 describe("project_run_local — URL/port detection", () => {
@@ -97,6 +106,15 @@ describe("project_run_local — URL/port detection", () => {
     const result = await runLocalTool.handler({ projectDir: "/proj" });
 
     expect(result.content[0].text).toContain("http://localhost:4280");
+  });
+
+  it("does not derive the dev port from an unrelated start script", async () => {
+    files = { "package.json": pkg({ dev: "vite", start: "node server.js --port 8080" }) };
+
+    const result = await runLocalTool.handler({ projectDir: "/proj" });
+
+    expect(result.content[0].text).toContain("http://localhost:5173");
+    expect(waitForServerReady).toHaveBeenCalledWith(5173);
   });
 
   it("falls back to 3000 for a generic Node dev server", async () => {
@@ -127,6 +145,55 @@ describe("project_run_local — URL/port detection", () => {
 });
 
 describe("project_run_local — start-outcome reflection", () => {
+  it("waits for a successful dependency installation before launching dev", async () => {
+    files = { "package.json": pkg({ dev: "vite" }) };
+    const install = Object.assign(new EventEmitter(), { unref: () => {} });
+    vi.mocked(spawnProcess).mockReturnValueOnce(install as ReturnType<typeof spawnProcess>);
+
+    const pending = runLocalTool.handler({ projectDir: "/proj" });
+
+    expect(spawnProcess).toHaveBeenCalledTimes(1);
+    expect(spawnProcess).toHaveBeenCalledWith("npm", ["install"], expect.anything());
+    expect(waitForServerReady).not.toHaveBeenCalled();
+    install.emit("close", 0, null);
+    const result = await pending;
+
+    expect(result.isError).toBeFalsy();
+    expect(spawnProcess).toHaveBeenNthCalledWith(
+      2, "npm", ["run", "dev"], expect.objectContaining({ detached: true }),
+    );
+  });
+
+  it.each<SpawnBehavior>(["error", "exit-nonzero", "signal", "throw"])(
+    "stops before dev launch when dependency installation fails: %s",
+    async (behavior) => {
+      files = { "package.json": pkg({ dev: "vite" }) };
+      installBehavior = behavior;
+
+      const result = await runLocalTool.handler({ projectDir: "/proj" });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("npm install");
+      expect(result.content[0].text).toContain("failed to start");
+      expect(spawnProcess).toHaveBeenCalledTimes(1);
+      expect(waitForServerReady).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each<SpawnBehavior>(["exit-zero", "signal"])(
+    "does not report a terminated dev process as running: %s",
+    async (behavior) => {
+      files = { "package.json": pkg({ dev: "vite" }) };
+      spawnBehavior = behavior;
+
+      const result = await runLocalTool.handler({ projectDir: "/proj" });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("before startup completed");
+      expect(waitForServerReady).not.toHaveBeenCalled();
+    },
+  );
+
   it("surfaces a spawn failure as isError instead of false success (Node)", async () => {
     files = { "package.json": pkg({ dev: "vite" }) };
     spawnBehavior = "error";
@@ -181,7 +248,7 @@ describe("project_run_local — start-outcome reflection", () => {
 });
 
 describe("project_run_local — readiness verification", () => {
-  it("returns the URL only after the server is verified ready", async () => {
+  it("discloses that an open candidate port does not verify application startup", async () => {
     files = { "package.json": pkg({ dev: "vite" }) };
     serverReady = true;
 
@@ -189,13 +256,36 @@ describe("project_run_local — readiness verification", () => {
 
     expect(result.isError).toBeFalsy();
     expect(result.content[0].text).toContain("http://localhost:5173");
-    expect(result.content[0].text).toContain("accepting connections");
+    expect(result.content[0].text).toContain("Startup is unverified");
+    expect(result.content[0].text).toContain("Candidate URL");
+    expect(result.content[0].text).not.toContain("App Running Locally");
+    expect(result.content[0].text).not.toContain("is up and accepting connections");
     // Surfaces the server-side Entra app-registration sign-in note
     // so a SPA redirect-URI failure isn't mistaken for a stale dev server.
     expect(result.content[0].text).toContain("AADSTS9002326");
     expect(result.content[0].text).toContain("not** picked up by client hot-reload");
     // The probe is driven off the detected dev-server port (Vite → 5173).
     expect(waitForServerReady).toHaveBeenCalledWith(5173);
+  });
+
+  it.each([
+    ["exit", 1, null],
+    ["exit", 0, null],
+    ["close", null, "SIGTERM"],
+    ["error", null, null],
+  ] as const)("rejects a process %s (%s, %s) during readiness even when another listener is reachable", async (event, code, signal) => {
+    files = { "package.json": pkg({ dev: "vite" }) };
+    vi.mocked(waitForServerReady).mockImplementationOnce(async () => {
+      if (event === "error") devChild?.emit("error", new Error("late startup failure"));
+      else devChild?.emit(event, code, signal);
+      return true;
+    });
+
+    const result = await runLocalTool.handler({ projectDir: "/proj" });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("failed to start");
+    expect(result.content[0].text).not.toContain("Candidate URL");
   });
 
   it("returns a failure (no URL) when the server launches but never becomes ready", async () => {
@@ -209,7 +299,7 @@ describe("project_run_local — readiness verification", () => {
     expect(result.content[0].text).not.toContain("App Running Locally");
   });
 
-  it("probes the .NET port (5000) and returns the URL once ready", async () => {
+  it("probes the .NET fallback port without claiming it is the actual launch URL", async () => {
     files = { "Program.cs": "// app" };
     serverReady = true;
 
@@ -218,5 +308,7 @@ describe("project_run_local — readiness verification", () => {
     expect(result.isError).toBeFalsy();
     expect(waitForServerReady).toHaveBeenCalledWith(5000);
     expect(result.content[0].text).toContain("http://localhost:5000");
+    expect(result.content[0].text).toContain("Startup is unverified");
+    expect(result.content[0].text).toContain("launch settings");
   });
 });
