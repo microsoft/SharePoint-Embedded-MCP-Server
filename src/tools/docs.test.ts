@@ -9,7 +9,8 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../docs-client.js", () => ({
+vi.mock("../docs-client.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../docs-client.js")>(),
   searchDocs: vi.fn(),
   fetchDoc: vi.fn(),
 }));
@@ -128,6 +129,36 @@ describe("docs_search", () => {
 // ─── docs_fetch ───────────────────────────────────────────────────────────
 
 describe("docs_fetch", () => {
+  it.each([
+    "not a URL", "/relative/page",
+    "http://learn.microsoft.com/page", "ftp://learn.microsoft.com/page",
+    "https://example.test/page", "https://sub.learn.microsoft.com/page",
+    "https://learn.microsoft.com.example.test/page",
+    "https://user@learn.microsoft.com/page", "https://user:pass@learn.microsoft.com/page",
+    "https://:pass@learn.microsoft.com/page", "https://learn.microsoft.com:8443/page",
+  ])("rejects unsupported page URL %p without calling Learn", async (url) => {
+    const result = await fetchDocTool.handler({ url });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_ARGS", message: docs.DOCS_PAGE_URL_ERROR },
+    });
+    expect(docs.fetchDoc).not.toHaveBeenCalled();
+    expect(docs.searchDocs).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "https://learn.microsoft.com/page?view=graph-rest-1.0#section",
+    "https://learn.microsoft.com:443/page?view=graph-rest-1.0#section",
+    "https://LEARN.MICROSOFT.COM/page",
+  ])("preserves supported page URL %p after trimming", async (url) => {
+    vi.mocked(docs.fetchDoc).mockResolvedValue("# Page");
+    const result = await fetchDocTool.handler({ url: ` \t${url}\r\n ` });
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({ ok: true, data: { url, text: "# Page" } });
+    expect(docs.fetchDoc).toHaveBeenCalledExactlyOnceWith(url);
+  });
+
   it("has correct metadata", () => {
     expect(fetchDocTool.name).toBe("docs_fetch");
     expect(fetchDocTool.inputSchema.required).toContain("url");
