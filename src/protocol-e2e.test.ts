@@ -175,6 +175,34 @@ describe("MCP protocol-level e2e (spawned dist/cli.js start)", () => {
     expect(del?.annotations?.destructiveHint).toBe(true);
   });
 
+  it("advertises the hydration purpose, supported formats, and optional arguments over tools/list", async () => {
+    const { tools } = await client.listTools(undefined, { timeout: CALL_TIMEOUT_MS });
+    const hydrate = tools.find((tool) => tool.name === "project_hydrate_config");
+
+    expect(hydrate).toBeDefined();
+    expect(hydrate).not.toHaveProperty("handler");
+    expect(hydrate?.description).toBe(
+      "Write the current SharePoint Embedded provisioning details (tenant, client, container type, " +
+      "container, subscription/resource group) into a project as .env, appsettings.Development.json, " +
+      "and azure.yaml so a reference app can consume them. Run after provisioning.",
+    );
+    expect(hydrate?.inputSchema).toEqual({
+      type: "object",
+      properties: {
+        targetDir: {
+          type: "string",
+          description: "Project directory to write into. Default: current directory.",
+        },
+        formats: {
+          type: "array",
+          items: { type: "string", enum: ["env", "appsettings", "azureyaml"] },
+          description: "Which config files to write. Default: all three.",
+        },
+      },
+    });
+    expect(hydrate?.annotations?.readOnlyHint).not.toBe(true);
+  });
+
   // (c) tools/call happy path on a SAFE, no-network tool. content_access_grant
   //     with no confirm returns guidance content and touches no Graph/Azure/state.
   it("calls a safe no-network tool (content_access_grant) successfully", async () => {
