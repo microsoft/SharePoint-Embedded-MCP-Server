@@ -8,6 +8,7 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: ["src/**/*.test.ts"],
+    globalSetup: ["./test/protocol-server.ts"],
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],

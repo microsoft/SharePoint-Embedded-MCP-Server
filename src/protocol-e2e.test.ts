@@ -13,7 +13,7 @@
  * server (`src/index.ts`) owns a module-level `Server` singleton that always
  * connects its own `StdioServerTransport`; there is no exported handle to bind
  * an in-memory pair to without refactoring production code. Spawning proved
- * reliable on Windows (verified before committing).
+ * reliable in the original harness; this split retains the same SDK transport.
  *
  * OFFLINE/DETERMINISTIC: the server connects its transport BEFORE auth and only
  * LOGS (never throws) on Azure-CLI failure, so list/unknown/gate paths answer
@@ -24,98 +24,21 @@
  * stalling the whole suite.
  */
 
-import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { execSync } from "node:child_process";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-// repo root = parent of src/
-const REPO_ROOT = resolve(__dirname, "..");
-const CLI_ENTRY = join(REPO_ROOT, "dist", "cli.js");
-
-// Per-call timeout (ms): a gate/dispatch hang should fail the specific
-// assertion fast, not block the suite. Generous enough to absorb child-process
-// spawn jitter on CI.
-const CALL_TIMEOUT_MS = 8000;
-
-interface StructuredError {
-  ok?: boolean;
-  error?: { code?: string; message?: string; suggestion?: string };
-  durationMs?: number;
-}
+import { CALL_TIMEOUT_MS, startProtocolServer, type ProtocolServer, type StructuredError } from "../test/protocol-server.js";
 
 describe("MCP protocol-level e2e (spawned dist/cli.js start)", () => {
   let client: Client;
-  let transport: StdioClientTransport;
-  let isolatedHome: string;
-  let serverStderr = "";
+  let server: ProtocolServer;
 
   beforeAll(async () => {
-    // Self-build guard: this suite drives the *built* server (dist/cli.js). The
-    // `ci` script and CI workflow build before test, but a direct `vitest` run
-    // (or test-before-build ordering) may not have dist/ yet — so build it once
-    // here if missing, rather than failing with an opaque "Connection closed".
-    if (!existsSync(CLI_ENTRY)) {
-      execSync("npm run build", { cwd: REPO_ROOT, stdio: "ignore" });
-    }
-
-    // Isolated, empty HOME/USERPROFILE => empty persisted state => content gate
-    // is closed and no prior run can leak `contentAccessGranted: true`.
-    isolatedHome = mkdtempSync(join(tmpdir(), "spe-mcp-e2e-home-"));
-
-    const env: Record<string, string> = {};
-    for (const [k, v] of Object.entries(process.env)) {
-      if (typeof v === "string") env[k] = v;
-    }
-    env.USERPROFILE = isolatedHome;
-    env.HOME = isolatedHome;
-    env.SPE_DATA_DIR = join(isolatedHome, "data");
-    // Force bootstrap mode (no pre-provisioned app); keeps auth non-blocking.
-    delete env.SPE_CLIENT_ID;
-    delete env.SPE_TENANT_ID;
-    delete env.SPE_READ_ONLY;
-    delete env.SPE_TOOLS;
-
-    transport = new StdioClientTransport({
-      command: process.execPath,
-      args: [CLI_ENTRY, "start"],
-      env,
-      cwd: REPO_ROOT,
-      // Capture diagnostics without printing them so the real initialize-driven
-      // agent-host classification can be asserted over the wire.
-      stderr: "pipe",
-    });
-    transport.stderr?.on("data", (chunk) => {
-      serverStderr += String(chunk);
-    });
-
-    client = new Client({ name: "Visual Studio Code", version: "0.0.0-test" }, {});
-    // connect() performs the MCP `initialize` handshake.
-    await client.connect(transport);
+    server = await startProtocolServer();
+    client = server.client;
   }, 90000);
 
   afterAll(async () => {
-    try {
-      await client?.close();
-    } catch {
-      /* ignore */
-    }
-    try {
-      await transport?.close();
-    } catch {
-      /* ignore */
-    }
-    try {
-      if (isolatedHome) rmSync(isolatedHome, { recursive: true, force: true });
-    } catch {
-      /* ignore */
-    }
+    await server?.close();
   });
 
   // (a) initialize handshake succeeds; serverInfo name is `spe-mcp-server`.
@@ -130,12 +53,12 @@ describe("MCP protocol-level e2e (spawned dist/cli.js start)", () => {
   it("classifies clientInfo after the initialized notification", async () => {
     const deadline = Date.now() + 2000;
     while (
-      !serverStderr.includes("Agent host attribution: vscode") &&
+      !server.serverStderr.includes("Agent host attribution: vscode") &&
       Date.now() < deadline
     ) {
       await new Promise((resolveWait) => setTimeout(resolveWait, 20));
     }
-    expect(serverStderr).toContain(
+    expect(server.serverStderr).toContain(
       "Agent host attribution: vscode (self-reported MCP clientInfo)",
     );
   });
@@ -176,173 +99,6 @@ describe("MCP protocol-level e2e (spawned dist/cli.js start)", () => {
     expect(del?.annotations?.destructiveHint).toBe(true);
   });
 
-  it("advertises the hydration purpose, supported formats, and optional arguments over tools/list", async () => {
-    const { tools } = await client.listTools(undefined, { timeout: CALL_TIMEOUT_MS });
-    const hydrate = tools.find((tool) => tool.name === "project_hydrate_config");
-
-    expect(hydrate).toBeDefined();
-    expect(hydrate).not.toHaveProperty("handler");
-    expect(hydrate?.description).toBe(
-      "Write the current SharePoint Embedded provisioning details (tenant, client, container type, " +
-      "container, subscription/resource group) into a project as .env, appsettings.Development.json, " +
-      "and azure.yaml so a reference app can consume them. Run after provisioning.",
-    );
-    expect(hydrate?.inputSchema).toEqual({
-      type: "object",
-      properties: {
-        targetDir: {
-          type: "string",
-          description: "Project directory to write into. Default: current directory.",
-        },
-        formats: {
-          type: "array",
-          items: { type: "string", enum: ["env", "appsettings", "azureyaml"] },
-          description: "Which config files to write. Default: all three.",
-        },
-      },
-    });
-    expect(hydrate?.annotations?.readOnlyHint).not.toBe(true);
-  });
-
-  it("discovers registration-scoped app-grant tools without legacy aliases", async () => {
-    const { tools } = await client.listTools(undefined, { timeout: CALL_TIMEOUT_MS });
-    const names = tools.map((tool) => tool.name);
-    for (const [name, required] of [
-      ["container_type_registration_app_grant_add", []],
-      ["container_type_registration_app_grants_list", []],
-      ["container_type_registration_app_grant_remove", ["appId"]],
-    ] as const) {
-      expect(names.filter((entry) => entry === name)).toHaveLength(1);
-      const tool = tools.find((entry) => entry.name === name);
-      expect(tool?.description).toContain("container type registration");
-      expect(tool?.description).toContain("Microsoft Graph v1.0");
-      expect(tool?.inputSchema.required ?? []).toEqual(required);
-    }
-    expect(tools.find((tool) => tool.name === "container_type_registration_app_grants_list")?.annotations?.readOnlyHint).toBe(true);
-    expect(tools.find((tool) => tool.name === "container_type_registration_app_grant_remove")?.annotations?.destructiveHint).toBe(true);
-    for (const name of [
-      "container_type_app_grant_add",
-      "container_type_app_grants_list",
-      "container_type_app_grant_remove",
-    ]) {
-      expect(names).not.toContain(name);
-    }
-  });
-
-  it.each([
-    "container_type_registration_app_grant_add",
-    "container_type_registration_app_grants_list",
-    "container_type_registration_app_grant_remove",
-  ])("dispatches %s to its handler offline with no provisioning state", async (name) => {
-    const result = await client.callTool(
-      { name, arguments: { appId: "app-test" } },
-      undefined,
-      { timeout: CALL_TIMEOUT_MS },
-    );
-    expect(result.isError).toBe(true);
-    expect(result.content).toEqual([
-      { type: "text", text: "Error: no containerTypeId provided and none in provisioning state." },
-    ]);
-  });
-
-  it.each([
-    "container_type_app_grant_add",
-    "container_type_app_grants_list",
-    "container_type_app_grant_remove",
-  ])("returns the existing UNKNOWN_TOOL response for removed name %s", async (name) => {
-    const result = await client.callTool(
-      { name, arguments: { appId: "app-test" } },
-      undefined,
-      { timeout: CALL_TIMEOUT_MS },
-    );
-    expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({
-      ok: false,
-      error: { code: "UNKNOWN_TOOL", message: `Unknown tool: ${name}` },
-      durationMs: expect.any(Number),
-    });
-    expect(result.content).toContainEqual({ type: "text", text: `Error: Unknown tool: ${name}` });
-  });
-
-  it("preserves project names as data over scaffold and hydration protocol calls", async () => {
-    const stateFile = join(isolatedHome, "data", "state.json");
-    for (const architecture of ["react-spa-functions", "csharp-web"]) {
-      for (const projectName of ["a\n", "a: b", 'a"b', "---", null, 123, {}]) {
-        const targetDir = join(isolatedHome, `invalid-${architecture}`);
-        const before = existsSync(stateFile) ? readFileSync(stateFile, "utf-8") : undefined;
-        const result = await client.callTool(
-          { name: "project_scaffold", arguments: { architecture, targetDir, projectName } },
-          undefined,
-          { timeout: CALL_TIMEOUT_MS },
-        );
-        expect(result.isError).toBe(true);
-        expect(existsSync(targetDir)).toBe(false);
-        expect(existsSync(stateFile) ? readFileSync(stateFile, "utf-8") : undefined).toBe(before);
-      }
-
-      const targetDir = join(isolatedHome, architecture);
-      const scaffold = await client.callTool(
-        { name: "project_scaffold", arguments: { architecture, targetDir, projectName: "123" } },
-        undefined,
-        { timeout: CALL_TIMEOUT_MS },
-      );
-      expect(scaffold.isError).toBeFalsy();
-      expect(readFileSync(join(targetDir, "azure.yaml"), "utf-8")).toContain('name: "123"\n');
-      expect(JSON.parse(readFileSync(stateFile, "utf-8")).projectName).toBe("123");
-    }
-
-    for (const scaffoldArchitecture of [undefined, "react-spa-functions", "csharp-web"]) {
-      const legacy = JSON.stringify({
-        appId: "app-test", containerTypeId: "ct-test", projectName: "a\n", scaffoldArchitecture,
-      });
-      writeFileSync(stateFile, legacy);
-      const targetDir = join(isolatedHome, `legacy-${scaffoldArchitecture ?? "fallback"}`);
-      mkdirSync(targetDir);
-      const original = "name: owner-name\n";
-      writeFileSync(join(targetDir, "azure.yaml"), original);
-      const result = await client.callTool(
-        { name: "project_hydrate_config", arguments: { targetDir } },
-        undefined,
-        { timeout: CALL_TIMEOUT_MS },
-      );
-      expect(result.isError).toBe(true);
-      expect(readdirSync(targetDir)).toEqual(["azure.yaml"]);
-      expect(readFileSync(join(targetDir, "azure.yaml"), "utf-8")).toBe(original);
-      expect(readFileSync(stateFile, "utf-8")).toBe(legacy);
-    }
-    rmSync(stateFile);
-  });
-
-  it("advertises container-type deletion safeguards and optional boolean controls over the wire", async () => {
-    const { tools } = await client.listTools(undefined, { timeout: CALL_TIMEOUT_MS });
-    const del = tools.find((tool) => tool.name === "container_type_delete");
-    expect(del).toBeDefined();
-    expect(del).not.toHaveProperty("handler");
-    expect(del?.annotations?.destructiveHint).toBe(true);
-    expect(del?.annotations?.readOnlyHint).not.toBe(true);
-    expect(del?.description).toContain("Trial-only by default");
-    expect(del?.description).toContain("direct-to-customer");
-    expect(del?.description).toContain("PROTECTED");
-    expect(del?.description).toContain("deleteStandard=true");
-    expect(del?.description).toContain("Requires confirm=true");
-    expect(del?.inputSchema.type).toBe("object");
-    expect(del?.inputSchema.properties).toEqual({
-      containerTypeId: {
-        type: "string",
-        description: expect.stringContaining("Default: the provisioned container type"),
-      },
-      confirm: {
-        type: "boolean",
-        description: expect.stringContaining("Must be true"),
-      },
-      deleteStandard: {
-        type: "boolean",
-        description: expect.stringContaining("Override to delete a STANDARD / direct-to-customer"),
-      },
-    });
-    expect(del?.inputSchema.required ?? []).toEqual([]);
-  });
-
   // (c) tools/call happy path on a SAFE, no-network tool. content_access_grant
   //     with no confirm returns guidance content and touches no Graph/Azure/state.
   it("calls a safe no-network tool (content_access_grant) successfully", async () => {
@@ -368,51 +124,6 @@ describe("MCP protocol-level e2e (spawned dist/cli.js start)", () => {
     expect(sc?.error?.code).toBe("UNKNOWN_TOOL");
     const content = res.content as Array<{ type: string; text: string }>;
     expect(content.some((c) => /unknown tool/i.test(c.text))).toBe(true);
-  });
-
-  describe.each([
-    ["docs_search", "query"],
-    ["docs_fetch", "url"],
-  ])("%s input validation over the wire", (name, field) => {
-    it.each([123, {}, [], true, null, "", " \t\r\n"])(
-      "returns actionable INVALID_ARGS for invalid input (%p)",
-      async (value) => {
-        const result = await client.callTool(
-          { name, arguments: { [field]: value } },
-          undefined,
-          { timeout: CALL_TIMEOUT_MS },
-        );
-
-        expect(result.isError).toBe(true);
-        const sc = result.structuredContent as StructuredError | undefined;
-        expect(sc?.ok).toBe(false);
-        expect(sc?.error?.code).toBe("INVALID_ARGS");
-        expect(sc?.error?.message).toContain(`${field} is required`);
-        const content = result.content as Array<{ type: string; text: string }>;
-        expect(content[0].text).toContain(`${field} is required`);
-        expect(JSON.stringify(result)).not.toMatch(/TypeError|\.trim|is not a function/i);
-      },
-    );
-
-    it.each([{}, { arguments: {} }])(
-      "returns actionable INVALID_ARGS when arguments are missing (%p)",
-      async (args) => {
-        const result = await client.callTool(
-          { name, ...args },
-          undefined,
-          { timeout: CALL_TIMEOUT_MS },
-        );
-
-        expect(result.isError).toBe(true);
-        const sc = result.structuredContent as StructuredError | undefined;
-        expect(sc?.ok).toBe(false);
-        expect(sc?.error?.code).toBe("INVALID_ARGS");
-        expect(sc?.error?.message).toContain(`${field} is required`);
-        const content = result.content as Array<{ type: string; text: string }>;
-        expect(content[0].text).toContain(`${field} is required`);
-        expect(JSON.stringify(result)).not.toMatch(/TypeError|\.trim|is not a function/i);
-      },
-    );
   });
 
   // (e) Content-gate fail-closed: a content tool BEFORE any grant => isError,
