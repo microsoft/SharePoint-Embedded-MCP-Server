@@ -39,7 +39,7 @@ describe("react-spa-functions sample", () => {
 
   it("regenerates azure.yaml for the staticwebapp host", () => {
     expect(files["azure.yaml"]).toContain("host: staticwebapp");
-    expect(files["azure.yaml"]).toContain("name: my-app");
+    expect(files["azure.yaml"]).toContain('name: "my-app"');
     expect(files["azure.yaml"]).toContain("dist: dist");
   });
 
@@ -127,6 +127,39 @@ describe("csharp-web sample (ODSP security-approved azd)", () => {
 });
 
 describe("buildAzureYaml", () => {
+  it.each(["a", "true", "false", "null", "123", "App_01-demo", "a".repeat(64)])(
+    "encodes %s as a single string scalar with only generated root blocks",
+    (name) => {
+      for (const arch of REFERENCE_ARCHITECTURES) {
+        const yaml = buildAzureYaml(name, arch.language, arch.host);
+        const lines = yaml.split("\n");
+        // The supported scalar is JSON-encoded, a subset of YAML double-quoted strings.
+        expect(JSON.parse(lines[1].slice("name: ".length))).toBe(name);
+        expect(lines.filter((line) => /^[^\s#].*:/.test(line)).map((line) => line.split(":")[0]))
+          .toEqual(["name", "metadata", "services"]);
+        expect(yaml).toContain(`    language: ${arch.language}`);
+        expect(yaml).toContain(`    host: ${arch.host}`);
+        expect(yaml).not.toContain("hooks:");
+        expect(arch.files(name)["azure.yaml"]).toBe(
+          buildAzureYaml(name, arch.id === "react-spa-functions" ? "js" : arch.language, arch.host),
+        );
+      }
+    },
+  );
+
+  it.each(["a\n", "a\r\nb", "a\tb", "a\0b", 'a"b', "a: b", "---", {}, [], null, 123])(
+    "guards the shared sink and catalog against unsupported runtime values (%p)",
+    (name) => {
+      // Exercise callers that bypass TypeScript and tool schemas.
+      // @ts-expect-error Deliberately wrong runtime input.
+      expect(() => buildAzureYaml(name, "js", "staticwebapp")).toThrow("projectName must be");
+      for (const arch of REFERENCE_ARCHITECTURES) {
+        // @ts-expect-error Deliberately wrong runtime input.
+        expect(() => arch.files(name)).toThrow("projectName must be");
+      }
+    },
+  );
+
   it("emits a docker build section for the containerapp host", () => {
     expect(buildAzureYaml("x", "dotnet", "containerapp")).toContain("path: ./Dockerfile");
   });

@@ -46,6 +46,8 @@ vi.mock("../bootstrap.js", () => ({
 import { runCommand } from "../proc-exec.js";
 import { ExecutableResolutionError } from "../executable-resolver.js";
 import { deployAzureTool } from "../tools/deploy-azure.js";
+import { resolve } from "node:path";
+import { buildToolPolicy, checkToolCallAllowed, isToolListed } from "../policy.js";
 
 /** Build a rejected-launcher error carrying the same `.stdout`/`.stderr`/`.code` shape runCommand attaches. */
 function runError(message: string, extra: { stdout?: string; stderr?: string; code?: string } = {}): Error {
@@ -70,6 +72,35 @@ beforeEach(() => {
 });
 
 describe("project_deploy", () => {
+  it("retains the existing read-only and allowlist policy boundaries", () => {
+    for (const policy of [
+      buildToolPolicy([deployAzureTool], true, undefined),
+      buildToolPolicy([deployAzureTool], false, "docsOnly"),
+    ]) {
+      expect(isToolListed(deployAzureTool, policy)).toBe(false);
+      expect(checkToolCallAllowed(deployAzureTool, policy)?.isError).toBe(true);
+    }
+    expect(checkToolCallAllowed(deployAzureTool, null)).toBeNull();
+    expect(deployAzureTool.annotations).toEqual({ localRequired: true });
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it("keeps deployment argv and working directory independent of saved project names", async () => {
+    stateStore.projectName = "legacy\nname";
+    stateStore.azureSubscriptionId = "sub-123";
+    const result = await deployAzureTool.handler({
+      projectDir: "/proj",
+      environmentName: "owner-env",
+      location: "eastus",
+    });
+    expect(result.isError).toBeFalsy();
+    expect(runCommand).toHaveBeenCalledExactlyOnceWith(
+      "azd",
+      ["up", "--no-prompt", "--environment", "owner-env"],
+      expect.objectContaining({ cwd: resolve("/proj"), timeout: 15 * 60_000 }),
+    );
+  });
+
   it("errors when there is no azure.yaml to deploy", async () => {
     azureYamlExists = false;
     const r = await deployAzureTool.handler({ projectDir: "/proj", location: "eastus" });

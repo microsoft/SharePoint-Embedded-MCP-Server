@@ -15,8 +15,36 @@ import {
   requireAzureResourceGroupName,
   assertAzureSubscriptionId,
   assertAzureResourceGroupName,
+  requireProjectName,
+  assertProjectName,
 } from "./validation.js";
 import type { McpToolResult } from "./types.js";
+
+describe("project-name contract", () => {
+  it.each(["a", "App_01-demo", "true", "null", "123", "a".repeat(64)])(
+    "preserves supported names exactly (%p)",
+    (value) => {
+      expect(requireProjectName(value)).toEqual({ ok: true, value });
+      expect(() => assertProjectName(value)).not.toThrow();
+    },
+  );
+
+  it.each([
+    undefined, null, false, 42, {}, [], "", "a".repeat(65),
+    " app", "app ", "-app", "_app", "a/b", "a\\b", "a.b",
+    "a\n", "a\r", "a\r\nb", "a\tb", "a\0b", "a\u007fb", "a\u0085b",
+    "a\u2028b", "a\u2029b", 'a"b', "a'b", "a: b", "#note",
+    "---", "...", "&alias", "*alias", "[name]", "{name}", "café",
+  ])("rejects unsupported runtime names without echoing them (%p)", (value) => {
+    const result = requireProjectName(value);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.isError).toBe(true);
+      expect(result.error.content[0].text).toMatch(/^Error: projectName must be 1-64 ASCII/);
+    }
+    expect(() => assertProjectName(value)).toThrow("projectName must be");
+  });
+});
 
 describe("requireString", () => {
   it("accepts and trims a non-empty string", () => {

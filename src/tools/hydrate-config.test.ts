@@ -26,11 +26,14 @@ vi.mock("../state.js", () => ({
 }));
 
 import { hydrateConfigTool } from "../tools/hydrate-config.js";
+import { scaffoldTool } from "../tools/scaffold.js";
+import { writeState } from "../state.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 let dir: string;
 
 beforeEach(() => {
+  vi.clearAllMocks();
   for (const k of Object.keys(stateStore)) delete stateStore[k];
   // Minimum state required for hydrate to run.
   stateStore.appId = "app-1";
@@ -42,6 +45,104 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
+});
+
+const invalidNames = [
+  "", "a".repeat(65), " app", "app ", "a\n", "a\r\nb", "a\tb", "a\0b",
+  'a"b', "a'b", "a: b", "---", "...", "&name", "*name", "{name}",
+  null, 123, false, {}, [],
+];
+
+describe("project-name validation before filesystem or state changes", () => {
+  it.each(invalidNames)("rejects direct scaffold input (%p) for both architectures", async (projectName) => {
+    for (const architecture of ["react-spa-functions", "csharp-web"]) {
+      const targetDir = join(dir, architecture);
+      const before = { ...stateStore };
+      const result = await scaffoldTool.handler({ architecture, targetDir, projectName });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("projectName must be");
+      expect(existsSync(targetDir)).toBe(false);
+      expect(stateStore).toEqual(before);
+      expect(writeState).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each(["react-spa-functions", "csharp-web"])(
+    "scaffolds %s with the exact accepted name and persists it",
+    async (architecture) => {
+      const result = await scaffoldTool.handler({ architecture, targetDir: dir, projectName: "true" });
+      expect(result.isError).toBeFalsy();
+      expect(readFileSync(join(dir, "azure.yaml"), "utf-8")).toContain('name: "true"\n');
+      expect(writeState).toHaveBeenCalledWith({ scaffoldArchitecture: architecture, projectName: "true" });
+    },
+  );
+
+  it.each(invalidNames)("rejects malformed legacy state (%p) without partial hydration", async (projectName) => {
+    for (const scaffoldArchitecture of [undefined, "react-spa-functions", "csharp-web"]) {
+      for (const existing of [false, true]) {
+        Object.assign(stateStore, { scaffoldArchitecture, projectName });
+        const targetDir = join(dir, `${scaffoldArchitecture ?? "fallback"}-${existing}`);
+        const originalYaml = "name: owner-name\nservices:\n  web:\n    host: appservice\n";
+        if (existing) {
+          mkdirSync(targetDir);
+          writeFileSync(join(targetDir, "azure.yaml"), originalYaml);
+          writeFileSync(join(targetDir, ".env"), "owner env\n");
+          writeFileSync(join(targetDir, "appsettings.Development.json"), "{}\n");
+        }
+        const before = { ...stateStore };
+        const result = await hydrateConfigTool.handler({ targetDir });
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toContain("projectName must be");
+        expect(result.content[0].text).not.toContain("Config Hydrated");
+        if (existing) {
+          expect(readFileSync(join(targetDir, "azure.yaml"), "utf-8")).toBe(originalYaml);
+          expect(readFileSync(join(targetDir, ".env"), "utf-8")).toBe("owner env\n");
+          expect(readFileSync(join(targetDir, "appsettings.Development.json"), "utf-8")).toBe("{}\n");
+        } else {
+          expect(existsSync(targetDir)).toBe(false);
+        }
+        expect(stateStore).toEqual(before);
+        expect(writeState).not.toHaveBeenCalled();
+      }
+    }
+  });
+
+  it("precomputes the YAML merge before writing any selected output", async () => {
+    mkdirSync(join(dir, "azure.yaml"));
+    const result = await hydrateConfigTool.handler({ targetDir: dir });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Error hydrating config:");
+    expect(readdirSync(dir)).toEqual(["azure.yaml"]);
+  });
+
+  it("rejects malformed saved names even for an env-only request", async () => {
+    stateStore.projectName = "a\n";
+    const result = await hydrateConfigTool.handler({ targetDir: dir, formats: ["env"] });
+    expect(result.isError).toBe(true);
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it.each([undefined, "react-spa-functions", "csharp-web"])(
+    "fills missing managed blocks without adding hooks or replacing owner content (%p)",
+    async (scaffoldArchitecture) => {
+      Object.assign(stateStore, { scaffoldArchitecture, projectName: "null" });
+      for (const hooks of ["", "hooks:\n  predeploy:\n    shell: sh\n    run: echo owner-note\n"]) {
+        const original = "name: owner-name\nx-owner: keep\n" + hooks;
+        writeFileSync(join(dir, "azure.yaml"), original);
+        const result = await hydrateConfigTool.handler({ targetDir: dir, formats: ["azureyaml"] });
+        expect(result.isError).toBeFalsy();
+        const yaml = readFileSync(join(dir, "azure.yaml"), "utf-8");
+        expect(yaml.startsWith(original)).toBe(true);
+        expect(yaml.match(/^name:/gm)).toHaveLength(1);
+        expect(yaml.match(/^hooks:/gm) ?? []).toHaveLength(hooks ? 1 : 0);
+        expect(yaml).toContain(`host: ${scaffoldArchitecture === "csharp-web" ? "containerapp" : "staticwebapp"}`);
+        expect(result.content[0].text).toContain("merged; filled: metadata, services");
+        const again = await hydrateConfigTool.handler({ targetDir: dir, formats: ["azureyaml"] });
+        expect(again.isError).toBeFalsy();
+        expect(readFileSync(join(dir, "azure.yaml"), "utf-8")).toBe(yaml);
+      }
+    },
+  );
 });
 
 describe("project_hydrate_config output contract", () => {
@@ -103,7 +204,7 @@ describe("project_hydrate_config output contract", () => {
     const yaml = readFileSync(join(dir, "azure.yaml"), "utf-8");
     expect(yaml).toBe(
       "# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json\n" +
-      "name: contoso-config\nmetadata:\n  template: spe-builder-mcp\n" +
+      'name: "contoso-config"\nmetadata:\n  template: spe-builder-mcp\n' +
       "services:\n  web:\n    project: .\n    language: dotnet\n    host: containerapp\n" +
       "    docker:\n      path: ./Dockerfile\n",
     );
@@ -166,7 +267,7 @@ describe("project_hydrate_config output contract", () => {
     });
     expect(readFileSync(join(dir, "azure.yaml"), "utf-8")).toBe(
       "# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json\n" +
-      "name: spe-app\nmetadata:\n  template: spe-builder-mcp\n" +
+      'name: "spe-app"\nmetadata:\n  template: spe-builder-mcp\n' +
       "services:\n  web:\n    project: .\n    language: ts\n    host: staticwebapp\n    dist: dist\n",
     );
     expect(result.content[0].text).toContain("| CONTAINER_ID | `(pending)` |");
@@ -182,7 +283,7 @@ describe("project_hydrate_config azure.yaml", () => {
     expect(result.isError).toBeFalsy();
 
     const yaml = readFileSync(join(dir, "azure.yaml"), "utf-8");
-    expect(yaml).toContain("name: contoso-web");
+    expect(yaml).toContain('name: "contoso-web"');
     expect(yaml).toContain("language: dotnet");
     expect(yaml).toContain("host: containerapp");
     expect(yaml).not.toContain("host: staticwebapp");
@@ -195,7 +296,7 @@ describe("project_hydrate_config azure.yaml", () => {
     await hydrateConfigTool.handler({ targetDir: dir, formats: ["azureyaml"] });
 
     const yaml = readFileSync(join(dir, "azure.yaml"), "utf-8");
-    expect(yaml).toContain("name: contoso-spa");
+    expect(yaml).toContain('name: "contoso-spa"');
     expect(yaml).toContain("language: ts");
     expect(yaml).toContain("host: staticwebapp");
     expect(yaml).not.toContain("host: appservice");
@@ -268,7 +369,7 @@ describe("project_hydrate_config azure.yaml", () => {
     await hydrateConfigTool.handler({ targetDir: dir, formats: ["azureyaml"] });
 
     const yaml = readFileSync(join(dir, "azure.yaml"), "utf-8");
-    expect(yaml).toContain("name: just-a-name");
+    expect(yaml).toContain('name: "just-a-name"');
   });
 });
 

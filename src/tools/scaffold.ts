@@ -15,6 +15,7 @@ import { dirname, join, resolve } from "node:path";
 import { REFERENCE_ARCHITECTURES, findArchitecture } from "../reference-architectures.js";
 import { writeState } from "../state.js";
 import type { McpTool } from "../types.js";
+import { PROJECT_NAME_PATTERN, requireProjectName } from "../validation.js";
 interface ScaffoldArgs {
   architecture?: string;
   targetDir?: string;
@@ -36,11 +37,19 @@ export const scaffoldTool: McpTool = {
         description: "Reference architecture id (e.g., 'react-spa-functions', 'csharp-web'). Omit to list options.",
       },
       targetDir: { type: "string", description: "Directory to scaffold into. Default: ./<projectName>." },
-      projectName: { type: "string", description: "Project name. Default: 'spe-app'." },
+      projectName: {
+        type: "string",
+        minLength: 1,
+        maxLength: 64,
+        pattern: PROJECT_NAME_PATTERN,
+        description: "Project name: 1-64 ASCII letters, digits, hyphens or underscores; start with a letter or digit. Preserved exactly. Default: 'spe-app'.",
+      },
     },
   },
   handler: async (args) => {
     const { architecture, targetDir, projectName = "spe-app" } = args as ScaffoldArgs;
+    const parsedName = requireProjectName(projectName);
+    if (!parsedName.ok) return parsedName.error;
 
     // No architecture → list options (agent-guided elicitation).
     if (!architecture) {

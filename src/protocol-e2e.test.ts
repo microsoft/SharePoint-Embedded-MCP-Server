@@ -24,7 +24,7 @@
  * stalling the whole suite.
  */
 
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -75,6 +75,7 @@ describe("MCP protocol-level e2e (spawned dist/cli.js start)", () => {
     }
     env.USERPROFILE = isolatedHome;
     env.HOME = isolatedHome;
+    env.SPE_DATA_DIR = join(isolatedHome, "data");
     // Force bootstrap mode (no pre-provisioned app); keeps auth non-blocking.
     delete env.SPE_CLIENT_ID;
     delete env.SPE_TENANT_ID;
@@ -201,6 +202,55 @@ describe("MCP protocol-level e2e (spawned dist/cli.js start)", () => {
       },
     });
     expect(hydrate?.annotations?.readOnlyHint).not.toBe(true);
+  });
+
+  it("preserves project names as data over scaffold and hydration protocol calls", async () => {
+    const stateFile = join(isolatedHome, "data", "state.json");
+    for (const architecture of ["react-spa-functions", "csharp-web"]) {
+      for (const projectName of ["a\n", "a: b", 'a"b', "---", null, 123, {}]) {
+        const targetDir = join(isolatedHome, `invalid-${architecture}`);
+        const before = existsSync(stateFile) ? readFileSync(stateFile, "utf-8") : undefined;
+        const result = await client.callTool(
+          { name: "project_scaffold", arguments: { architecture, targetDir, projectName } },
+          undefined,
+          { timeout: CALL_TIMEOUT_MS },
+        );
+        expect(result.isError).toBe(true);
+        expect(existsSync(targetDir)).toBe(false);
+        expect(existsSync(stateFile) ? readFileSync(stateFile, "utf-8") : undefined).toBe(before);
+      }
+
+      const targetDir = join(isolatedHome, architecture);
+      const scaffold = await client.callTool(
+        { name: "project_scaffold", arguments: { architecture, targetDir, projectName: "123" } },
+        undefined,
+        { timeout: CALL_TIMEOUT_MS },
+      );
+      expect(scaffold.isError).toBeFalsy();
+      expect(readFileSync(join(targetDir, "azure.yaml"), "utf-8")).toContain('name: "123"\n');
+      expect(JSON.parse(readFileSync(stateFile, "utf-8")).projectName).toBe("123");
+    }
+
+    for (const scaffoldArchitecture of [undefined, "react-spa-functions", "csharp-web"]) {
+      const legacy = JSON.stringify({
+        appId: "app-test", containerTypeId: "ct-test", projectName: "a\n", scaffoldArchitecture,
+      });
+      writeFileSync(stateFile, legacy);
+      const targetDir = join(isolatedHome, `legacy-${scaffoldArchitecture ?? "fallback"}`);
+      mkdirSync(targetDir);
+      const original = "name: owner-name\n";
+      writeFileSync(join(targetDir, "azure.yaml"), original);
+      const result = await client.callTool(
+        { name: "project_hydrate_config", arguments: { targetDir } },
+        undefined,
+        { timeout: CALL_TIMEOUT_MS },
+      );
+      expect(result.isError).toBe(true);
+      expect(readdirSync(targetDir)).toEqual(["azure.yaml"]);
+      expect(readFileSync(join(targetDir, "azure.yaml"), "utf-8")).toBe(original);
+      expect(readFileSync(stateFile, "utf-8")).toBe(legacy);
+    }
+    rmSync(stateFile);
   });
 
   it("advertises container-type deletion safeguards and optional boolean controls over the wire", async () => {
