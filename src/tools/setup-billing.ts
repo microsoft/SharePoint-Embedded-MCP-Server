@@ -44,13 +44,10 @@ export const setupBillingTool: McpTool = {
   name: "billing_setup",
   annotations: { plane: "control", localRequired: true },
   description:
-    "Attach Standard (Azure) billing to a SharePoint Embedded container type that was created as " +
-    "standard: registers the Microsoft.Syntex resource provider on the chosen Azure subscription " +
-    "(Azure CLI), then creates the Microsoft.Syntex/accounts (RaaS) ARM billing account linking the " +
-    "container type to that subscription, resource group, and region (Azure CLI / ARM). Defaults the " +
-    "container type and subscription/resource group from the current provisioning state. NOTE: standard " +
-    "billing must be selected when the container type is created — a trial container type cannot be " +
-    "converted. WARNING: Standard billing cannot be reverted to trial.",
+    "Attach Azure billing only to an already-standard SharePoint Embedded container type. Through Azure CLI, " +
+    "register Microsoft.Syntex and create its accounts/RaaS ARM billing link to the selected subscription, " +
+    "resource group, and region, using provisioning-state defaults. Trial container types cannot be converted " +
+    "to standard, and standard billing cannot revert to trial.",
   inputSchema: {
     type: "object" as const,
     properties: {
@@ -184,4 +181,3 @@ export const setupBillingTool: McpTool = {
     }
   },
 };
-
