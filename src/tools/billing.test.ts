@@ -91,6 +91,11 @@ describe("billing_check", () => {
 // ─── billing_setup ──────────────────────────────────────────────────────
 
 describe("billing_setup", () => {
+  it("description length", () => {
+    expect(setupBillingTool.description.length).toBeLessThanOrEqual(500);
+    expect(setupBillingTool.description.length).toBeGreaterThanOrEqual(10);
+  });
+
   it("creates the Microsoft.Syntex billing account for a standard CT (confirm=true)", async () => {
     vi.mocked(graph.getContainerType).mockResolvedValue({
       containerTypeId: "ct1", owningAppId: "app1", displayName: "Test",
