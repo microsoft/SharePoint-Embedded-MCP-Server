@@ -310,6 +310,51 @@ describe("MCP protocol-level e2e (spawned dist/cli.js start)", () => {
     expect(content.some((c) => /unknown tool/i.test(c.text))).toBe(true);
   });
 
+  describe.each([
+    ["docs_search", "query"],
+    ["docs_fetch", "url"],
+  ])("%s input validation over the wire", (name, field) => {
+    it.each([123, {}, [], true, null, "", " \t\r\n"])(
+      "returns actionable INVALID_ARGS for invalid input (%p)",
+      async (value) => {
+        const result = await client.callTool(
+          { name, arguments: { [field]: value } },
+          undefined,
+          { timeout: CALL_TIMEOUT_MS },
+        );
+
+        expect(result.isError).toBe(true);
+        const sc = result.structuredContent as StructuredError | undefined;
+        expect(sc?.ok).toBe(false);
+        expect(sc?.error?.code).toBe("INVALID_ARGS");
+        expect(sc?.error?.message).toContain(`${field} is required`);
+        const content = result.content as Array<{ type: string; text: string }>;
+        expect(content[0].text).toContain(`${field} is required`);
+        expect(JSON.stringify(result)).not.toMatch(/TypeError|\.trim|is not a function/i);
+      },
+    );
+
+    it.each([{}, { arguments: {} }])(
+      "returns actionable INVALID_ARGS when arguments are missing (%p)",
+      async (args) => {
+        const result = await client.callTool(
+          { name, ...args },
+          undefined,
+          { timeout: CALL_TIMEOUT_MS },
+        );
+
+        expect(result.isError).toBe(true);
+        const sc = result.structuredContent as StructuredError | undefined;
+        expect(sc?.ok).toBe(false);
+        expect(sc?.error?.code).toBe("INVALID_ARGS");
+        expect(sc?.error?.message).toContain(`${field} is required`);
+        const content = result.content as Array<{ type: string; text: string }>;
+        expect(content[0].text).toContain(`${field} is required`);
+        expect(JSON.stringify(result)).not.toMatch(/TypeError|\.trim|is not a function/i);
+      },
+    );
+  });
+
   // (e) Content-gate fail-closed: a content tool BEFORE any grant => isError,
   //     returns the gate message, does NOT hang, and makes no Graph call.
   it("fails closed on a content-plane tool before content access is granted", async () => {
