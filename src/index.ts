@@ -132,11 +132,26 @@ const TOOLS: McpTool[] = [
   addContainerTypeAppGrantTool,
   listContainerTypeAppGrantsTool,
   removeContainerTypeAppGrantTool,
+  {
+    ...addContainerTypeAppGrantTool,
+    name: "container_type_app_grant_add",
+    description: "Deprecated: use container_type_registration_app_grant_add. " + addContainerTypeAppGrantTool.description,
+  },
+  {
+    ...listContainerTypeAppGrantsTool,
+    name: "container_type_app_grants_list",
+    description: "Deprecated: use container_type_registration_app_grants_list. " + listContainerTypeAppGrantsTool.description,
+  },
+  {
+    ...removeContainerTypeAppGrantTool,
+    name: "container_type_app_grant_remove",
+    description: "Deprecated: use container_type_registration_app_grant_remove. " + removeContainerTypeAppGrantTool.description,
+  },
   // Container Type registration RECORD — CRUDL on the registration itself (v1.0).
   // CRUD map (the *registration* is the tenant↔containerType binding):
   //   Create → container_type_register (registerContainerTypeTool, above)
   //   Read   → container_type_registration_get / _list (below)
-  //   Update → container_type_app_grant_add (change the app permission grants;
+  //   Update → container_type_registration_app_grant_add (change the app permission grants;
   //            registration has no other mutable fields exposed here)
   //   Delete → container_type_registration_delete (below)
   // There is intentionally no standalone "registration create/update" tool: PUT

@@ -8,7 +8,42 @@
  * and the MCP server dispatches correctly.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+
+const protocol = vi.hoisted(() => ({
+  server: undefined as import("@modelcontextprotocol/sdk/server/index.js").Server | undefined,
+}));
+
+vi.mock("@modelcontextprotocol/sdk/server/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@modelcontextprotocol/sdk/server/index.js")>();
+  return {
+    ...actual,
+    Server: class extends actual.Server {
+      constructor(...args: ConstructorParameters<typeof actual.Server>) {
+        super(...args);
+        protocol.server = this;
+      }
+    },
+  };
+});
+
+vi.mock("../graph-client.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../graph-client.js")>(),
+  grantContainerTypeAppPermission: vi.fn(async (_ct: string, appId: string, delegatedPermissions: string[], applicationPermissions: string[]) => ({
+    appId, delegatedPermissions, applicationPermissions,
+  })),
+  listContainerTypeAppPermissions: vi.fn(async () => [
+    { appId: "app-2", delegatedPermissions: ["full"], applicationPermissions: ["none"] },
+  ]),
+  revokeContainerTypeAppPermission: vi.fn(async () => undefined),
+}));
+
+vi.mock("../state.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../state.js")>(),
+  readState: vi.fn(),
+}));
 
 // Mock auth to avoid real MSAL initialization
 vi.mock("../auth.js", () => ({
@@ -54,6 +89,9 @@ import { deployAzureTool } from "../tools/deploy-azure.js";
 import { grantContentAccessTool, revokeContentAccessTool } from "../tools/content-access.js";
 import { cleanupTool } from "../tools/cleanup.js";
 import type { McpTool } from "../types.js";
+import * as graph from "../graph-client.js";
+import { readState } from "../state.js";
+import { getSessionId } from "../session.js";
 
 const ALL_TOOLS: McpTool[] = [
   statusTool,
@@ -104,7 +142,7 @@ const ALL_TOOLS: McpTool[] = [
 ];
 
 describe("Tool Registry", () => {
-  it("has 45 tools registered", () => {
+  it("has 45 canonical tools registered", () => {
     expect(ALL_TOOLS).toHaveLength(45);
   });
 
@@ -156,9 +194,9 @@ describe("Tool Registry", () => {
       "container_type_grant_owner",
       "container_type_owners_list",
       "container_type_revoke_owner",
-      "container_type_app_grant_add",
-      "container_type_app_grants_list",
-      "container_type_app_grant_remove",
+      "container_type_registration_app_grant_add",
+      "container_type_registration_app_grants_list",
+      "container_type_registration_app_grant_remove",
       "container_type_registration_get",
       "container_type_registration_list",
       "container_type_registration_delete",
@@ -192,6 +230,161 @@ describe("Tool Registry", () => {
     ];
     const actual = ALL_TOOLS.map(t => t.name).sort();
     expect(actual).toEqual(expected.sort());
+  });
+
+  const APP_GRANT_CASES = [
+    {
+      label: "add",
+      canonical: "container_type_registration_app_grant_add",
+      compatibility: "container_type_app_grant_add",
+      tool: addContainerTypeAppGrantTool,
+      args: { appId: "app-2" },
+    },
+    {
+      label: "list",
+      canonical: "container_type_registration_app_grants_list",
+      compatibility: "container_type_app_grants_list",
+      tool: listContainerTypeAppGrantsTool,
+      args: {},
+    },
+    {
+      label: "remove",
+      canonical: "container_type_registration_app_grant_remove",
+      compatibility: "container_type_app_grant_remove",
+      tool: removeContainerTypeAppGrantTool,
+      args: { appId: "app-2" },
+    },
+  ];
+
+  describe("App grant registration names over MCP", () => {
+    const client = new Client({ name: "app-grant-regression", version: "1.0.0" });
+    const handlerSpies = APP_GRANT_CASES.map(({ tool }) => vi.spyOn(tool, "handler"));
+
+    beforeAll(async () => {
+      vi.mocked(readState).mockReturnValue({
+        appId: "app-1",
+        tenantId: "t-1",
+        containerTypeId: "ct-1",
+        confirmedSessionId: getSessionId(),
+      });
+      await import("../index.js");
+      if (!protocol.server) throw new Error("The MCP server was not created");
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      await protocol.server.connect(serverTransport);
+      await client.connect(clientTransport);
+    });
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    afterAll(async () => {
+      await client.close();
+      await protocol.server?.close();
+      for (const spy of handlerSpies) spy.mockRestore();
+    });
+
+    it("discovers unique canonical tools followed by deprecated compatibility entries", async () => {
+      const { tools } = await client.listTools();
+      expect(tools).toHaveLength(48);
+      expect(new Set(tools.map(({ name }) => name)).size).toBe(tools.length);
+      const grantNames = new Set(APP_GRANT_CASES.flatMap(({ canonical, compatibility }) => [canonical, compatibility]));
+      expect(tools.filter(({ name }) => grantNames.has(name)).map(({ name }) => name)).toEqual([
+        ...APP_GRANT_CASES.map(({ canonical }) => canonical),
+        ...APP_GRANT_CASES.map(({ compatibility }) => compatibility),
+      ]);
+    });
+
+    for (const { label, canonical, compatibility, tool, args } of APP_GRANT_CASES) {
+      it(`${label}: discovers equivalent schemas and annotation values for both names`, async () => {
+        const { tools } = await client.listTools();
+        const canonicalEntry = tools.find(({ name }) => name === canonical);
+        const compatibilityEntry = tools.find(({ name }) => name === compatibility);
+        expect(canonicalEntry).toBeDefined();
+        expect(compatibilityEntry).toBeDefined();
+        expect(canonicalEntry?.description).toBe(tool.description);
+        expect(canonicalEntry?.description).toContain("container type registration");
+        expect(compatibilityEntry?.description).toBe(`Deprecated: use ${canonical}. ${tool.description}`);
+        expect(canonicalEntry?.inputSchema).toEqual(tool.inputSchema);
+        expect(compatibilityEntry?.inputSchema).toEqual(canonicalEntry?.inputSchema);
+        expect(canonicalEntry?.annotations?.readOnlyHint).toBe(tool.annotations?.readOnly);
+        expect(canonicalEntry?.annotations?.destructiveHint).toBe(tool.annotations?.destructive);
+        expect(canonicalEntry?.annotations?.idempotentHint).toBe(tool.annotations?.idempotent);
+        expect(compatibilityEntry?.annotations?.readOnlyHint).toBe(canonicalEntry?.annotations?.readOnlyHint);
+        expect(compatibilityEntry?.annotations?.destructiveHint).toBe(canonicalEntry?.annotations?.destructiveHint);
+        expect(compatibilityEntry?.annotations?.idempotentHint).toBe(canonicalEntry?.annotations?.idempotentHint);
+      });
+
+      it(`${label}: canonical and compatibility calls invoke the same exported handler`, async () => {
+        const canonicalResult = await client.callTool({ name: canonical, arguments: args });
+        const compatibilityResult = await client.callTool({ name: compatibility, arguments: args });
+        expect(canonicalResult.isError).toBeFalsy();
+        expect(compatibilityResult.isError).toBeFalsy();
+        expect(compatibilityResult.content).toEqual(canonicalResult.content);
+        expect(tool.handler).toHaveBeenCalledTimes(2);
+        expect(tool.handler).toHaveBeenNthCalledWith(1, args);
+        expect(tool.handler).toHaveBeenNthCalledWith(2, args);
+        if (label === "add") {
+          expect(graph.grantContainerTypeAppPermission).toHaveBeenCalledTimes(2);
+          expect(graph.grantContainerTypeAppPermission).toHaveBeenCalledWith("ct-1", "app-2", ["full"], ["none"]);
+        } else if (label === "list") {
+          expect(graph.listContainerTypeAppPermissions).toHaveBeenCalledTimes(2);
+          expect(graph.listContainerTypeAppPermissions).toHaveBeenCalledWith("ct-1");
+        } else {
+          expect(graph.revokeContainerTypeAppPermission).toHaveBeenCalledTimes(2);
+          expect(graph.revokeContainerTypeAppPermission).toHaveBeenCalledWith("ct-1", "app-2");
+        }
+      });
+    }
+
+    it("both remove discovery entries recommend the canonical list tool", async () => {
+      const { tools } = await client.listTools();
+      for (const name of [
+        "container_type_registration_app_grant_remove",
+        "container_type_app_grant_remove",
+      ]) {
+        expect(tools.find((tool) => tool.name === name)?.inputSchema.properties?.appId).toMatchObject({
+          description: expect.stringContaining("container_type_registration_app_grants_list"),
+        });
+      }
+    });
+
+    it("both remove names reject missing appId with the structured protocol error before invoking the handler", async () => {
+      for (const name of [
+        "container_type_registration_app_grant_remove",
+        "container_type_app_grant_remove",
+      ]) {
+        const result = await client.callTool({ name, arguments: {} });
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({
+          ok: false,
+          error: { code: "INVALID_ARGS", message: "Missing required argument: appId" },
+        });
+        expect(result.content).toEqual(expect.arrayContaining([
+          expect.objectContaining({ type: "text", text: expect.stringContaining("Missing required argument: appId") }),
+        ]));
+      }
+      expect(removeContainerTypeAppGrantTool.handler).not.toHaveBeenCalled();
+      expect(graph.revokeContainerTypeAppPermission).not.toHaveBeenCalled();
+    });
+
+    it("both remove names preserve canonical list guidance in the missing-appId handler response", async () => {
+      for (const name of [
+        "container_type_registration_app_grant_remove",
+        "container_type_app_grant_remove",
+      ]) {
+        const result = await client.callTool({ name, arguments: { appId: "" } });
+        expect(result.isError).toBe(true);
+        expect(result.content).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            type: "text",
+            text: "Error: appId is required (see container_type_registration_app_grants_list).",
+          }),
+        ]));
+      }
+      expect(removeContainerTypeAppGrantTool.handler).toHaveBeenCalledTimes(2);
+      expect(graph.revokeContainerTypeAppPermission).not.toHaveBeenCalled();
+    });
   });
 });
 

@@ -20,7 +20,7 @@ Prefer the command line? Run `claude mcp add spe -- npx -y @microsoft/spe-mcp st
 
 ## Available Tools
 
-The server exposes **40 tools**, plus an MCP **Prompt** (`provision_spe_app`) and **Resources** (reference architectures).
+The server exposes **45 canonical tools** and **3 deprecated compatibility entries**, plus an MCP **Prompt** (`provision_spe_app`) and **Resources** (reference architectures).
 
 **Provisioning & status**
 
@@ -33,7 +33,15 @@ The server exposes **40 tools**, plus an MCP **Prompt** (`provision_spe_app`) an
 | `container_type_list` / `container_list` / `container_get` / `container_type_get` | Read operations |
 | `container_type_update` / `container_type_delete` | Update or delete a container type |
 | `container_type_grant_owner` / `container_type_revoke_owner` / `container_type_owners_list` | Manage container-type owners (beta; enables PCA container creation) |
-| `container_type_app_grant_add` / `container_type_app_grant_remove` / `container_type_app_grants_list` | Manage application permission grants on a container type registration (authorize consuming apps; v1.0) |
+| `container_type_registration_app_grant_add` / `container_type_registration_app_grants_list` / `container_type_registration_app_grant_remove` | Manage application permission grants on a container type registration (authorize consuming apps; v1.0) |
+
+App grants belong to **container type registrations**, not container types themselves.
+Use the registration-qualified names above for discovery and calls. The old names
+`container_type_app_grant_add`, `container_type_app_grants_list`, and
+`container_type_app_grant_remove` remain discoverable, deprecated compatibility
+entries with the same handlers, schemas, permissions, defaults, and confirmation
+gates. New callers should use the canonical names; Microsoft Graph v1.0
+`applicationPermissionGrants` behavior is unchanged.
 
 **Billing**
 

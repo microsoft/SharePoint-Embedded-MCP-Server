@@ -22,10 +22,21 @@ Use these natural-language prompts for MCP UX regression across clients.
 - `container_type_grant_owner`: "Grant another app owner access to this container type."
 - `container_type_owners_list`: "List owner grants on this container type."
 - `container_type_revoke_owner`: "Revoke an owner grant from this container type."
-- `container_type_app_grant_add`: "Authorize a consuming app for this registered container type."
-- `container_type_app_grants_list`: "List consuming app grants for this container type registration."
-- `container_type_app_grant_remove`: "Remove a consuming app grant from this container type registration."
+- `container_type_registration_app_grant_add`: "Authorize a consuming app on this container type registration."
+- `container_type_registration_app_grants_list`: "List consuming app grants for this container type registration."
+- `container_type_registration_app_grant_remove`: "Remove a consuming app grant from this container type registration."
 - `container_type_delete`: "Delete this unused trial container type after confirming what will be removed."
+
+App grants belong to container type registrations, not container types themselves.
+Use the registration-qualified names for new calls. For compatibility regression,
+verify that `container_type_app_grant_add`, `container_type_app_grants_list`, and
+`container_type_app_grant_remove` are still discoverable as deprecated entries
+recommending their canonical replacements, and invoke the same handlers with the
+same schemas, defaults, permissions, and confirmation gates. Both remove names
+must recommend `container_type_registration_app_grants_list` in their `appId`
+schema description; a direct remove-handler call without `appId` must give the
+same guidance. Protocol calls without `appId` are rejected as `INVALID_ARGS`
+before the handler runs.
 
 ## Billing flow
 

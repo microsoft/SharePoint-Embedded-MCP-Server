@@ -2,8 +2,8 @@
 // Licensed under the MIT license.
 
 /**
- * Tools: container_type_app_grant_add / container_type_app_grants_list /
- * container_type_app_grant_remove
+ * Tools: container_type_registration_app_grant_add / container_type_registration_app_grants_list /
+ * container_type_registration_app_grant_remove
  *
  * Manage the `applicationPermissionGrants` collection on a SharePoint Embedded
  * container type registration via Microsoft Graph **v1.0**. Each grant authorizes
@@ -53,7 +53,7 @@ function toPermissions(value: unknown, fallback: string[]): string[] {
 }
 
 export const addContainerTypeAppGrantTool: McpTool = {
-  name: "container_type_app_grant_add",
+  name: "container_type_registration_app_grant_add",
   annotations: { plane: "control" },
   description:
     "Add or update an application permission grant on a SharePoint Embedded container type registration " +
@@ -123,7 +123,7 @@ export const addContainerTypeAppGrantTool: McpTool = {
 };
 
 export const listContainerTypeAppGrantsTool: McpTool = {
-  name: "container_type_app_grants_list",
+  name: "container_type_registration_app_grants_list",
   annotations: { readOnly: true },
   description:
     "List the application permission grants on a SharePoint Embedded container type registration " +
@@ -160,7 +160,7 @@ export const listContainerTypeAppGrantsTool: McpTool = {
 };
 
 export const removeContainerTypeAppGrantTool: McpTool = {
-  name: "container_type_app_grant_remove",
+  name: "container_type_registration_app_grant_remove",
   annotations: { destructive: true, plane: "control" },
   description:
     "Remove an application permission grant from a SharePoint Embedded container type registration " +
@@ -170,7 +170,7 @@ export const removeContainerTypeAppGrantTool: McpTool = {
     type: "object" as const,
     properties: {
       containerTypeId: { type: "string", description: "Container type registration id. Default: the provisioned container type." },
-      appId: { type: "string", description: "Client (app) id whose grant to remove (see container_type_app_grants_list)." },
+      appId: { type: "string", description: "Client (app) id whose grant to remove (see container_type_registration_app_grants_list)." },
       contextChoice: contextChoiceSchema,
     },
     required: ["appId"],
@@ -188,7 +188,7 @@ export const removeContainerTypeAppGrantTool: McpTool = {
       const containerTypeId = (args.containerTypeId as string) || state.containerTypeId;
       const appId = args.appId as string | undefined;
       if (!containerTypeId) return err("no containerTypeId provided and none in provisioning state.");
-      if (!appId) return err("appId is required (see container_type_app_grants_list).");
+      if (!appId) return err("appId is required (see container_type_registration_app_grants_list).");
 
       await revokeContainerTypeAppPermission(containerTypeId, appId);
       return { content: [{ type: "text" as const, text: `Removed app \`${appId}\`'s permission grant from container type registration \`${containerTypeId}\`.` }] };

@@ -2,7 +2,7 @@
 // Licensed under the MIT license.
 
 /**
- * Unit tests for the container-type application-permission-grant tools
+ * Unit tests for the container-type-registration application-permission-grant tools
  * (v1.0 `applicationPermissionGrants` on a container type registration).
  * graph-client / auth / state are mocked so these run offline.
  */
@@ -45,7 +45,11 @@ beforeEach(() => {
   Object.assign(stateStore, { appId: "app-1", tenantId: "t-1", containerTypeId: "ct-1", confirmedSessionId: getSessionId() });
 });
 
-describe("container_type_app_grant_add", () => {
+describe("container_type_registration_app_grant_add", () => {
+  it("exports the registration-qualified add name", () => {
+    expect(addContainerTypeAppGrantTool.name).toBe("container_type_registration_app_grant_add");
+  });
+
   it("defaults the container type + appId to state and grants `full` delegated / `none` app-only (opt-in)", async () => {
     const r = await addContainerTypeAppGrantTool.handler({});
     expect(setAuthConfig).toHaveBeenCalledWith({ clientId: "app-1", tenantId: "t-1" });
@@ -94,7 +98,11 @@ describe("container_type_app_grant_add", () => {
   });
 });
 
-describe("container_type_app_grants_list", () => {
+describe("container_type_registration_app_grants_list", () => {
+  it("exports the registration-qualified list name", () => {
+    expect(listContainerTypeAppGrantsTool.name).toBe("container_type_registration_app_grants_list");
+  });
+
   it("lists grants for the provisioned container type", async () => {
     const r = await listContainerTypeAppGrantsTool.handler({});
     expect(graph.listContainerTypeAppPermissions).toHaveBeenCalledWith("ct-1");
@@ -110,7 +118,14 @@ describe("container_type_app_grants_list", () => {
   });
 });
 
-describe("container_type_app_grant_remove", () => {
+describe("container_type_registration_app_grant_remove", () => {
+  it("exports the registration-qualified remove name and recommends the canonical list tool", () => {
+    expect(removeContainerTypeAppGrantTool.name).toBe("container_type_registration_app_grant_remove");
+    expect(removeContainerTypeAppGrantTool.inputSchema.properties.appId).toMatchObject({
+      description: expect.stringContaining("container_type_registration_app_grants_list"),
+    });
+  });
+
   it("removes a grant by appId", async () => {
     const r = await removeContainerTypeAppGrantTool.handler({ appId: "app-2" });
     expect(graph.revokeContainerTypeAppPermission).toHaveBeenCalledWith("ct-1", "app-2");
@@ -120,6 +135,12 @@ describe("container_type_app_grant_remove", () => {
   it("requires an appId", async () => {
     const r = await removeContainerTypeAppGrantTool.handler({});
     expect(r.isError).toBe(true);
+    expect(r.content).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "text",
+        text: "Error: appId is required (see container_type_registration_app_grants_list).",
+      }),
+    ]));
     expect(graph.revokeContainerTypeAppPermission).not.toHaveBeenCalled();
   });
 });
