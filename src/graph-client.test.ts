@@ -4,7 +4,7 @@
 /**
  * Unit tests for owning-app permission handling in graph-client.ts
  * (addSpePermissions / addSpaRedirectUris / findApplicationByAppId /
- * updateContainerType).
+ * updateContainerType / grantContainerTypeAppPermission).
  *
  * Each behavior under test is documented on its own describe/it block below, so
  * this header stays a short pointer rather than a per-test index that rots as
@@ -20,6 +20,7 @@ import {
   findApplicationByName,
   updateContainerType,
   registerContainerType,
+  grantContainerTypeAppPermission,
   listContainerTypes,
   getSignedInUser,
   desiredGraphResourceAccess,
@@ -32,9 +33,8 @@ import {
   setInstallAttribution,
 } from "./user-agent.js";
 
-// updateContainerType uses the default getAccessToken (MSAL); mock it so the
-// container-type update tests run fully offline. The other tests here pass an
-// explicit getToken and are unaffected.
+// Container-type helpers use the default getAccessToken (MSAL); mock it so their
+// tests run fully offline. Tests passing an explicit getToken are unaffected.
 vi.mock("./auth.js", () => ({ getAccessToken: vi.fn(async () => "test-token") }));
 
 // graph-client now imports readState/writeState (for the container-type
@@ -525,6 +525,76 @@ describe("registerContainerType — app-only default ['none'] + re-grant preserv
 
     // Only the GET happened — no PUT (which would have replaced the grant) was attempted.
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("grantContainerTypeAppPermission", () => {
+  it("writes a delegated-only grant without granting app-only access or replacing other grants", async () => {
+    fetchMock.mockResolvedValueOnce(okResponse({}, 204));
+
+    await grantContainerTypeAppPermission("ct-1", "app-1", ["full"], ["none"]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(
+      "https://graph.microsoft.com/v1.0/storage/fileStorage/containerTypeRegistrations/ct-1/applicationPermissionGrants/app-1",
+    );
+    expect(init.method).toBe("PUT");
+    expect(init.headers.Authorization).toBe("Bearer test-token");
+    expect(requestBody(0)).toEqual({
+      delegatedPermissions: ["full"],
+      applicationPermissions: ["none"],
+    });
+  });
+
+  it.each([
+    {
+      delegatedPermissions: ["readContent", "writeContent"],
+      applicationPermissions: ["none"],
+    },
+    {
+      delegatedPermissions: ["none"],
+      applicationPermissions: ["full"],
+    },
+  ])("preserves explicit permission choices: %j", async ({
+    delegatedPermissions,
+    applicationPermissions,
+  }) => {
+    fetchMock.mockResolvedValueOnce(okResponse({}, 204));
+
+    await grantContainerTypeAppPermission(
+      "ct-1",
+      "app-2",
+      delegatedPermissions,
+      applicationPermissions,
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(
+      "https://graph.microsoft.com/v1.0/storage/fileStorage/containerTypeRegistrations/ct-1/applicationPermissionGrants/app-2",
+    );
+    expect(init.method).toBe("PUT");
+    expect(requestBody(0)).toEqual({ delegatedPermissions, applicationPermissions });
+  });
+
+  it("rejects a denied app-only grant instead of reporting success or replacing the grant collection", async () => {
+    fetchMock.mockResolvedValueOnce(errResponse(403, "insufficient privileges"));
+
+    await expect(
+      grantContainerTypeAppPermission("ct-1", "app-2", ["none"], ["full"]),
+    ).rejects.toThrow(/Access denied/);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(
+      "https://graph.microsoft.com/v1.0/storage/fileStorage/containerTypeRegistrations/ct-1/applicationPermissionGrants/app-2",
+    );
+    expect(init.method).toBe("PUT");
+    expect(requestBody(0)).toEqual({
+      delegatedPermissions: ["none"],
+      applicationPermissions: ["full"],
+    });
   });
 });
 
