@@ -47,9 +47,9 @@ export const createAppTool: McpTool = {
   name: "project_app_create",
   annotations: { plane: "control" },
   description:
-    "Create the owning Entra application for a SharePoint Embedded setup (a public-client app " +
+    "Create the owning Entra app for SharePoint Embedded (a public-client app " +
     "with the required SPE delegated permissions). Uses your signed-in Azure CLI session — no " +
-    "first-party app or pre-authorization needed. This is the first provisioning step; the " +
+    "first-party app or pre-authorization needed. The first provisioning step; the " +
     "container type and containers are created afterward as this app. Idempotent: re-running " +
     "does not create a duplicate — once provisioned it resumes by the app's unique client ID " +
     "(appId), not by display name (Entra display names are not unique).",

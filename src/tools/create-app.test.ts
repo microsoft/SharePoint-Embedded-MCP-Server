@@ -75,6 +75,32 @@ beforeEach(() => {
   addSpaRedirectUrisMock.mockResolvedValue({ added: [], redirectUris: [LOCAL_SPA_REDIRECT_URI] });
 });
 
+describe("project_app_create — tool description", () => {
+  it("keeps the original and normalized description between 10 and 500 characters", () => {
+    const description = createAppTool.description;
+    const normalized = description.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
+
+    for (const text of [description, normalized]) {
+      expect(text.length).toBeGreaterThanOrEqual(10);
+      expect(text.length).toBeLessThanOrEqual(500);
+    }
+  });
+
+  it("preserves the app purpose, authentication, provisioning order, and stable reuse identity", () => {
+    const description = createAppTool.description;
+
+    expect(description).toMatch(/owning Entra app.*SharePoint Embedded/);
+    expect(description).toMatch(/public.client.*required SPE delegated permissions/);
+    expect(description).toContain("signed-in Azure CLI session");
+    expect(description).toMatch(/no first-party app or pre-authorization needed/);
+    expect(description).toMatch(/first provisioning step/i);
+    expect(description).toMatch(/container type and containers.*afterward as this app/);
+    expect(description).toMatch(/idempotent.*re-running.*does not create a duplicate/i);
+    expect(description).toMatch(/resumes by.*unique client ID \(appId\)/);
+    expect(description).toMatch(/not.*display name.*not unique/);
+  });
+});
+
 describe("project_app_create — reuse/attach SPA self-repair", () => {
   it("calls addSpaRedirectUris with the existing app's objectId and {bestEffort:true} on reuse", async () => {
     findApplicationByNameMock.mockResolvedValue(EXISTING_APP);
