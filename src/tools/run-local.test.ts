@@ -8,6 +8,8 @@
  *   - The reported URL/port is derived from the detected project type
  *     (Vite → 5173, not the old hardcoded 3000; Node default 3000; .NET 5000).
  *   - Failed installation or terminated launch is reflected as isError.
+ *   - Installation must finish before launch; resolution failures and propagated
+ *     policy denials must stop subsequent execution.
  *   - An open candidate port is not presented as verified application startup.
  *
  * ../proc-exec.js and node:fs are mocked so nothing actually spawns.
@@ -153,7 +155,14 @@ describe("project_run_local — start-outcome reflection", () => {
     const pending = runLocalTool.handler({ projectDir: "/proj" });
 
     expect(spawnProcess).toHaveBeenCalledTimes(1);
-    expect(spawnProcess).toHaveBeenCalledWith("npm", ["install"], expect.anything());
+    expect(spawnProcess).toHaveBeenCalledWith("npm", ["install"], {
+      cwd: expect.stringMatching(/[/\\]proj$/),
+      stdio: "ignore",
+    });
+    expect(waitForServerReady).not.toHaveBeenCalled();
+    install.emit("spawn");
+    await Promise.resolve();
+    expect(spawnProcess).toHaveBeenCalledTimes(1);
     expect(waitForServerReady).not.toHaveBeenCalled();
     install.emit("close", 0, null);
     const result = await pending;
@@ -162,7 +171,52 @@ describe("project_run_local — start-outcome reflection", () => {
     expect(spawnProcess).toHaveBeenNthCalledWith(
       2, "npm", ["run", "dev"], expect.objectContaining({ detached: true }),
     );
+    expect(spawnProcess).toHaveBeenCalledTimes(2);
+    expect(waitForServerReady).toHaveBeenCalledWith(5173);
   });
+
+  it.each(["install", "dev"] as const)(
+    "surfaces Node executable-resolution failure during %s without later launch or readiness",
+    async (stage) => {
+      files = { "package.json": pkg({ dev: "vite" }) };
+      if (stage === "install") installBehavior = "throw";
+      else spawnBehavior = "throw";
+
+      const result = await runLocalTool.handler({ projectDir: "/proj" });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("untrusted executable resolution");
+      expect(result.content[0].text).toContain(stage === "install" ? "npm install" : "npm run dev");
+      expect(spawnProcess).toHaveBeenCalledTimes(stage === "install" ? 1 : 2);
+      expect(waitForServerReady).not.toHaveBeenCalled();
+      expect(result.content[0].text).not.toContain("Candidate URL");
+    },
+  );
+
+  it.each(["install", "dev", "dotnet"] as const)(
+    "propagates process-policy denial during %s without retrying or probing readiness",
+    async (stage) => {
+      files = stage === "dotnet" ? { "Program.cs": "// app" } : { "package.json": pkg({ dev: "vite" }) };
+      const deny = () => { throw new Error("Local execution denied by policy"); };
+      const install = Object.assign(new EventEmitter(), { unref: () => {} });
+      if (stage === "dev") {
+        vi.mocked(spawnProcess).mockReturnValueOnce(install as ReturnType<typeof spawnProcess>);
+      }
+      vi.mocked(spawnProcess).mockImplementationOnce(deny);
+      const pending = runLocalTool.handler({ projectDir: "/proj" });
+      if (stage === "dev") install.emit("close", 0, null);
+      const result = await pending;
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain(
+        stage === "dev" ? "npm run dev" : stage === "install" ? "npm install" : "dotnet run",
+      );
+      expect(result.content[0].text).toContain("Local execution denied by policy");
+      expect(result.content[0].text).not.toContain("Candidate URL");
+      expect(spawnProcess).toHaveBeenCalledTimes(stage === "dev" ? 2 : 1);
+      expect(waitForServerReady).not.toHaveBeenCalled();
+    },
+  );
 
   it.each<SpawnBehavior>(["error", "exit-nonzero", "signal", "throw"])(
     "stops before dev launch when dependency installation fails: %s",
