@@ -9,6 +9,25 @@ describe("container-type app grants over the MCP wire", () => {
   beforeAll(async () => { server = await startProtocolServer(); }, 90000);
   afterAll(async () => { await server?.close(); });
 
+  it("publishes a concise add description with grant semantics and defaults", async () => {
+    const { tools } = await server.client.listTools(undefined, { timeout: CALL_TIMEOUT_MS });
+    const tool = tools.find((entry) => entry.name === "container_type_registration_app_grant_add");
+    expect(tool).toBeDefined();
+    const description = tool?.description ?? "";
+    expect(description.length).toBeGreaterThanOrEqual(10);
+    expect(description.length).toBeLessThanOrEqual(500);
+    expect(description.trim().replace(/\s+/g, " ").length).toBeLessThanOrEqual(500);
+    expect(description).toContain("SharePoint Embedded container type registration (Microsoft Graph v1.0)");
+    expect(description).toContain("delegated/application");
+    expect(description).toContain("Idempotent upsert");
+    expect(description).toContain("same appId's permissions are overwritten");
+    expect(description).toContain("other grants are preserved");
+    expect(description).toContain("container_type_register, which replaces all grants");
+    expect(description).toContain("provisioned container type and owning appId");
+    expect(description).toContain("delegated `full`");
+    expect(description).toContain("application (app-only) `none` (opt-in)");
+  });
+
   it("discovers registration-scoped app-grant tools without legacy aliases", async () => {
     const { tools } = await server.client.listTools(undefined, { timeout: CALL_TIMEOUT_MS });
     const names = tools.map((tool) => tool.name);
