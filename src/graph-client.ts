@@ -1,0 +1,1052 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
+/**
+ * Microsoft Graph client for SPE operations.
+ *
+ * Follows the enghub-mcp-server-tools pattern:
+ *   - Auth interceptor injects Bearer token on every request
+ *   - Centralized error handling with actionable messages
+ *   - Retry logic for transient failures (429, 5xx)
+ */
+
+import { getAccessToken } from "./auth.js";
+import { LOCAL_SPA_REDIRECT_URI } from "./constants.js";
+import { USER_AGENT } from "./user-agent.js";
+import type {
+  ApplicationPermissionGrant,
+  Container,
+  ContainerPermission,
+  ContainerType,
+  ContainerTypePermission,
+  CustomProperties,
+  Drive,
+  DriveItem,
+  PreviewResult,
+  SearchResponse,
+  SharingLink,
+  UploadSession,
+} from "./types.js";
+
+const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
+// SPE container-type `permissions` (the `owner` role that lets a public client /
+// PCA create containers) exist only under the beta endpoint. v1.0 stays the
+// default base; specific container-type / permission / createContainer calls opt
+// into beta via graphRequestBeta.
+const GRAPH_BETA_BASE = "https://graph.microsoft.com/beta";
+
+// Retry config for throttled/transient errors
+const MAX_RETRIES = 3;
+const BASE_RETRY_DELAY_MS = 2000;
+
+function log(message: string, data?: unknown): void {
+  const timestamp = new Date().toISOString();
+  if (data !== undefined) {
+    console.error(
+      `[${timestamp}] [Graph] ${message}`,
+      typeof data === "string" ? data : JSON.stringify(data),
+    );
+  } else {
+    console.error(`[${timestamp}] [Graph] ${message}`);
+  }
+}
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Make an authenticated request to Microsoft Graph with retry logic.
+ *
+ * By default the token comes from the MSAL provider (SPE owning-app token).
+ * Pass `getToken` to use a different token source — e.g. the Azure CLI
+ * bootstrap token for directory operations like creating the owning app.
+ */
+async function graphRequest<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  customHeaders?: Record<string, string>,
+  getToken: () => Promise<string> = getAccessToken,
+  baseUrl: string = GRAPH_BASE,
+): Promise<T> {
+  const url = `${baseUrl}${path}`;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const token = await getToken();
+
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "User-Agent": USER_AGENT,
+      ...customHeaders,
+    };
+
+    const options: RequestInit = { method, headers };
+    if (body && (method === "POST" || method === "PUT" || method === "PATCH")) {
+      options.body = typeof body === "string" ? body : JSON.stringify(body);
+    }
+
+    log(`${method} ${path} (attempt ${attempt + 1})`);
+
+    let response: Response;
+    try {
+      response = await fetch(url, options);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (attempt < MAX_RETRIES) {
+        const delay = BASE_RETRY_DELAY_MS * Math.pow(2, attempt);
+        log(`Network error, retrying in ${delay}ms: ${msg}`);
+        await sleep(delay);
+        continue;
+      }
+      throw new Error(`Network error calling Graph API: ${msg}`);
+    }
+
+    if (response.ok) {
+      // 204 No Content
+      if (response.status === 204) {
+        return undefined as T;
+      }
+      return (await response.json()) as T;
+    }
+
+    // Retry on throttle or server error
+    if ((response.status === 429 || response.status >= 500) && attempt < MAX_RETRIES) {
+      const retryAfter = response.headers.get("Retry-After");
+      const delay = retryAfter
+        ? parseInt(retryAfter, 10) * 1000
+        : BASE_RETRY_DELAY_MS * Math.pow(2, attempt);
+      log(`${response.status} — retrying in ${delay}ms`);
+      await sleep(delay);
+      continue;
+    }
+
+    // Parse error response
+    let errorBody: string;
+    try {
+      const errJson = await response.json();
+      errorBody = errJson?.error?.message ?? JSON.stringify(errJson);
+    } catch {
+      errorBody = await response.text().catch(() => "Unknown error");
+    }
+
+    if (response.status === 401) {
+      throw new Error("Authentication failed. Token may have expired — try re-authenticating.");
+    }
+    if (response.status === 403) {
+      throw new Error(`Access denied: ${errorBody}`);
+    }
+    if (response.status === 404) {
+      throw new Error(`Resource not found: ${errorBody}`);
+    }
+
+    throw new Error(`Graph API error (${response.status}): ${errorBody}`);
+  }
+
+  throw new Error("Max retries exceeded");
+}
+
+/**
+ * Same as graphRequest, but targets the Microsoft Graph **beta** endpoint. Used
+ * for SPE container-type management and the container-type `permissions` (owner)
+ * collection, which are only available under /beta.
+ */
+function graphRequestBeta<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  customHeaders?: Record<string, string>,
+  getToken: () => Promise<string> = getAccessToken,
+): Promise<T> {
+  return graphRequest<T>(method, path, body, customHeaders, getToken, GRAPH_BETA_BASE);
+}
+
+// ─── Owning App (created via Azure CLI bootstrap token) ─────────────────────
+
+// Stable delegated permission GUIDs on Microsoft Graph. Include both
+// FileStorageContainer.Manage.All and Selected so the owning app can read
+// containers it creates and perform container-type operations.
+const GRAPH_RESOURCE_APP_ID = "00000003-0000-0000-c000-000000000000";
+const SPE_DELEGATED_PERMISSION_IDS = {
+  FileStorageContainer_ManageAll: "527b6d64-cdf5-4b8b-b336-4aa0b8ca2ce5",
+  FileStorageContainer_Selected: "085ca537-6565-41c2-aca7-db852babc212",
+  FileStorageContainerType_ManageAll: "8e6ec84c-5fcd-4cc7-ac8a-2296efc0ed9b",
+  FileStorageContainerTypeReg_ManageAll: "c319a7df-930e-44c0-a43b-7e5e9c7f4f24",
+  // FileStorageContainerTypeReg.Selected — the .Selected counterpart used by
+  // SPAC's selected-container model (PR 2159372). Added for scope-set parity.
+  FileStorageContainerTypeReg_Selected: "d1e4f63a-1569-475c-b9b2-bdc140405e38",
+} as const;
+
+interface ResourceAccess {
+  id: string;
+  type: string;
+}
+
+interface RequiredResourceAccess {
+  resourceAppId: string;
+  resourceAccess: ResourceAccess[];
+}
+
+// Desired delegated (type "Scope") Microsoft Graph permissions for the owning
+// app. TODO: least-privilege scope set pending PM decision — the
+// broad-vs-least-privilege (.Manage.All vs .Selected) call is gated there; for
+// now we keep the existing .Manage.All scopes AND add the .Selected pair.
+const DESIRED_GRAPH_RESOURCE_ACCESS: ResourceAccess[] = [
+  { id: SPE_DELEGATED_PERMISSION_IDS.FileStorageContainer_ManageAll, type: "Scope" },
+  { id: SPE_DELEGATED_PERMISSION_IDS.FileStorageContainer_Selected, type: "Scope" },
+  { id: SPE_DELEGATED_PERMISSION_IDS.FileStorageContainerType_ManageAll, type: "Scope" },
+  { id: SPE_DELEGATED_PERMISSION_IDS.FileStorageContainerTypeReg_ManageAll, type: "Scope" },
+  { id: SPE_DELEGATED_PERMISSION_IDS.FileStorageContainerTypeReg_Selected, type: "Scope" },
+];
+
+/**
+ * Non-destructively merge `desiredAccess` for `resourceAppId` into an app's
+ * existing requiredResourceAccess. Preserves every pre-existing entry (including
+ * unrelated resourceAppIds) and adds only the {id,type} pairs that are missing.
+ * Dedupe is by resourceAppId + access id + type, so merging is idempotent.
+ */
+function mergeRequiredResourceAccess(
+  existing: RequiredResourceAccess[],
+  resourceAppId: string,
+  desiredAccess: ResourceAccess[],
+): RequiredResourceAccess[] {
+  // Deep-clone so we never mutate the caller's/Graph's objects.
+  const merged: RequiredResourceAccess[] = (existing ?? []).map((entry) => ({
+    resourceAppId: entry.resourceAppId,
+    resourceAccess: [...(entry.resourceAccess ?? [])],
+  }));
+
+  let target = merged.find(
+    (e) => e.resourceAppId?.toLowerCase() === resourceAppId.toLowerCase(),
+  );
+  if (!target) {
+    target = { resourceAppId, resourceAccess: [] };
+    merged.push(target);
+  }
+
+  for (const desired of desiredAccess) {
+    const present = target.resourceAccess.some(
+      (a) => a.id?.toLowerCase() === desired.id.toLowerCase() && a.type === desired.type,
+    );
+    if (!present) {
+      target.resourceAccess.push({ id: desired.id, type: desired.type });
+    }
+  }
+
+  return merged;
+}
+
+/** Strip a trailing slash and l-case so dedupe treats equivalent origins as one. */
+function normalizeRedirectUri(uri: string): string {
+  return uri.replace(/\/+$/, "").toLowerCase();
+}
+
+/**
+ * Append `toAdd` redirect URIs to `existing`, skipping any already present
+ * (case-insensitive, trailing-slash-insensitive). Existing URIs keep their
+ * original order and casing; newly added URIs are appended in order. Idempotent.
+ */
+function mergeRedirectUris(existing: string[], toAdd: string[]): string[] {
+  const seen = new Set(existing.map(normalizeRedirectUri));
+  const merged = [...existing];
+  for (const uri of toAdd) {
+    const key = normalizeRedirectUri(uri);
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(uri);
+    }
+  }
+  return merged;
+}
+
+export interface OwningApp {
+  appId: string;
+  objectId: string;
+  displayName: string;
+}
+
+interface RawApplication {
+  id: string;
+  appId: string;
+  displayName: string;
+  isFallbackPublicClient?: boolean;
+}
+
+function toOwningApp(raw: RawApplication): OwningApp {
+  return { appId: raw.appId, objectId: raw.id, displayName: raw.displayName };
+}
+
+/** Find an existing Entra app by display name (idempotent provisioning). */
+export async function findApplicationByName(
+  displayName: string,
+  getToken: () => Promise<string>,
+): Promise<OwningApp | null> {
+  const filter = `displayName eq '${displayName.replace(/'/g, "''")}'`;
+  const result = await graphRequest<{ value: RawApplication[] }>(
+    "GET",
+    `/applications?$filter=${encodeURIComponent(filter)}`,
+    undefined,
+    undefined,
+    getToken,
+  );
+  const app = result.value?.[0];
+  return app ? toOwningApp(app) : null;
+}
+
+/**
+ * Find an existing Entra app by its appId (client ID). Preferred over
+ * display-name lookup when an appId is known — appId is the stable identity, so
+ * attach/reuse resolves the correct object even if the display name changed or
+ * collides. Mirrors SPAC's appId-based application resolution (PR 2159372).
+ */
+export async function findApplicationByAppId(
+  appId: string,
+  getToken: () => Promise<string>,
+): Promise<OwningApp | null> {
+  const filter = `appId eq '${appId.replace(/'/g, "''")}'`;
+  const result = await graphRequest<{ value: RawApplication[] }>(
+    "GET",
+    `/applications?$filter=${encodeURIComponent(filter)}`,
+    undefined,
+    undefined,
+    getToken,
+  );
+  const app = result.value?.[0];
+  return app ? toOwningApp(app) : null;
+}
+
+/**
+ * Local origin of the scaffolded React SPA's Vite dev server. The generated app
+ * (react-spa-template.ts emits `server: { port: LOCAL_DEV_PORT }`) authenticates
+ * with MSAL.js using `redirectUri: window.location.origin`, i.e. the local Vite
+ * origin during dev. MSAL.js uses the auth-code + PKCE flow, which Entra only
+ * honours for a redirect URI registered under the app's `spa` platform — hence
+ * this constant is added to `spa.redirectUris` at app create/reuse time (see
+ * createApplication and the project_app_create reuse path).
+ *
+ * Defined in ./constants.ts
+ * and re-exported here so existing importers keep their `./graph-client.js` path.
+ */
+export { LOCAL_SPA_REDIRECT_URI } from "./constants.js";
+
+/**
+ * Create a public-client Entra app to own a container type. Public client
+ * (`isFallbackPublicClient: true`) so no secret is needed — auth is delegated
+ * device-code/interactive as this app. Mirrors the full-setup skill `02-app.ps1`.
+ *
+ * The SAME app registration is used by two clients:
+ *   1. the SPE MCP CLI desktop interactive/device-code flow — a *public client*
+ *      redeeming on the loopback `http://localhost`; and
+ *   2. the generated browser React SPA — a *single-page application* that uses
+ *      MSAL.js (auth-code + PKCE) and redeems from its web origin.
+ * Entra rejects cross-origin SPA code redemption unless the origin is registered
+ * under the `spa` platform (AADSTS9002326). So we register BOTH platforms:
+ * `publicClient` (loopback, for the CLI) AND `spa` (local Vite origin, for the
+ * browser app). The two are additive — neither flow works if either is dropped.
+ * The `spa` key is the Microsoft Graph v1.0 `application` resource's
+ * single-page-application platform (siblings: `web`, `spa`, `publicClient`).
+ */
+export async function createApplication(
+  displayName: string,
+  getToken: () => Promise<string>,
+): Promise<OwningApp> {
+  const body = {
+    displayName,
+    signInAudience: "AzureADMyOrg",
+    isFallbackPublicClient: true,
+    // Loopback redirect for the MCP CLI desktop public-client flow.
+    publicClient: { redirectUris: ["http://localhost"] },
+    // SPA platform for the generated browser app's MSAL.js auth-code + PKCE flow.
+    // Without this, browser code redemption from the Vite origin fails with
+    // AADSTS9002326. Deployed origins are appended post-deploy (addSpaRedirectUris).
+    spa: { redirectUris: [LOCAL_SPA_REDIRECT_URI] },
+  };
+  const raw = await graphRequest<RawApplication>(
+    "POST",
+    "/applications",
+    body,
+    undefined,
+    getToken,
+  );
+  return toOwningApp(raw);
+}
+
+/**
+ * Non-destructively add one or more redirect URIs to an app's `spa` platform.
+ *
+ * Read-modify-write: GETs the app's current
+ * `spa.redirectUris`, appends only the origins that are not already present
+ * (dedupe is case-insensitive and trailing-slash-insensitive), then PATCHes the
+ * merged list back. This preserves existing SPA URIs — notably the local
+ * http://localhost:5173 dev origin set at create time — and is idempotent:
+ * re-running with an already-registered origin adds nothing and issues no PATCH.
+ *
+ * Used after a successful deploy to add the live Static Web App origin (e.g.
+ * https://<name>.azurestaticapps.net) so browser sign-in works without a manual
+ * portal edit.
+ *
+ * @param options.bestEffort When true, a failure to read or patch is logged and
+ *   swallowed (returns undefined) so the caller — e.g. project_deploy — is not
+ *   blocked by a missing Application.ReadWrite grant.
+ * @returns `{ added, redirectUris }` describing what changed (`added` is empty
+ *   when every origin was already registered), or undefined when a best-effort
+ *   attempt failed.
+ */
+export async function addSpaRedirectUris(
+  appObjectId: string,
+  origins: string[],
+  getToken: () => Promise<string>,
+  options: { bestEffort?: boolean } = {},
+): Promise<{ added: string[]; redirectUris: string[] } | undefined> {
+  try {
+    // 1. Read the app's current SPA redirect URIs so we extend, not replace.
+    const existing = await graphRequest<{ spa?: { redirectUris?: string[] } }>(
+      "GET",
+      `/applications/${appObjectId}?$select=spa`,
+      undefined,
+      undefined,
+      getToken,
+    );
+    const current = existing.spa?.redirectUris ?? [];
+
+    // 2. Append only the origins not already registered (no duplicates).
+    const merged = mergeRedirectUris(current, origins);
+    const added = merged.slice(current.length);
+
+    // 3. Nothing to do — skip the PATCH entirely so the call is a true no-op.
+    if (added.length === 0) {
+      return { added: [], redirectUris: current };
+    }
+
+    // 4. PATCH the merged list back (read-modify-write; existing URIs preserved).
+    await graphRequest<unknown>(
+      "PATCH",
+      `/applications/${appObjectId}`,
+      { spa: { redirectUris: merged } },
+      undefined,
+      getToken,
+    );
+    return { added, redirectUris: merged };
+  } catch (error) {
+    if (options.bestEffort) {
+      const msg = error instanceof Error ? error.message : String(error);
+      log(
+        `addSpaRedirectUris (best-effort): could not add SPA redirect URIs to app ` +
+          `${appObjectId}; continuing. Add them manually if needed. Reason: ${msg}`,
+      );
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Ensure the SPE delegated permissions are present on an app's
+ * requiredResourceAccess.
+ *
+ * Non-destructive: GETs the app's current
+ * requiredResourceAccess, MERGES in only the missing Microsoft Graph scope ids,
+ * then PATCHes the merged array. This preserves any other API permissions
+ * already on the app (which a wholesale REPLACE would silently wipe, since
+ * spe_create_app reuses an existing app by identity) and is idempotent —
+ * re-running adds nothing and creates no duplicates.
+ *
+ * @param options.bestEffort When true (the attach/reuse path), a failure to read
+ *   or patch permissions is logged as a warning and swallowed so provisioning is
+ *   non-blocking, mirroring SPAC. The create-new path leaves this false so errors
+ *   propagate.
+ */
+export async function addSpePermissions(
+  appObjectId: string,
+  getToken: () => Promise<string>,
+  options: { bestEffort?: boolean } = {},
+): Promise<void> {
+  try {
+    // 1. Read the app's existing requiredResourceAccess so we can merge, not replace.
+    const existing = await graphRequest<{ requiredResourceAccess?: RequiredResourceAccess[] }>(
+      "GET",
+      `/applications/${appObjectId}?$select=requiredResourceAccess`,
+      undefined,
+      undefined,
+      getToken,
+    );
+
+    // 2. Merge in only the missing Graph scopes (dedupe by resourceAppId + id + type).
+    const merged = mergeRequiredResourceAccess(
+      existing.requiredResourceAccess ?? [],
+      GRAPH_RESOURCE_APP_ID,
+      DESIRED_GRAPH_RESOURCE_ACCESS,
+    );
+
+    // 3. PATCH the merged array back.
+    await graphRequest<unknown>(
+      "PATCH",
+      `/applications/${appObjectId}`,
+      { requiredResourceAccess: merged },
+      undefined,
+      getToken,
+    );
+  } catch (error) {
+    if (options.bestEffort) {
+      const msg = error instanceof Error ? error.message : String(error);
+      log(
+        `addSpePermissions (best-effort): could not add SPE delegated permissions to ` +
+          `app ${appObjectId}; continuing. Grant them manually if needed. Reason: ${msg}`,
+      );
+      return;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Resolve the signed-in user's directory object id (and UPN). Used to default
+ * the container-type `owner` grant to the current user. Pass the Azure CLI
+ * bootstrap token provider — the az client has User.Read so `/me` succeeds.
+ */
+export async function getSignedInUser(
+  getToken: () => Promise<string>,
+): Promise<{ id: string; displayName?: string; userPrincipalName?: string }> {
+  return graphRequest<{ id: string; displayName?: string; userPrincipalName?: string }>(
+    "GET",
+    "/me?$select=id,displayName,userPrincipalName",
+    undefined,
+    undefined,
+    getToken,
+  );
+}
+
+// ─── Container Types ────────────────────────────────────────────────────────
+
+interface ListContainerTypesResponse {
+  value: RawContainerType[];
+}
+
+// Graph returns container types with `id` and `name`; our model uses
+// `containerTypeId` and `displayName`. Normalize at the boundary so callers
+// (and the 1:1 owning-app guard / auto-registration) read a populated id.
+interface RawContainerType {
+  id?: string;
+  containerTypeId?: string;
+  name?: string;
+  displayName?: string;
+  owningAppId?: string;
+  billingClassification?: ContainerType["billingClassification"];
+  azureSubscriptionId?: string;
+  createdDateTime?: string;
+  expirationDateTime?: string;
+}
+
+function normalizeContainerType(raw: RawContainerType): ContainerType {
+  return {
+    ...raw,
+    containerTypeId: raw.containerTypeId ?? raw.id ?? "",
+    displayName: raw.displayName ?? raw.name ?? "",
+    owningAppId: raw.owningAppId ?? "",
+  } as ContainerType;
+}
+
+export async function listContainerTypes(): Promise<ContainerType[]> {
+  const result = await graphRequestBeta<ListContainerTypesResponse>(
+    "GET",
+    "/storage/fileStorage/containerTypes",
+  );
+  return (result.value ?? []).map(normalizeContainerType);
+}
+
+export async function createContainerType(params: {
+  displayName: string;
+  owningAppId: string;
+  billingClassification?: "trial" | "standard" | "directToCustomer";
+  azureSubscriptionId?: string;
+  resourceGroup?: string;
+  region?: string;
+}): Promise<ContainerType> {
+  // IMPORTANT: the Graph create body field is `name`, NOT `displayName`
+  // (verified by the live-tested full-setup skill — gotchas.md #2).
+  const body: Record<string, unknown> = {
+    name: params.displayName,
+    owningAppId: params.owningAppId,
+  };
+
+  if (params.billingClassification) {
+    body.billingClassification = params.billingClassification;
+  }
+
+  // NOTE: azureSubscriptionId/resourceGroup/region are intentionally NOT sent in
+  // the Graph create body — the v1.0 fileStorageContainerType resource does not
+  // accept them (the same field family the Update PATCH rejects with HTTP 400).
+  // The Azure billing link is attached separately by creating a
+  // Microsoft.Syntex/accounts (RaaS) ARM resource (see billing_setup →
+  // createSyntexAccount). The sub/rg/region params remain on the signature for
+  // call-site compatibility but are consumed by the ARM-account step, not here.
+
+  // Response field is `id`, NOT `containerTypeId` — normalize so the id is usable.
+  const raw = await graphRequestBeta<RawContainerType>("POST", "/storage/fileStorage/containerTypes", body);
+  return normalizeContainerType(raw);
+}
+
+// ─── Container Type Registration ────────────────────────────────────────────
+
+export async function registerContainerType(
+  containerTypeId: string,
+  appId: string,
+  delegatedPermissions: string[] = ["full"],
+  applicationPermissions: string[] = ["full"],
+): Promise<void> {
+  const body = {
+    applicationPermissionGrants: [
+      {
+        appId,
+        delegatedPermissions,
+        applicationPermissions,
+      } satisfies ApplicationPermissionGrant,
+    ],
+  };
+
+  // Tenant-level registration endpoint (verified by the live-tested skill
+  // 04-container-type.ps1). MUST include applicationPermissionGrants or
+  // container creation later fails with UnauthorizedAccessException.
+  await graphRequest<unknown>(
+    "PUT",
+    `/storage/fileStorage/containerTypeRegistrations/${containerTypeId}`,
+    body,
+  );
+}
+
+// ─── Container Type Registration — application permission grants (v1.0) ──────
+//
+// The `applicationPermissionGrants` collection on a containerTypeRegistration
+// authorizes individual consuming apps to act on the container type. The
+// registration above (PUT on the registration) replaces the WHOLE collection;
+// these helpers add / list / remove a SINGLE app's grant without disturbing the
+// others — the supported way to authorize additional apps on an existing
+// registration. The appId is part of the URL, never the body.
+
+interface ApplicationPermissionGrantsResponse {
+  value: ApplicationPermissionGrant[];
+}
+
+/**
+ * Grant (create or replace) a single application's permission grant on a
+ * container type registration (v1.0). Idempotent upsert via PUT — re-granting an
+ * existing appId overwrites its permissions. The registration id is the
+ * container type id in the tenant-local model used here.
+ */
+export async function grantContainerTypeAppPermission(
+  containerTypeId: string,
+  appId: string,
+  delegatedPermissions: string[] = ["full"],
+  applicationPermissions: string[] = ["full"],
+): Promise<ApplicationPermissionGrant> {
+  return graphRequest<ApplicationPermissionGrant>(
+    "PUT",
+    `/storage/fileStorage/containerTypeRegistrations/${containerTypeId}/applicationPermissionGrants/${appId}`,
+    { delegatedPermissions, applicationPermissions },
+  );
+}
+
+/** List the application permission grants on a container type registration (v1.0). */
+export async function listContainerTypeAppPermissions(
+  containerTypeId: string,
+): Promise<ApplicationPermissionGrant[]> {
+  const result = await graphRequest<ApplicationPermissionGrantsResponse>(
+    "GET",
+    `/storage/fileStorage/containerTypeRegistrations/${containerTypeId}/applicationPermissionGrants`,
+  );
+  return result.value ?? [];
+}
+
+/** Remove a single application's permission grant from a container type registration (v1.0). */
+export async function revokeContainerTypeAppPermission(
+  containerTypeId: string,
+  appId: string,
+): Promise<void> {
+  await graphRequest<unknown>(
+    "DELETE",
+    `/storage/fileStorage/containerTypeRegistrations/${containerTypeId}/applicationPermissionGrants/${appId}`,
+  );
+}
+// ─── Container Type Permissions (owner role — beta only) ─────────────────
+
+interface ContainerTypePermissionsResponse {
+  value: ContainerTypePermission[];
+}
+
+/**
+ * Grant the `owner` role on a container type to a USER (beta). Owners can create
+ * containers using a public client (PCA) / delegated token — v1.0 rejects
+ * container creation by public clients. Only the `owner` role and a USER
+ * identity are supported; max 3 permissions per container type (duplicates are
+ * idempotent). The caller must already be an owner / SPE admin / Global admin.
+ */
+export async function grantContainerTypeOwner(
+  containerTypeId: string,
+  userId: string,
+): Promise<ContainerTypePermission> {
+  return graphRequestBeta<ContainerTypePermission>(
+    "POST",
+    `/storage/fileStorage/containerTypes/${containerTypeId}/permissions`,
+    { roles: ["owner"], grantedToV2: { user: { id: userId } } },
+  );
+}
+
+/** List the permission (owner) entries on a container type (beta). */
+export async function listContainerTypePermissions(
+  containerTypeId: string,
+): Promise<ContainerTypePermission[]> {
+  const result = await graphRequestBeta<ContainerTypePermissionsResponse>(
+    "GET",
+    `/storage/fileStorage/containerTypes/${containerTypeId}/permissions`,
+  );
+  return result.value ?? [];
+}
+
+/** Get a single container-type permission by id (beta). */
+export async function getContainerTypePermission(
+  containerTypeId: string,
+  permissionId: string,
+): Promise<ContainerTypePermission> {
+  return graphRequestBeta<ContainerTypePermission>(
+    "GET",
+    `/storage/fileStorage/containerTypes/${containerTypeId}/permissions/${permissionId}`,
+  );
+}
+
+/** Remove an owner permission from a container type (beta). */
+export async function revokeContainerTypePermission(
+  containerTypeId: string,
+  permissionId: string,
+): Promise<void> {
+  await graphRequestBeta<unknown>(
+    "DELETE",
+    `/storage/fileStorage/containerTypes/${containerTypeId}/permissions/${permissionId}`,
+  );
+}
+// ─── Containers ─────────────────────────────────────────────────────────────
+
+interface ListContainersResponse {
+  value: Container[];
+}
+
+export async function listContainers(containerTypeId: string): Promise<Container[]> {
+  const result = await graphRequest<ListContainersResponse>(
+    "GET",
+    `/storage/fileStorage/containers?$filter=containerTypeId eq ${containerTypeId}`,
+  );
+  return result.value ?? [];
+}
+
+export async function createContainer(
+  containerTypeId: string,
+  displayName: string,
+): Promise<Container> {
+  return graphRequestBeta<Container>("POST", "/storage/fileStorage/containers", {
+    displayName,
+    containerTypeId,
+  });
+}
+
+export async function activateContainer(containerId: string): Promise<void> {
+  await graphRequest<unknown>(
+    "POST",
+    `/storage/fileStorage/containers/${containerId}/activate`,
+  );
+}
+
+// ─── Container Permissions ──────────────────────────────────────────────────
+
+export async function addContainerPermission(
+  containerId: string,
+  userPrincipalName: string,
+  role: string,
+): Promise<ContainerPermission> {
+  return graphRequest<ContainerPermission>(
+    "POST",
+    `/storage/fileStorage/containers/${containerId}/permissions`,
+    {
+      roles: [role],
+      grantedToV2: {
+        user: { userPrincipalName },
+      },
+    },
+  );
+}
+
+// ─── Container Details ──────────────────────────────────────────────────────
+
+export async function getContainer(containerId: string): Promise<Container> {
+  return graphRequest<Container>(
+    "GET",
+    `/storage/fileStorage/containers/${containerId}`,
+  );
+}
+
+export async function deleteContainer(containerId: string): Promise<void> {
+  await graphRequest<unknown>(
+    "DELETE",
+    `/storage/fileStorage/containers/${containerId}`,
+  );
+}
+
+export async function permanentDeleteContainer(containerId: string): Promise<void> {
+  await graphRequest<unknown>(
+    "POST",
+    `/storage/fileStorage/containers/${containerId}/permanentDelete`,
+  );
+}
+
+export async function restoreDeletedContainer(containerId: string): Promise<void> {
+  await graphRequest<unknown>(
+    "POST",
+    `/storage/fileStorage/deletedContainers/${containerId}/restore`,
+  );
+}
+
+export async function lockContainer(containerId: string): Promise<void> {
+  await graphRequest<unknown>(
+    "POST",
+    `/storage/fileStorage/containers/${containerId}/lock`,
+  );
+}
+
+export async function unlockContainer(containerId: string): Promise<void> {
+  await graphRequest<unknown>(
+    "POST",
+    `/storage/fileStorage/containers/${containerId}/unlock`,
+  );
+}
+
+export async function listContainerPermissions(
+  containerId: string,
+): Promise<ContainerPermission[]> {
+  const result = await graphRequest<{ value: ContainerPermission[] }>(
+    "GET",
+    `/storage/fileStorage/containers/${containerId}/permissions`,
+  );
+  return result.value ?? [];
+}
+
+export async function updateContainerPermission(
+  containerId: string,
+  permissionId: string,
+  role: string,
+): Promise<void> {
+  await graphRequest<unknown>(
+    "PATCH",
+    `/storage/fileStorage/containers/${containerId}/permissions/${permissionId}`,
+    { roles: [role] },
+  );
+}
+
+export async function removeContainerPermission(
+  containerId: string,
+  permissionId: string,
+): Promise<void> {
+  await graphRequest<unknown>(
+    "DELETE",
+    `/storage/fileStorage/containers/${containerId}/permissions/${permissionId}`,
+  );
+}
+
+export async function getCustomProperties(
+  containerId: string,
+): Promise<CustomProperties> {
+  return graphRequest<CustomProperties>(
+    "GET",
+    `/storage/fileStorage/containers/${containerId}/customProperties`,
+  );
+}
+
+// ─── Drive / Content Operations ─────────────────────────────────────────────
+
+export async function getContainerDrive(containerId: string): Promise<Drive> {
+  return graphRequest<Drive>(
+    "GET",
+    `/storage/fileStorage/containers/${containerId}/drive`,
+  );
+}
+
+export async function getDriveItem(
+  driveId: string,
+  itemPath: string,
+): Promise<DriveItem> {
+  return graphRequest<DriveItem>(
+    "GET",
+    `/drives/${driveId}/root:${itemPath}`,
+  );
+}
+
+export async function listDriveChildren(
+  driveId: string,
+  folderId?: string,
+): Promise<DriveItem[]> {
+  const path = folderId
+    ? `/drives/${driveId}/items/${folderId}/children`
+    : `/drives/${driveId}/root/children`;
+  const result = await graphRequest<{ value: DriveItem[] }>("GET", path);
+  return result.value ?? [];
+}
+
+export async function uploadSmallFile(
+  driveId: string,
+  targetPath: string,
+  content: string,
+): Promise<DriveItem> {
+  return graphRequest<DriveItem>(
+    "PUT",
+    `/drives/${driveId}/root:${targetPath}:/content`,
+    content,
+    { "Content-Type": "text/plain" },
+  );
+}
+
+export async function createUploadSession(
+  driveId: string,
+  targetPath: string,
+  fileName: string,
+): Promise<UploadSession> {
+  return graphRequest<UploadSession>(
+    "POST",
+    `/drives/${driveId}/root:${targetPath}:/createUploadSession`,
+    {
+      item: {
+        "@microsoft.graph.conflictBehavior": "rename",
+        name: fileName,
+      },
+    },
+  );
+}
+
+export async function createFolder(
+  driveId: string,
+  parentId: string,
+  folderName: string,
+): Promise<DriveItem> {
+  const path = parentId === "root"
+    ? `/drives/${driveId}/root/children`
+    : `/drives/${driveId}/items/${parentId}/children`;
+  return graphRequest<DriveItem>("POST", path, {
+    name: folderName,
+    folder: {},
+    "@microsoft.graph.conflictBehavior": "fail",
+  });
+}
+
+export async function previewDriveItem(
+  driveId: string,
+  itemId: string,
+): Promise<PreviewResult> {
+  return graphRequest<PreviewResult>(
+    "POST",
+    `/drives/${driveId}/items/${itemId}/preview`,
+    {},
+  );
+}
+
+export async function createSharingLink(
+  driveId: string,
+  itemId: string,
+  type: string,
+  scope: string,
+): Promise<SharingLink> {
+  return graphRequest<SharingLink>(
+    "POST",
+    `/drives/${driveId}/items/${itemId}/createLink`,
+    { type, scope },
+  );
+}
+
+export async function listDriveItemPermissions(
+  driveId: string,
+  itemId: string,
+): Promise<SharingLink[]> {
+  const result = await graphRequest<{ value: SharingLink[] }>(
+    "GET",
+    `/drives/${driveId}/items/${itemId}/permissions`,
+  );
+  return result.value ?? [];
+}
+
+export async function revokeSharingLink(
+  driveId: string,
+  itemId: string,
+  permissionId: string,
+): Promise<void> {
+  await graphRequest<unknown>(
+    "DELETE",
+    `/drives/${driveId}/items/${itemId}/permissions/${permissionId}`,
+  );
+}
+
+export async function searchContent(
+  query: string,
+  maxResults: number = 25,
+): Promise<SearchResponse> {
+  return graphRequest<SearchResponse>(
+    "POST",
+    "/search/query",
+    {
+      requests: [
+        {
+          entityTypes: ["driveItem"],
+          query: { queryString: query, includeHiddenContent: true },
+          from: 0,
+          size: maxResults,
+        },
+      ],
+    },
+  );
+}
+
+// ─── Billing / Container Type Config ────────────────────────────────────────
+
+export async function getContainerType(
+  containerTypeId: string,
+): Promise<ContainerType> {
+  // Graph beta returns `id`/`name`; normalize to containerTypeId/displayName so
+  // callers (container_type_get, billing_check) read a populated id and name.
+  const raw = await graphRequestBeta<RawContainerType>(
+    "GET",
+    `/storage/fileStorage/containerTypes/${containerTypeId}`,
+  );
+  return normalizeContainerType(raw);
+}
+
+export async function updateContainerType(
+  containerTypeId: string,
+  update: Record<string, unknown>,
+): Promise<ContainerType> {
+  // The beta Update fileStorageContainerType API accepts only name/settings/etag
+  // (the display name field is `name`, NOT `displayName`). Normalize the response
+  // (a PATCH may also return 204 No Content) so callers read a populated id/name.
+  const raw = await graphRequestBeta<RawContainerType>(
+    "PATCH",
+    `/storage/fileStorage/containerTypes/${containerTypeId}`,
+    update,
+  );
+  return normalizeContainerType(raw ?? {});
+}
+
+/** Delete a container type (owning-app token). Used by cleanup. */
+export async function deleteContainerType(containerTypeId: string): Promise<void> {
+  await graphRequestBeta<unknown>(
+    "DELETE",
+    `/storage/fileStorage/containerTypes/${containerTypeId}`,
+  );
+}
+
+/** Delete an Entra app registration (bootstrap token). Used by cleanup. */
+export async function deleteApplication(
+  appObjectId: string,
+  getToken: () => Promise<string>,
+): Promise<void> {
+  await graphRequest<unknown>(
+    "DELETE",
+    `/applications/${appObjectId}`,
+    undefined,
+    undefined,
+    getToken,
+  );
+}

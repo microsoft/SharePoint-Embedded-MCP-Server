@@ -1,0 +1,4 @@
+# .NET build outputs (kept out of git and the scaffolded project)
+bin/
+obj/
+.publish/

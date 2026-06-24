@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.tgz
+
+# Sample app build outputs (the sample SOURCES under samples/ are committed)
+samples/**/bin/
+samples/**/obj/
+samples/**/.publish/

@@ -1,0 +1,15 @@
+{
+  // SPE MCP server for this repo. Bootstrap mode uses your Azure CLI sign-in,
+  // so no Entra app is required:
+  //   1. az login --allow-no-subscriptions
+  //   2. npm run build
+  //   3. Click the 'Start' CodeLens above the "spe" entry below.
+  // Then ask Copilot Chat things like "List my SPE container types".
+  "servers": {
+    "spe": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${workspaceFolder}/dist/cli.js", "start"]
+    }
+  }
+}

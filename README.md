@@ -1,0 +1,359 @@
+# SPE MCP Server
+
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for SharePoint Embedded. Lets any MCP-compatible AI client (VS Code Copilot, Claude Desktop, Cursor, Azure Foundry) manage SPE resources via natural language.
+
+## Available Tools
+
+The server exposes **40 tools**, plus an MCP **Prompt** (`provision_spe_app`) and **Resources** (reference architectures).
+
+**Provisioning & status**
+
+| Tool | Description |
+|------|-------------|
+| `status_get` | Signed-in identity (Azure CLI) + provisioning readiness |
+| `project_app_create` | Create the owning Entra app (via az bootstrap token) |
+| `project_provision` | One-call orchestrator: app → container type → (billing) → register → container |
+| `container_type_create` / `container_type_register` / `container_create` | Individual provisioning steps |
+| `container_type_list` / `container_list` / `container_get` / `container_type_get` | Read operations |
+| `container_type_update` / `container_type_delete` | Update or delete a container type |
+| `container_type_grant_owner` / `container_type_revoke_owner` / `container_type_owners_list` | Manage container-type owners (beta; enables PCA container creation) |
+| `container_type_app_grant_add` / `container_type_app_grant_remove` / `container_type_app_grants_list` | Manage application permission grants on a container type registration (authorize consuming apps; v1.0) |
+
+**Billing**
+
+| Tool | Description |
+|------|-------------|
+| `azure_subscriptions_list` / `azure_resource_groups_list` | Pick where standard billing lands (az) |
+| `billing_setup` | Register Microsoft.Syntex RP + link the container type (standard) |
+| `billing_check` | Inspect billing classification / trial expiry |
+
+**Scaffold, run & deploy**
+
+| Tool | Description |
+|------|-------------|
+| `project_scaffold` | Materialize a reference architecture (React SPA+Functions, C# web) |
+| `project_hydrate_config` | Write `.env` / `appsettings` / `azure.yaml` from provisioning state |
+| `project_seed_sample_data` | Seed sample containers + documents (closed loop) |
+| `project_run_local` | Start the scaffolded app locally |
+| `project_deploy` | Deploy to Azure with `azd up`, return the live URL |
+
+**Content plane (opt-in) & lifecycle**
+
+| Tool | Description |
+|------|-------------|
+| `content_access_grant` / `content_access_revoke` | Opt-in file read/manage consent |
+| `content_file_upload` / `content_folder_create` / `content_search` / `content_file_preview` / `content_sharing_manage` / `container_permissions_manage` / `container_archive_restore` / `container_delete` | Container & content operations |
+| `project_cleanup` | Delete provisioned CT + owning app (confirm required) |
+
+**Documentation (grounded via Microsoft Learn MCP)**
+
+| Tool | Description |
+|------|-------------|
+| `docs_search` | Search official SPE / Graph docs (proxies the [Microsoft Learn MCP](https://learn.microsoft.com/api/mcp)) |
+| `docs_fetch` | Fetch a full Microsoft Learn doc page by URL |
+
+> The documentation tools require the public **Microsoft Learn MCP** server
+> (`https://learn.microsoft.com/api/mcp`, no auth). Override the endpoint with
+> `SPE_LEARN_MCP_URL` (used by tests).
+
+## Install
+
+> **Status:** the first public release is in progress. Once published, the server
+> will be available on npm as **`@microsoft/spe-mcp-server`** and runnable with
+> `npx` — no global install required:
+
+```bash
+npx -y -p @microsoft/spe-mcp-server spe-mcp start
+```
+
+Until the npm package is published, build from source — see
+[Quick Start](#quick-start) below. To wire an MCP client to the package, see
+[Usage with VS Code](#usage-with-vs-code).
+
+## Prerequisites
+
+- **Node.js** >= 18
+
+### Running modes
+
+**Bootstrap mode (default, recommended for the standalone POC)** — no Microsoft
+app registration required. The server uses your **Azure CLI** session for the
+control plane and provisions the owning app on demand.
+
+- Install the [Azure CLI](https://aka.ms/install-azure-cli)
+- Sign in once: `az login --allow-no-subscriptions` (the flag is required for M365-only tenants with no Azure subscription)
+- Start the server with **no** `--client-id`
+
+> **Conditional Access / step-up authentication (standard billing).** Standard-billing
+> provisioning performs Azure Resource Manager (ARM) writes — registering the
+> `Microsoft.Syntex` resource provider and creating the `Microsoft.Syntex/accounts`
+> billing account. If your tenant has a Conditional Access policy that requires a
+> step-up (MFA / auth-context) for ARM, `az` can fail with `InteractionRequired` /
+> `AADSTS50076` / a **claims challenge**. The MCP server detects this and surfaces an
+> actionable error. To satisfy the policy, re-authenticate **interactively in your own
+> terminal**, then retry:
+>
+> ```bash
+> az login --scope https://management.core.windows.net//.default --tenant <your-tenant-id>
+> ```
+>
+> If interactive browser sign-in still doesn't clear the policy (e.g. an auth-context
+> "p1" step-up), complete the step-up via the **SharePoint admin center**, then retry the
+> operation. The Azure CLI cannot redeem a claims challenge non-interactively, so the
+> server does **not** automate this step (detect + surface + document only).
+
+**Pre-provisioned-app mode (back-compat)** — pass an existing public-client
+Entra app that already has these admin-consented delegated permissions:
+
+- `FileStorageContainer.Selected`
+- `FileStorageContainerType.Manage.All`
+- `FileStorageContainerTypeReg.Manage.All`
+
+> Don't have an app? Create one manually in the [Azure Portal](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade). The app must be a **public client** (`isFallbackPublicClient: true`) with `http://localhost` as a redirect URI.
+
+## Quick Start
+
+```bash
+# 1. Install dependencies
+npm install
+
+# 2. Build
+npm run build
+
+# 3a. Bootstrap mode — just sign into Azure CLI (no app needed)
+az login --allow-no-subscriptions
+npx @modelcontextprotocol/inspector node dist/cli.js start
+
+# 3b. OR pre-provisioned-app mode — authenticate as an existing app (once)
+node dist/cli.js auth --client-id YOUR_CLIENT_ID --tenant-id YOUR_TENANT_ID
+
+# 4. Test with MCP Inspector
+npx @modelcontextprotocol/inspector node dist/cli.js start
+```
+
+For step 4, set these **Environment Variables** in the Inspector UI:
+- `SPE_CLIENT_ID` = your client ID
+- `SPE_TENANT_ID` = your tenant ID
+
+## Configuration
+
+The server accepts configuration via CLI flags or environment variables:
+
+| CLI Flag | Env Var | Description |
+|----------|---------|-------------|
+| `--client-id` | `SPE_CLIENT_ID` | Entra ID Application (Client) ID |
+| `--tenant-id` | `SPE_TENANT_ID` | Entra ID Tenant ID |
+
+## Usage with VS Code
+
+Add an MCP server entry to `.vscode/mcp.json` in your workspace:
+
+```json
+{
+  "servers": {
+    "spe": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["<path-to>/mcp-server/dist/cli.js", "start"],
+      "env": {
+        "SPE_CLIENT_ID": "your-client-id",
+        "SPE_TENANT_ID": "your-tenant-id"
+      }
+    }
+  }
+}
+```
+
+Then in Copilot Chat you can ask:
+- *"List my SPE container types"*
+- *"Create a trial container type called Contoso Docs for app ID abc-123"*
+
+To point an MCP client at the published npm package instead of a local build:
+
+```json
+{
+  "servers": {
+    "spe": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "-p", "@microsoft/spe-mcp-server", "spe-mcp", "start"],
+      "env": {
+        "SPE_CLIENT_ID": "your-client-id",
+        "SPE_TENANT_ID": "your-tenant-id"
+      }
+    }
+  }
+}
+```
+
+> **`npx -y`** suppresses the install prompt so VS Code can launch the server
+> non-interactively. Bootstrap mode needs no app, so you can drop the `env` block
+> and just `az login --allow-no-subscriptions`.
+
+## Usage with Claude Desktop
+
+Add to `%APPDATA%\Claude\claude_desktop_config.json` (Windows) or `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
+
+```json
+{
+  "mcpServers": {
+    "spe": {
+      "command": "node",
+      "args": ["<path-to>/mcp-server/dist/cli.js", "start"],
+      "env": {
+        "SPE_CLIENT_ID": "your-client-id",
+        "SPE_TENANT_ID": "your-tenant-id"
+      }
+    }
+  }
+}
+```
+
+## CLI Commands
+
+```bash
+# Start the MCP server (stdio transport)
+spe-mcp start [--client-id ID] [--tenant-id ID]
+
+# Authenticate interactively (cache tokens for headless use)
+spe-mcp auth --client-id ID --tenant-id ID
+
+# Clear cached tokens
+spe-mcp logout
+```
+
+## Authentication
+
+The server uses [MSAL](https://learn.microsoft.com/en-us/entra/identity-platform/msal-overview) with this auth waterfall:
+
+1. **Silent** — uses cached refresh token from `~/.spe-mcp/token-cache.json`
+2. **Interactive browser** — opens browser for PKCE sign-in (interactive terminals only)
+3. **Device code** — prints a URL + code to stderr (interactive terminals only)
+
+For MCP clients that spawn the server as a subprocess (VS Code, Claude Desktop), run `spe-mcp auth` once in a terminal to cache tokens. The server will use the cached tokens silently on subsequent starts.
+
+### Token Storage
+
+Tokens are cached to `~/.spe-mcp/token-cache.json`. This file contains MSAL's serialized token cache (refresh tokens, account info). It's readable only by the current user.
+
+> **TODO:** Add OS keychain support via [keytar](https://github.com/nicktrav/keytar) as the primary cache, falling back to file cache. Keytar provides OS-managed encryption (Windows Credential Manager / macOS Keychain / Linux Secret Service) but hit data size limits with MSAL's multi-scope cache during initial testing.
+
+## Architecture
+
+```
+src/
+├── index.ts                — MCP server: TOOLS registry, dispatch, transport, prompts/resources wiring
+├── cli.ts                  — CLI entry point (start, auth, logout)
+├── auth.ts                 — MSAL auth (silent → browser → device code)
+├── bootstrap.ts            — Azure CLI bootstrap (signed-in identity, az token)
+├── azure-cli.ts            — az invocations (subscriptions, resource groups, RP registration)
+├── graph-client.ts         — Microsoft Graph client with retry + auth
+├── docs-client.ts          — Microsoft Learn MCP proxy (docs_search / docs_fetch)
+├── container-retry.ts      — Retry helper for registration propagation delays
+├── validation.ts           — Shared input validation
+├── state.ts                — Provisioning state persistence
+├── prompts.ts              — MCP Prompt (provision_spe_app)
+├── resources.ts            — MCP Resources (reference architectures)
+├── reference-architectures.ts — Reference-architecture catalog (reads ../samples/)
+├── elicitation.ts          — Interactive consent / step-up prompts
+├── user-agent.ts           — Telemetry User-Agent string
+├── types.ts                — Shared TypeScript types
+└── tools/                  — 31 tools across 28 modules (one McpTool per export)
+    ├── status.ts                   — status_get
+    ├── create-app.ts / provision.ts — project_app_create, project_provision
+    ├── create-container-type.ts / register-container-type.ts / list-container-types.ts
+    ├── create-container.ts / list-containers.ts / get-container.ts
+    ├── manage-permissions.ts / archive-restore.ts / delete-container.ts
+    ├── upload-file.ts / create-folder.ts / search-content.ts / preview-file.ts / manage-sharing.ts
+    ├── content-access.ts           — content_access_grant / content_access_revoke (+ withContentAccess gate)
+    ├── check-billing.ts / setup-billing.ts / list-azure.ts
+    ├── scaffold.ts / hydrate-config.ts / seed-sample-data.ts / run-local.ts / deploy-azure.ts
+    ├── cleanup.ts                  — project_cleanup
+    └── search-docs.ts              — docs_search / docs_fetch
+```
+
+> Unit/integration tests live alongside their modules as `*.test.ts` (run with `npm test`).
+
+Modeled after [azure-core/enghub-mcp-server-tools](https://github.com/azure-core/enghub-mcp-server-tools):
+- Transport connects before auth (MCP handshake never blocked)
+- Auth initializes in background; retries on first tool call if startup auth fails
+- Tools are `{ name, description, inputSchema, handler }` — ListTools strips handlers for serialization
+- Content-plane tools are wrapped with `withContentAccess(...)` so they stay gated behind the opt-in consent
+
+## Adding New Tools
+
+1. Create `src/tools/your-tool.ts`. Name the tool in grouped `snake_case`
+   (`<domain>_<action>`, e.g. `container_get`, `content_file_upload`):
+
+```typescript
+import type { McpTool } from "../types.js";
+
+export const yourTool: McpTool = {
+  name: "container_example_action",
+  description: "What the tool does",
+  inputSchema: {
+    type: "object",
+    properties: {
+      param: { type: "string", description: "..." },
+    },
+    required: ["param"],
+  },
+  handler: async (args) => {
+    // Call graph-client functions
+    return {
+      content: [{ type: "text", text: "result" }],
+    };
+  },
+};
+```
+
+2. Add Graph API calls to `src/graph-client.ts` (or `azure-cli.ts` for `az`-backed tools)
+3. Import the tool and add it to the `TOOLS` array in `src/index.ts`. If it reads or
+   writes container content, wrap it with `withContentAccess(...)` so it respects the
+   content-plane opt-in gate.
+4. Rebuild: `npm run build`
+
+## Testing
+
+```bash
+npm test          # vitest unit/integration tests (tool logic, mocked I/O)
+npm run lint      # eslint
+npm run typecheck # tsc --noEmit
+npm run ci        # typecheck + test + build (what CI runs)
+```
+
+## Contributing
+
+This project welcomes contributions and suggestions. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for details. Most contributions require you to agree
+to a Contributor License Agreement (CLA); for details visit
+<https://cla.opensource.microsoft.com>.
+
+This project has adopted the
+[Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
+For more information see the
+[Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or contact
+[opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or
+comments.
+
+## Security
+
+Microsoft takes security seriously. If you believe you have found a security
+vulnerability, please report it privately as described in [SECURITY.md](SECURITY.md) —
+**do not** file a public GitHub issue.
+
+<!-- TODO (CELA Note 3, OSS review 55532): before turning the repo public, add the MCP-server
+     notices/disclaimers your frontline CELA provides per https://aka.ms/MCP4CELA. -->
+
+## Trademarks
+
+This project may contain trademarks or logos for projects, products, or services.
+Authorized use of Microsoft trademarks or logos is subject to and must follow
+[Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/legal/intellectualproperty/trademarks/usage/general).
+Use of Microsoft trademarks or logos in modified versions of this project must not cause
+confusion or imply Microsoft sponsorship. Any use of third-party trademarks or logos is
+subject to those third-parties' policies.
+
+## License
+
+Licensed under the [MIT License](LICENSE).
