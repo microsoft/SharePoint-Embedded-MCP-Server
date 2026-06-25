@@ -536,6 +536,7 @@ interface RawContainerType {
   azureSubscriptionId?: string;
   createdDateTime?: string;
   expirationDateTime?: string;
+  etag?: string;
 }
 
 function normalizeContainerType(raw: RawContainerType): ContainerType {
@@ -1019,12 +1020,21 @@ export async function updateContainerType(
   update: Record<string, unknown>,
 ): Promise<ContainerType> {
   // The beta Update fileStorageContainerType API accepts only name/settings/etag
-  // (the display name field is `name`, NOT `displayName`). Normalize the response
-  // (a PATCH may also return 204 No Content) so callers read a populated id/name.
+  // (the display name field is `name`, NOT `displayName`), and **etag is REQUIRED**
+  // for optimistic concurrency: omitting it returns HTTP 400 "One of the provided
+  // arguments is not acceptable" (see the docs' "Update without ETag" example). So
+  // fetch the current etag via a Get when the caller didn't supply one, then PATCH
+  // with it. Normalize the response (a PATCH may also return 204 No Content) so
+  // callers read a populated id/name.
+  const body: Record<string, unknown> = { ...update };
+  if (body.etag === undefined) {
+    const current = await getContainerType(containerTypeId);
+    if (current.etag) body.etag = current.etag;
+  }
   const raw = await graphRequestBeta<RawContainerType>(
     "PATCH",
     `/storage/fileStorage/containerTypes/${containerTypeId}`,
-    update,
+    body,
   );
   return normalizeContainerType(raw ?? {});
 }

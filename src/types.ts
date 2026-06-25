@@ -48,6 +48,11 @@ export interface ContainerType {
   createdDateTime?: string;
   expirationDateTime?: string;
   billingClassification?: "trial" | "standard" | "directToCustomer";
+  /**
+   * Optimistic-concurrency tag. Read from a Create/Get response and **required**
+   * in the body of an Update (PATCH) call — omitting it returns HTTP 400.
+   */
+  etag?: string;
 }
 
 /**

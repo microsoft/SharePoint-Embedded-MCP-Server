@@ -24,6 +24,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { initializeAuth, setAuthConfig } from "./auth.js";
 import { assertAzCli, getSignedInIdentity } from "./bootstrap.js";
+import { readState } from "./state.js";
 import { USER_AGENT } from "./user-agent.js";
 import type { McpTool, ServerConfig } from "./types.js";
 // Status / diagnostics
@@ -262,6 +263,16 @@ export async function startServer(config: ServerConfig) {
     // the Azure CLI bootstrap token; SPE provisioning creates the owning app on
     // demand (Phase 1). Verify az is available and report the signed-in identity.
     log("Bootstrap mode — no --client-id; using Azure CLI for the control plane");
+    // Prime MSAL auth from persisted provisioning state so owning-app SPE/Graph
+    // calls work regardless of which tool runs first. Without this, read tools
+    // that don't call setAuthConfig themselves (container_list, container_get,
+    // billing_check, container_type_list, content_*) throw "Auth not configured"
+    // when one of them is the first Graph call of the session.
+    const persisted = readState();
+    if (persisted.appId && persisted.tenantId) {
+      setAuthConfig({ clientId: persisted.appId, tenantId: persisted.tenantId });
+      log(`Primed auth from persisted state (owning app ${persisted.appId}, tenant ${persisted.tenantId})`);
+    }
     try {
       await assertAzCli();
       const identity = await getSignedInIdentity();

@@ -21,8 +21,14 @@ import {
   createApplication,
   findApplicationByAppId,
   findApplicationByName,
+  updateContainerType,
   LOCAL_SPA_REDIRECT_URI,
 } from "./graph-client.js";
+
+// updateContainerType uses the default getAccessToken (MSAL); mock it so the
+// container-type update tests run fully offline. The other tests here pass an
+// explicit getToken and are unaffected.
+vi.mock("./auth.js", () => ({ getAccessToken: vi.fn(async () => "test-token") }));
 
 const GRAPH_RESOURCE_APP_ID = "00000003-0000-0000-c000-000000000000";
 const IDS = {
@@ -99,6 +105,49 @@ function graphEntry(rra: RequiredResourceAccess[]): RequiredResourceAccess | und
     (e) => e.resourceAppId.toLowerCase() === GRAPH_RESOURCE_APP_ID.toLowerCase(),
   );
 }
+
+describe("updateContainerType — supplies the required etag", () => {
+  it("fetches the current etag via Get and includes it in the PATCH body", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        okResponse({ id: "ct-1", name: "Old Name", owningAppId: "app-1", etag: "ETAG-123" }),
+      ) // GET (read current etag)
+      .mockResolvedValueOnce(
+        okResponse({ id: "ct-1", name: "New Name", owningAppId: "app-1", etag: "ETAG-124" }),
+      ); // PATCH
+
+    await updateContainerType("ct-1", { name: "New Name" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [getUrl, getInit] = fetchMock.mock.calls[0];
+    expect((getInit as RequestInit).method).toBe("GET");
+    expect(getUrl).toContain("/storage/fileStorage/containerTypes/ct-1");
+    const [patchUrl, patchInit] = fetchMock.mock.calls[1];
+    expect((patchInit as RequestInit).method).toBe("PATCH");
+    expect(patchUrl).toContain("/storage/fileStorage/containerTypes/ct-1");
+    // The required etag (read from the Get) is merged into the update body.
+    expect(JSON.parse((patchInit as RequestInit).body as string)).toEqual({
+      name: "New Name",
+      etag: "ETAG-123",
+    });
+  });
+
+  it("does not overwrite a caller-supplied etag (and skips the extra Get)", async () => {
+    fetchMock.mockResolvedValueOnce(
+      okResponse({ id: "ct-1", name: "New Name", owningAppId: "app-1", etag: "ETAG-9" }),
+    ); // PATCH only
+
+    await updateContainerType("ct-1", { name: "New Name", etag: "CALLER-ETAG" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, patchInit] = fetchMock.mock.calls[0];
+    expect((patchInit as RequestInit).method).toBe("PATCH");
+    expect(JSON.parse((patchInit as RequestInit).body as string)).toEqual({
+      name: "New Name",
+      etag: "CALLER-ETAG",
+    });
+  });
+});
 
 describe("addSpePermissions — G1 merge (non-destructive)", () => {
   it("preserves an unrelated permission and a pre-existing SPE subset, adds the rest exactly once", async () => {
