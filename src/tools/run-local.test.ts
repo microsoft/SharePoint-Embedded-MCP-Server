@@ -42,7 +42,11 @@ vi.mock("node:child_process", () => ({
         child.emit("spawn");
         child.emit("exit", 1, null);
       } else {
+        // Healthy launch: 'spawn' fires, then a clean exit. The dev server uses
+        // startDetached (ignores a code-0 close and resolves on its grace timer),
+        // while `npm install` uses runToCompletion (resolves on this close).
         child.emit("spawn");
+        child.emit("close", 0, null);
       }
     });
     return child;

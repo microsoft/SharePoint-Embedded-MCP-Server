@@ -25,8 +25,15 @@ vi.mock("../graph-client.js", () => ({
   permanentDeleteContainer: vi.fn(),
   restoreDeletedContainer: vi.fn(),
 }));
+// container_list defaults containerTypeId from provisioning state; mock it so the
+// test never reads the developer's real ~/.spe-mcp/state.json.
+vi.mock("../state.js", () => ({
+  readState: vi.fn(() => ({})),
+  writeState: vi.fn(),
+}));
 
 import * as graph from "../graph-client.js";
+import * as state from "../state.js";
 import { listContainersTool } from "../tools/list-containers.js";
 import { getContainerTool } from "../tools/get-container.js";
 import { managePermissionsTool } from "../tools/manage-permissions.js";
@@ -62,6 +69,16 @@ describe("container_list", () => {
     const result = await listContainersTool.handler({});
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("required");
+  });
+
+  it("defaults containerTypeId from provisioning state when omitted", async () => {
+    vi.mocked(state.readState).mockReturnValueOnce({ containerTypeId: "ct-from-state" });
+    vi.mocked(graph.listContainers).mockResolvedValue([
+      { id: "c1", displayName: "Test", containerTypeId: "ct-from-state", status: "active", createdDateTime: "2026-01-01" },
+    ]);
+    const result = await listContainersTool.handler({});
+    expect(result.isError).toBeUndefined();
+    expect(graph.listContainers).toHaveBeenCalledWith("ct-from-state");
   });
 });
 

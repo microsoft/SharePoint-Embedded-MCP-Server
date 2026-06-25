@@ -102,7 +102,9 @@ function resetInMemoryAuthState(): void {
 function getConfig(): AuthConfig {
   if (!authConfig) {
     throw new Error(
-      "Auth not configured. Call setAuthConfig() with clientId and tenantId before using auth.",
+      "SharePoint Embedded authentication isn't configured yet. Run `project_provision` to " +
+        "create or attach the owning app (which wires authentication), or start the server with " +
+        "--client-id / SPE_CLIENT_ID. (Internal: setAuthConfig has not been called.)",
     );
   }
   return authConfig;

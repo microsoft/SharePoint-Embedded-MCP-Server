@@ -18,8 +18,16 @@
 import { connect } from "node:net";
 
 export interface ReadinessOptions {
-  /** Host to probe. Default: 127.0.0.1. */
+  /**
+   * Host to probe. When set, ONLY this host is probed (back-compat / explicit
+   * override). When omitted, both IPv4 and IPv6 loopback are probed (see
+   * `hosts`), because dev servers differ in which family they bind: Vite 6
+   * defaults to `localhost`, which on Windows resolves to IPv6 `::1` only, so an
+   * IPv4-only `127.0.0.1` probe would never connect even though the server is up.
+   */
   host?: string;
+  /** Loopback hosts to probe when `host` is not set. Default: ['127.0.0.1', '::1']. */
+  hosts?: string[];
   /** Total time to wait for readiness before giving up. Default: 15000ms. */
   timeoutMs?: number;
   /** Delay between connection attempts. Default: 500ms. */
@@ -54,21 +62,32 @@ function tryConnect(host: string, port: number, connectTimeoutMs: number): Promi
 
 /**
  * Poll `port` until it accepts a TCP connection or the overall timeout elapses.
- * Returns true once the server is reachable, false if it never became ready
- * within `timeoutMs`.
+ * Each round tries every probe host (IPv4 + IPv6 loopback by default) and
+ * returns true if ANY accepts — so a server bound to only one address family
+ * (e.g. Vite on IPv6 `::1`) is still detected. Returns false if no host became
+ * reachable within `timeoutMs`.
  */
 export async function waitForServerReady(port: number, options: ReadinessOptions = {}): Promise<boolean> {
   const {
-    host = "127.0.0.1",
+    host,
+    hosts,
     timeoutMs = 15_000,
     intervalMs = 500,
     connectTimeoutMs = 1_000,
   } = options;
 
+  const probeHosts = host
+    ? [host]
+    : hosts && hosts.length > 0
+      ? hosts
+      : ["127.0.0.1", "::1"];
+
   const deadline = Date.now() + timeoutMs;
   // Always make at least one attempt, even if timeoutMs is 0.
   for (;;) {
-    if (await tryConnect(host, port, connectTimeoutMs)) return true;
+    for (const h of probeHosts) {
+      if (await tryConnect(h, port, connectTimeoutMs)) return true;
+    }
     if (Date.now() >= deadline) return false;
     await sleep(intervalMs);
   }

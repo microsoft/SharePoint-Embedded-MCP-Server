@@ -159,6 +159,50 @@ function startDetached(command: string, args: string[], cwd: string): Promise<Sp
   });
 }
 
+/**
+ * Run a command to COMPLETION (resolve on exit/close, not after a grace window).
+ *
+ * Used for `npm install`: the dependency install MUST finish before the dev
+ * server starts. Starting `npm run dev` while `npm install` is still writing to
+ * `node_modules` (e.g. Vite's `node_modules/.vite` dependency-optimization
+ * cache) makes the dev server re-optimize/stall and never bind its port — a
+ * fresh scaffold then fails readiness even though the toolchain is fine. Running
+ * install first eliminates that race. Resolves `ok:false` (non-fatal) on a
+ * spawn error or non-zero exit so the caller can still attempt the dev server
+ * (e.g. when dependencies are already present and only the dev launch matters).
+ */
+function runToCompletion(command: string, args: string[], cwd: string): Promise<SpawnOutcome> {
+  return new Promise((resolveOutcome) => {
+    let settled = false;
+    const finish = (outcome: SpawnOutcome): void => {
+      if (settled) return;
+      settled = true;
+      resolveOutcome(outcome);
+    };
+
+    let child;
+    try {
+      child = spawn(command, args, {
+        cwd,
+        stdio: "ignore",
+        shell: process.platform === "win32",
+      });
+    } catch (error) {
+      finish({ ok: false, error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+
+    child.once("error", (error: Error) => finish({ ok: false, error: error.message }));
+    const onDone = (code: number | null): void => {
+      finish(typeof code === "number" && code !== 0
+        ? { ok: false, error: `process exited with code ${code}` }
+        : { ok: true });
+    };
+    child.once("exit", onDone);
+    child.once("close", onDone);
+  });
+}
+
 export const runLocalTool: McpTool = {
   name: "project_run_local",
   description:
@@ -186,9 +230,14 @@ export const runLocalTool: McpTool = {
     try {
       let outcome: SpawnOutcome;
       if (project.kind === "node") {
-        // Install dependencies (best-effort), then start the dev server and
-        // reflect the dev server's launch outcome.
-        await startDetached("npm", ["install"], dir);
+        // Install dependencies to COMPLETION first, THEN start the dev server.
+        // Running them concurrently lets `npm install` mutate node_modules while
+        // the dev server is optimizing dependencies, which stalls the server so
+        // it never binds its port (a fresh scaffold then fails readiness). The
+        // install outcome is non-fatal — if deps are already present a failed/
+        // partial install still lets the dev server launch — so we proceed and
+        // let the dev server's own launch + readiness drive success/failure.
+        await runToCompletion("npm", ["install"], dir);
         outcome = await startDetached("npm", ["run", "dev"], dir);
       } else {
         outcome = await startDetached("dotnet", ["run"], dir);
