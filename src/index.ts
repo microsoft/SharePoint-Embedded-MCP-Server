@@ -27,6 +27,9 @@ import { assertAzCli, getSignedInIdentity } from "./bootstrap.js";
 import { readState } from "./state.js";
 import { USER_AGENT } from "./user-agent.js";
 import type { McpTool, ServerConfig } from "./types.js";
+import { redact } from "./logging.js";
+import { fail } from "./responses.js";
+import { toSafeError } from "./errors.js";
 // Status / diagnostics
 import { statusTool } from "./tools/status.js";
 // Container Type tools
@@ -137,10 +140,47 @@ const TOOLS: McpTool[] = [
 ];
 
 // Strip handler for ListTools response (MCP SDK serialization)
-const LIST_TOOLS = TOOLS.map(({ name, description, inputSchema }) => ({
-  name,
-  description,
-  inputSchema,
+function toMcpAnnotations(tool: McpTool): Record<string, boolean> | undefined {
+  const annotations: Record<string, boolean> = {};
+  if (tool.annotations?.readOnly !== undefined) annotations.readOnlyHint = tool.annotations.readOnly;
+  if (tool.annotations?.destructive !== undefined) annotations.destructiveHint = tool.annotations.destructive;
+  if (tool.annotations?.idempotent !== undefined) annotations.idempotentHint = tool.annotations.idempotent;
+  return Object.keys(annotations).length > 0 ? annotations : undefined;
+}
+
+function withDuration(structuredContent: unknown, durationMs: number): unknown {
+  if (structuredContent === undefined) return undefined;
+  if (structuredContent && typeof structuredContent === "object" && !Array.isArray(structuredContent)) {
+    return { ...structuredContent as Record<string, unknown>, durationMs };
+  }
+  return { data: structuredContent, durationMs };
+}
+
+function validateArgs(args: Record<string, unknown>, tool: McpTool): { ok: true; args: Record<string, unknown> } | { ok: false; result: ReturnType<typeof fail> } {
+  if (tool.validateArgs) {
+    return { ok: true, args: tool.validateArgs(args) };
+  }
+
+  const missing = (tool.inputSchema.required ?? []).filter((key) => args[key] === undefined || args[key] === null);
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      result: fail(
+        "INVALID_ARGS",
+        `Missing required argument${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}`,
+        "Provide all required fields from the tool input schema.",
+      ),
+    };
+  }
+
+  return { ok: true, args };
+}
+
+const LIST_TOOLS = TOOLS.map((tool) => ({
+  name: tool.name,
+  description: tool.description,
+  inputSchema: tool.inputSchema,
+  ...(toMcpAnnotations(tool) ? { annotations: toMcpAnnotations(tool) } : {}),
 }));
 
 // ─── Server Setup ───────────────────────────────────────────────────────────
@@ -157,32 +197,57 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
-  log(`Tool call received: ${name}`, args);
+  const safeArgs = args && typeof args === "object" ? args as Record<string, unknown> : {};
+  log(`Tool call received: ${name}`, { tool: name, argKeys: Object.keys(safeArgs), args: redact(safeArgs) });
   const startTime = Date.now();
 
   try {
     const tool = TOOLS.find((t) => t.name === name);
     if (!tool) {
       log(`Unknown tool: ${name}`);
+      const result = fail("UNKNOWN_TOOL", `Unknown tool: ${name}`);
       return {
-        content: [{ type: "text" as const, text: `Unknown tool: ${name}` }],
-        isError: true,
+        content: result.content.map((c) => ({ type: "text" as const, text: c.text })),
+        isError: result.isError,
+        structuredContent: withDuration(result.structuredContent, Date.now() - startTime),
       } as const;
     }
 
-    log(`Executing ${name}`, args);
-    const result = await tool.handler(args as Record<string, unknown>);
-    log(`${name} completed in ${Date.now() - startTime}ms`);
+    log(`Executing ${name}`, { tool: name, argKeys: Object.keys(safeArgs), args: redact(safeArgs) });
+    const validated = validateArgs(safeArgs, tool);
+    if (!validated.ok) {
+      const durationMs = Date.now() - startTime;
+      log(`${name} rejected invalid arguments in ${durationMs}ms`);
+      return {
+        content: validated.result.content.map((c) => ({ type: "text" as const, text: c.text })),
+        isError: true,
+        structuredContent: withDuration(validated.result.structuredContent, durationMs),
+      } as const;
+    }
+
+    const result = await tool.handler(validated.args);
+    const durationMs = Date.now() - startTime;
+    log(`${name} completed in ${durationMs}ms`);
     return {
       content: result.content.map((c) => ({ type: "text" as const, text: c.text })),
       isError: result.isError,
+      structuredContent: withDuration(result.structuredContent, durationMs),
     } as const;
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    log(`Tool error: ${errorMessage}`, error);
+    const safeError = toSafeError(error);
+    log(`Tool error (${safeError.correlationId})`, {
+      tool: name,
+      argKeys: Object.keys(safeArgs),
+      args: redact(safeArgs),
+      error: error instanceof Error
+        ? { name: error.name, message: error.message, stack: error.stack }
+        : String(error),
+    });
+    const result = fail(safeError.code, `${safeError.message} (correlationId: ${safeError.correlationId})`, safeError.suggestion);
     return {
-      content: [{ type: "text" as const, text: `Error: ${errorMessage}` }],
-      isError: true,
+      content: result.content.map((c) => ({ type: "text" as const, text: c.text })),
+      isError: result.isError,
+      structuredContent: withDuration(result.structuredContent, Date.now() - startTime),
     } as const;
   }
 });

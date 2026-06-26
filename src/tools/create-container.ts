@@ -18,46 +18,38 @@ import {
 } from "../container-retry.js";
 import { readState, writeState } from "../state.js";
 import type { Container } from "../types.js";
-import type { McpTool } from "../types.js";
-
-interface CreateContainerArgs {
-  displayName?: string;
-  containerTypeId?: string;
-}
+import { defineTool, z } from "../tooling/define-tool.js";
+import { fail, ok } from "../responses.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export const createContainerTool: McpTool = {
+const createContainerSchema = z.object({
+  displayName: z.string().optional().describe("Display name for the container (e.g., 'Project Files'). Default: 'My First Container'."),
+  containerTypeId: z.string().optional().describe("Container type ID. Defaults to the most recently created/registered one."),
+});
+
+export const createContainerTool = defineTool({
   name: "container_create",
   description:
     "Create a container in a registered SharePoint Embedded container type and activate it. " +
     "Retries through the registration propagation delay automatically. Defaults the container " +
     "type ID from the current provisioning state when omitted.",
-  inputSchema: {
-    type: "object" as const,
-    properties: {
-      displayName: {
-        type: "string",
-        description: "Display name for the container (e.g., 'Project Files'). Default: 'My First Container'.",
-      },
-      containerTypeId: {
-        type: "string",
-        description: "Container type ID. Defaults to the most recently created/registered one.",
-      },
-    },
+  annotations: {
+    destructive: true,
+    idempotent: false,
+    plane: "content",
+    requiresConsent: true,
   },
+  schema: createContainerSchema,
   handler: async (args) => {
     const state = readState();
     const { displayName = "My First Container", containerTypeId = state.containerTypeId } =
-      args as CreateContainerArgs;
+      args;
 
     if (!containerTypeId) {
-      return {
-        content: [{ type: "text" as const, text: "Error: containerTypeId is required (none in state). Create and register a container type first." }],
-        isError: true,
-      };
+      return fail("INVALID_ARGS", "containerTypeId is required (none in state). Create and register a container type first.");
     }
 
     let container: Container | undefined;
@@ -75,18 +67,12 @@ export const createContainerTool: McpTool = {
           await sleep(containerCreateBackoffMs(attempt)); // 15s, 30s, 45s, 60s
           continue;
         }
-        return {
-          content: [{ type: "text" as const, text: `Error creating container after ${attempt} attempt(s): ${lastError}` }],
-          isError: true,
-        };
+        return fail("UPSTREAM", `creating container after ${attempt} attempt(s): ${lastError}`);
       }
     }
 
     if (!container) {
-      return {
-        content: [{ type: "text" as const, text: `Error: container creation failed. ${lastError}` }],
-        isError: true,
-      };
+      return fail("UPSTREAM", `container creation failed. ${lastError}`);
     }
 
     // Activate if needed (new containers start inactive).
@@ -113,6 +99,6 @@ export const createContainerTool: McpTool = {
       `| **Container Type** | \`${containerTypeId}\` |\n` +
       `| **Status** | ${activated ? "✅ active" : "⏳ activating"} |\n`;
 
-    return { content: [{ type: "text" as const, text: output }] };
+    return ok({ container, containerTypeId, displayName, activated }, output);
   },
-};
+});

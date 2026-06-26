@@ -22,7 +22,8 @@ import {
   registerContainerType,
 } from "../graph-client.js";
 import { readState, writeState } from "../state.js";
-import type { McpTool } from "../types.js";
+import { defineTool, z } from "../tooling/define-tool.js";
+import { fail, ok } from "../responses.js";
 
 interface CreateContainerTypeArgs {
   displayName: string;
@@ -205,67 +206,59 @@ function formatResult(result: Awaited<ReturnType<typeof executeCreateContainerTy
   return output;
 }
 
-export const createContainerTypeTool: McpTool = {
+const createContainerTypeSchema = z.object({
+  displayName: z.string().trim().min(1).describe("Display name for the container type (e.g., 'Contoso Legal Documents')"),
+  owningAppId: z.string().optional().describe(
+    "Application (Client) ID of the Entra ID app that will own this container type. " +
+    "Defaults to the app created by project_app_create when omitted.",
+  ),
+  billingClassification: z.enum(BILLING_CLASSIFICATIONS).optional().describe(
+    "Billing model: 'trial' (free, 30 days, max 3), 'standard' (billed to owning tenant), 'directToCustomer' (billed to consuming tenant). Default: trial",
+  ),
+  azureSubscriptionId: z.string().optional().describe("Azure subscription ID for standard billing. Required when billingClassification is 'standard'."),
+  resourceGroup: z.string().optional().describe("Azure resource group for standard billing."),
+  region: z.string().optional().describe("Azure region for standard billing."),
+  autoRegister: z.boolean().optional().describe(
+    "Automatically register the container type with full permissions for the owning app. Default: true. " +
+    "Registration is REQUIRED before any containers can be created.",
+  ),
+});
+
+function createContainerTypeValidationMessage(error: z.ZodError): string {
+  const issue = error.issues[0];
+  if (issue?.path[0] === "displayName") {
+    return "displayName is required and must be a non-empty string";
+  }
+  if (issue?.path[0] === "billingClassification") {
+    const received = "received" in issue ? String(issue.received) : "unknown";
+    return `Invalid billingClassification '${received}'. Must be one of: ${BILLING_CLASSIFICATIONS.join(", ")}.`;
+  }
+  return issue?.message ?? "Invalid container type arguments";
+}
+
+export const createContainerTypeTool = defineTool({
   name: "container_type_create",
   description:
     "Create a new SharePoint Embedded container type. A container type defines the relationship between your application and a set of containers. " +
     "Each owning application can have exactly one container type (1:1 relationship). " +
     "By default, the container type is automatically registered with full permissions for the owning app. " +
     "Trial container types are limited to 3 per tenant and expire after 30 days.",
-  inputSchema: {
-    type: "object" as const,
-    properties: {
-      displayName: {
-        type: "string",
-        description: "Display name for the container type (e.g., 'Contoso Legal Documents')",
-      },
-      owningAppId: {
-        type: "string",
-        description:
-          "Application (Client) ID of the Entra ID app that will own this container type. " +
-          "Defaults to the app created by project_app_create when omitted.",
-      },
-      billingClassification: {
-        type: "string",
-        enum: ["trial", "standard", "directToCustomer"],
-        description:
-          "Billing model: 'trial' (free, 30 days, max 3), 'standard' (billed to owning tenant), 'directToCustomer' (billed to consuming tenant). Default: trial",
-      },
-      azureSubscriptionId: {
-        type: "string",
-        description:
-          "Azure subscription ID for standard billing. Required when billingClassification is 'standard'.",
-      },
-      resourceGroup: {
-        type: "string",
-        description: "Azure resource group for standard billing.",
-      },
-      region: {
-        type: "string",
-        description: "Azure region for standard billing.",
-      },
-      autoRegister: {
-        type: "boolean",
-        description:
-          "Automatically register the container type with full permissions for the owning app. Default: true. " +
-          "Registration is REQUIRED before any containers can be created.",
-      },
-    },
-    required: ["displayName"],
+  annotations: {
+    destructive: true,
+    idempotent: true,
+    plane: "control",
   },
+  schema: createContainerTypeSchema,
+  validationErrorMessage: createContainerTypeValidationMessage,
   handler: async (args) => {
     try {
-      const result = await executeCreateContainerType(args as unknown as CreateContainerTypeArgs);
-      return {
-        content: [{ type: "text" as const, text: formatResult(result) }],
-        isError: !result.success,
-      };
+      const result = await executeCreateContainerType(args);
+      return result.success
+        ? ok(result, formatResult(result))
+        : fail("INVALID_ARGS", result.error ?? "Container type creation failed");
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Unknown error";
-      return {
-        content: [{ type: "text" as const, text: `Error creating container type: ${msg}` }],
-        isError: true,
-      };
+      return fail("UPSTREAM", `creating container type: ${msg}`);
     }
   },
-};
+});

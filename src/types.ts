@@ -10,6 +10,16 @@
 export interface McpToolResult {
   content: Array<{ type: string; text: string }>;
   isError?: boolean;
+  structuredContent?: unknown;
+}
+
+export interface McpToolAnnotations {
+  readOnly?: boolean;
+  destructive?: boolean;
+  idempotent?: boolean;
+  plane?: "control" | "content";
+  requiresConsent?: boolean;
+  localRequired?: boolean;
 }
 
 export interface McpTool {
@@ -20,6 +30,8 @@ export interface McpTool {
     properties: Record<string, unknown>;
     required?: string[];
   };
+  annotations?: McpToolAnnotations;
+  validateArgs?: (args: Record<string, unknown>) => Record<string, unknown>;
   handler: (args: Record<string, unknown>) => Promise<McpToolResult>;
 }
 
