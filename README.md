@@ -58,17 +58,53 @@ The server exposes **40 tools**, plus an MCP **Prompt** (`provision_spe_app`) an
 
 ## Install
 
-> **Status:** the first public release is in progress. Once published, the server
-> will be available on npm as **`@microsoft/spe-mcp-server`** and runnable with
-> `npx` — no global install required:
+Run the published npm package directly from your MCP client with `npx`; no
+global install is required.
 
-```bash
-npx -y -p @microsoft/spe-mcp-server spe-mcp start
+### VS Code / Cursor
+
+Add an MCP server entry to `.vscode/mcp.json` (VS Code) or your Cursor MCP
+configuration:
+
+```json
+{
+  "servers": {
+    "spe": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@microsoft/spe-mcp-server"]
+    }
+  }
+}
 ```
 
-Until the npm package is published, build from source — see
-[Quick Start](#quick-start) below. To wire an MCP client to the package, see
-[Usage with VS Code](#usage-with-vs-code).
+<!-- Registry publishing note: confirm the final immutable MCP Registry name before public release (`io.github.microsoft/SharePoint-Embedded-MCP-Server` for GitHub ownership verification vs. `com.microsoft/...` for a Microsoft-owned DNS namespace). -->
+
+### Claude Desktop
+
+Add to `%APPDATA%\Claude\claude_desktop_config.json` (Windows) or
+`~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
+
+```json
+{
+  "mcpServers": {
+    "spe": {
+      "command": "npx",
+      "args": ["-y", "@microsoft/spe-mcp-server"]
+    }
+  }
+}
+```
+
+> Bootstrap mode needs no app-specific environment variables; sign in once with
+> `az login --allow-no-subscriptions`.
+
+### Updating / removing
+
+Because clients run the package through `npx`, they pick up published updates
+without a global install. Pin a specific version with
+`@microsoft/spe-mcp-server@0.1.0-alpha.1`. To remove the server, delete the MCP
+client config entry.
 
 ## Prerequisites
 
@@ -111,7 +147,7 @@ Entra app that already has these admin-consented delegated permissions:
 
 > Don't have an app? Create one manually in the [Azure Portal](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade). The app must be a **public client** (`isFallbackPublicClient: true`) with `http://localhost` as a redirect URI.
 
-## Quick Start
+## Quick Start (from source)
 
 ```bash
 # 1. Install dependencies
@@ -144,6 +180,8 @@ The server accepts configuration via CLI flags or environment variables:
 | `--client-id` | `SPE_CLIENT_ID` | Entra ID Application (Client) ID |
 | `--tenant-id` | `SPE_TENANT_ID` | Entra ID Tenant ID |
 
+For troubleshooting, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+
 ## Usage with VS Code
 
 Add an MCP server entry to `.vscode/mcp.json` in your workspace:
@@ -153,8 +191,8 @@ Add an MCP server entry to `.vscode/mcp.json` in your workspace:
   "servers": {
     "spe": {
       "type": "stdio",
-      "command": "node",
-      "args": ["<path-to>/mcp-server/dist/cli.js", "start"],
+      "command": "npx",
+      "args": ["-y", "@microsoft/spe-mcp-server"],
       "env": {
         "SPE_CLIENT_ID": "your-client-id",
         "SPE_TENANT_ID": "your-tenant-id"
@@ -168,15 +206,15 @@ Then in Copilot Chat you can ask:
 - *"List my SPE container types"*
 - *"Create a trial container type called Contoso Docs for app ID abc-123"*
 
-To point an MCP client at the published npm package instead of a local build:
+To point an MCP client at a local source build instead:
 
 ```json
 {
   "servers": {
     "spe": {
       "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "-p", "@microsoft/spe-mcp-server", "spe-mcp", "start"],
+      "command": "node",
+      "args": ["<path-to>\\mcp-server\\dist\\cli.js", "start"],
       "env": {
         "SPE_CLIENT_ID": "your-client-id",
         "SPE_TENANT_ID": "your-tenant-id"
@@ -198,8 +236,8 @@ Add to `%APPDATA%\Claude\claude_desktop_config.json` (Windows) or `~/Library/App
 {
   "mcpServers": {
     "spe": {
-      "command": "node",
-      "args": ["<path-to>/mcp-server/dist/cli.js", "start"],
+      "command": "npx",
+      "args": ["-y", "@microsoft/spe-mcp-server"],
       "env": {
         "SPE_CLIENT_ID": "your-client-id",
         "SPE_TENANT_ID": "your-tenant-id"
@@ -342,8 +380,7 @@ Microsoft takes security seriously. If you believe you have found a security
 vulnerability, please report it privately as described in [SECURITY.md](SECURITY.md) —
 **do not** file a public GitHub issue.
 
-<!-- TODO (CELA Note 3, OSS review 55532): before turning the repo public, add the MCP-server
-     notices/disclaimers your frontline CELA provides per https://aka.ms/MCP4CELA. -->
+<!-- MCP-DISCLAIMER: Pending frontline-CELA notice text per https://aka.ms/MCP4CELA — required before public release. -->
 
 ## Trademarks
 
