@@ -14,8 +14,8 @@
  */
 
 import { searchDocs, fetchDoc } from "../docs-client.js";
-import type { McpTool } from "../types.js";
-import { requireString } from "../validation.js";
+import { defineTool, z } from "../tooling/define-tool.js";
+import { fail, ok } from "../responses.js";
 
 /** Bias queries toward SharePoint Embedded so generic terms resolve in-context. */
 function scopeToSpe(query: string): string {
@@ -23,7 +23,24 @@ function scopeToSpe(query: string): string {
   return /sharepoint embedded|\bspe\b/i.test(q) ? q : `${q} (SharePoint Embedded)`;
 }
 
-export const searchDocsTool: McpTool = {
+const searchDocsSchema = z.object({
+  query: z.string().trim().min(1, "query is required").describe(
+    "The developer's documentation question or keywords (e.g., 'how many trial container types per tenant', 'register container type on consuming tenant').",
+  ),
+});
+
+const fetchDocSchema = z.object({
+  url: z.string().trim().min(1, "url is required").describe("The Microsoft Learn documentation page URL to fetch in full."),
+});
+
+function firstValidationMessage(error: z.ZodError): string {
+  const issue = error.issues[0];
+  if (issue?.path[0] === "query") return "query is required";
+  if (issue?.path[0] === "url") return "url is required";
+  return issue?.message ?? "Invalid documentation tool arguments";
+}
+
+export const searchDocsTool = defineTool({
   name: "docs_search",
   description:
     "Search official Microsoft Learn documentation for SharePoint Embedded and Microsoft Graph. " +
@@ -31,71 +48,41 @@ export const searchDocsTool: McpTool = {
     "permissions, billing, Graph API endpoints, and SPE concepts — instead of relying on prior " +
     "knowledge, which may be outdated. Returns ranked excerpts with titles and doc URLs. " +
     "Follow up with docs_fetch to read a full page when an excerpt is insufficient.",
-  inputSchema: {
-    type: "object" as const,
-    properties: {
-      query: {
-        type: "string",
-        description:
-          "The developer's documentation question or keywords (e.g., 'how many trial container types per tenant', 'register container type on consuming tenant').",
-      },
-    },
-    required: ["query"],
+  annotations: {
+    readOnly: true,
+    idempotent: true,
+    plane: "control",
   },
+  schema: searchDocsSchema,
+  validationErrorMessage: firstValidationMessage,
   handler: async (args) => {
-    // Validate BEFORE trimming so a non-string `query` returns a clean
-    // validation envelope instead of throwing an uncaught TypeError.
-    const validated = requireString(args.query, "query");
-    if (!validated.ok) return validated.error;
-    const query = validated.value;
+    const query = args.query;
     try {
       const text = await searchDocs(scopeToSpe(query));
-      return {
-        content: [
-          { type: "text" as const, text: `## Microsoft Learn results for: ${query}\n\n${text}` },
-        ],
-      };
+      return ok({ query, text }, `## Microsoft Learn results for: ${query}\n\n${text}`);
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Unknown error";
-      return {
-        content: [{ type: "text" as const, text: `Error searching Microsoft Learn: ${msg}` }],
-        isError: true,
-      };
+      return fail("UPSTREAM", `searching Microsoft Learn: ${msg}`);
     }
   },
-};
+});
 
-export const fetchDocTool: McpTool = {
+export const fetchDocTool = defineTool({
   name: "docs_fetch",
   description:
     "Fetch the full markdown content of a Microsoft Learn documentation page by URL " +
     "(typically a 'learn.microsoft.com' URL returned by docs_search). " +
     "Use when a search excerpt is not enough to answer accurately.",
-  inputSchema: {
-    type: "object" as const,
-    properties: {
-      url: {
-        type: "string",
-        description: "The Microsoft Learn documentation page URL to fetch in full.",
-      },
-    },
-    required: ["url"],
-  },
+  schema: fetchDocSchema,
+  validationErrorMessage: firstValidationMessage,
   handler: async (args) => {
-    // Validate BEFORE trimming so a non-string `url` returns a clean
-    // validation envelope instead of throwing an uncaught TypeError.
-    const validated = requireString(args.url, "url");
-    if (!validated.ok) return validated.error;
-    const url = validated.value;
+    const url = args.url;
     try {
       const text = await fetchDoc(url);
-      return { content: [{ type: "text" as const, text }] };
+      return ok({ url, text }, text);
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Unknown error";
-      return {
-        content: [{ type: "text" as const, text: `Error fetching Microsoft Learn page: ${msg}` }],
-        isError: true,
-      };
+      return fail("UPSTREAM", `fetching Microsoft Learn page: ${msg}`);
     }
   },
-};
+});

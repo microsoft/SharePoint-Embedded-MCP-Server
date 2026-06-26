@@ -12,6 +12,8 @@
 
 import { getAccessToken } from "./auth.js";
 import { LOCAL_SPA_REDIRECT_URI } from "./constants.js";
+import { AppError } from "./errors.js";
+import { parseRetryAfterMs } from "./http-client.js";
 import { USER_AGENT } from "./user-agent.js";
 import type {
   ApplicationPermissionGrant,
@@ -53,6 +55,61 @@ function log(message: string, data?: unknown): void {
 
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function graphErrorForStatus(status: number, errorBody: string, retryAfter?: string | null): AppError {
+  if (status === 401) {
+    return new AppError(
+      "UNAUTHORIZED",
+      "Authentication failed. Token may have expired — try re-authenticating.",
+      {
+        status,
+        safeMessage: "Authentication failed while calling Microsoft Graph.",
+        suggestion: "Re-authenticate and retry.",
+      },
+    );
+  }
+  if (status === 403) {
+    return new AppError("FORBIDDEN", `Access denied: ${errorBody}`, {
+      status,
+      safeMessage: "Access denied by Microsoft Graph.",
+      suggestion: "Confirm the signed-in account, tenant, consent, and SharePoint Embedded permissions.",
+    });
+  }
+  if (status === 404) {
+    return new AppError("NOT_FOUND", `Resource not found: ${errorBody}`, {
+      status,
+      safeMessage: "Microsoft Graph resource was not found.",
+      suggestion: "Verify identifiers such as containerTypeId, containerId, driveId, or itemId.",
+    });
+  }
+  if (status === 409) {
+    return new AppError("CONFLICT", `Graph API conflict (409): ${errorBody}`, {
+      status,
+      safeMessage: "Microsoft Graph reported a conflict.",
+      suggestion: "Refresh the resource state and retry.",
+    });
+  }
+  if (status === 429) {
+    return new AppError("RATE_LIMITED", `Graph API throttled (429): ${errorBody}`, {
+      status,
+      retryAfter,
+      safeMessage: "Microsoft Graph throttled the request.",
+      suggestion: retryAfter ? `Retry after ${retryAfter} second(s).` : "Wait and retry the request.",
+    });
+  }
+  if (status >= 500) {
+    return new AppError("UPSTREAM", `Graph API upstream error (${status}): ${errorBody}`, {
+      status,
+      safeMessage: "Microsoft Graph returned an upstream service error.",
+      suggestion: "Retry later. If the issue persists, check Microsoft Graph service health.",
+    });
+  }
+  return new AppError("UPSTREAM", `Graph API error (${status}): ${errorBody}`, {
+    status,
+    safeMessage: "Microsoft Graph rejected the request.",
+    suggestion: "Check the request arguments and current resource state.",
+  });
 }
 
 /**
@@ -100,7 +157,10 @@ async function graphRequest<T>(
         await sleep(delay);
         continue;
       }
-      throw new Error(`Network error calling Graph API: ${msg}`);
+      throw new AppError("UPSTREAM", `Network error calling Graph API: ${msg}`, {
+        safeMessage: "Network error calling Microsoft Graph.",
+        suggestion: "Check network connectivity and retry.",
+      });
     }
 
     if (response.ok) {
@@ -114,9 +174,7 @@ async function graphRequest<T>(
     // Retry on throttle or server error
     if ((response.status === 429 || response.status >= 500) && attempt < MAX_RETRIES) {
       const retryAfter = response.headers.get("Retry-After");
-      const delay = retryAfter
-        ? parseInt(retryAfter, 10) * 1000
-        : BASE_RETRY_DELAY_MS * Math.pow(2, attempt);
+      const delay = parseRetryAfterMs(retryAfter) ?? BASE_RETRY_DELAY_MS * Math.pow(2, attempt);
       log(`${response.status} — retrying in ${delay}ms`);
       await sleep(delay);
       continue;
@@ -131,20 +189,13 @@ async function graphRequest<T>(
       errorBody = await response.text().catch(() => "Unknown error");
     }
 
-    if (response.status === 401) {
-      throw new Error("Authentication failed. Token may have expired — try re-authenticating.");
-    }
-    if (response.status === 403) {
-      throw new Error(`Access denied: ${errorBody}`);
-    }
-    if (response.status === 404) {
-      throw new Error(`Resource not found: ${errorBody}`);
-    }
-
-    throw new Error(`Graph API error (${response.status}): ${errorBody}`);
+    throw graphErrorForStatus(response.status, errorBody, response.headers.get("Retry-After"));
   }
 
-  throw new Error("Max retries exceeded");
+  throw new AppError("UPSTREAM", "Max retries exceeded", {
+    safeMessage: "Microsoft Graph request retry limit was exceeded.",
+    suggestion: "Retry later.",
+  });
 }
 
 /**
