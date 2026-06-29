@@ -1035,6 +1035,7 @@ export async function revokeSharingLink(
 export async function searchContent(
   query: string,
   maxResults: number = 25,
+  from: number = 0,
 ): Promise<SearchResponse> {
   return graphRequest<SearchResponse>(
     "POST",
@@ -1044,7 +1045,7 @@ export async function searchContent(
         {
           entityTypes: ["driveItem"],
           query: { queryString: query, includeHiddenContent: true },
-          from: 0,
+          from,
           size: maxResults,
         },
       ],

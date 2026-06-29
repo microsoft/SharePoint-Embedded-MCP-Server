@@ -10,37 +10,9 @@
  */
 
 import { listContainerTypes } from "../graph-client.js";
+import { ok } from "../responses.js";
+import { paginate, pageFooter, parsePageArgs } from "./pagination.js";
 import type { McpTool } from "../types.js";
-
-async function executeListContainerTypes() {
-  const containerTypes = await listContainerTypes();
-
-  return {
-    success: true,
-    count: containerTypes.length,
-    containerTypes,
-  };
-}
-
-function formatResult(result: Awaited<ReturnType<typeof executeListContainerTypes>>): string {
-  if (!result.success) {
-    return "Error listing container types";
-  }
-
-  if (result.count === 0) {
-    return "No container types found in this tenant.";
-  }
-
-  let output = `## Container Types (${result.count})\n\n`;
-  output += `| Container Type ID | Display Name | Owning App | Billing |\n`;
-  output += `|-------------------|-------------|------------|----------|\n`;
-
-  for (const ct of result.containerTypes) {
-    output += `| \`${ct.containerTypeId}\` | ${ct.displayName ?? "—"} | \`${ct.owningAppId ?? "—"}\` | ${ct.billingClassification ?? "—"} |\n`;
-  }
-
-  return output;
-}
 
 export const listContainerTypesTool: McpTool = {
   name: "container_type_list",
@@ -49,18 +21,41 @@ export const listContainerTypesTool: McpTool = {
     "List all SharePoint Embedded container types in the tenant. " +
     "Shows container type IDs, display names, owning applications, and billing classification. " +
     "Use this to check existing container types before creating new ones " +
-    "(each owning app can have exactly one container type).",
+    "(each owning app can have exactly one container type). " +
+    "Supports pagination via `top` (page size, max 200) and `skip` (offset).",
   inputSchema: {
     type: "object" as const,
-    properties: {},
+    properties: {
+      top: {
+        type: "number",
+        description: "Maximum container types to return in this page (default 50, max 200).",
+      },
+      skip: {
+        type: "number",
+        description: "Number of container types to skip (offset). Use the nextToken/skip from a prior page to continue.",
+      },
+    },
   },
-  handler: async () => {
+  handler: async (args) => {
     try {
-      const result = await executeListContainerTypes();
-      return {
-        content: [{ type: "text" as const, text: formatResult(result) }],
-        isError: !result.success,
-      };
+      const containerTypes = await listContainerTypes();
+
+      if (containerTypes.length === 0) {
+        return ok({ items: [], totalCount: 0, hasMore: false }, "No container types found in this tenant.");
+      }
+
+      const pageArgs = parsePageArgs(args);
+      const page = paginate(containerTypes, pageArgs);
+
+      let output = `## Container Types (${page.items.length})\n\n`;
+      output += `| Container Type ID | Display Name | Owning App | Billing |\n`;
+      output += `|-------------------|-------------|------------|----------|\n`;
+      for (const ct of page.items) {
+        output += `| \`${ct.containerTypeId}\` | ${ct.displayName ?? "—"} | \`${ct.owningAppId ?? "—"}\` | ${ct.billingClassification ?? "—"} |\n`;
+      }
+      output += pageFooter(page, pageArgs.skip);
+
+      return ok(page, output);
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Unknown error";
       return {
