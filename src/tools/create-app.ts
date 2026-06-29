@@ -167,9 +167,9 @@ export const createAppTool: McpTool = {
         `| **Tenant** | \`${identity.tenantId}\` |\n` +
         `| **Client type** | Public client (no secret) |\n` +
         `| **SPE permissions** | FileStorageContainer.Manage.All, FileStorageContainer.Selected, ContainerType.Manage.All, ContainerTypeReg.Manage.All, ContainerTypeReg.Selected |\n\n` +
-        "> The server is now signed in as this app for SharePoint Embedded operations — **no restart " +
-        "needed**. The first SPE call opens a browser for a one-time consent (or unset " +
-        "`SPE_NON_INTERACTIVE`); after that, container types and containers can be created.";
+        "> The server is now **configured to sign in as this app** for SharePoint Embedded " +
+        "operations — **no restart needed**. The first SPE call opens a browser for a one-time " +
+        "consent (or unset `SPE_NON_INTERACTIVE`); after that, container types and containers can be created.";
 
       return { content: [{ type: "text" as const, text: output }] };
     } catch (error) {
