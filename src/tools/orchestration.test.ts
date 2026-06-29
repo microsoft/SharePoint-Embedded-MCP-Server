@@ -259,6 +259,17 @@ describe("project_cleanup", () => {
     expect(r.content[0].text).toContain("1 live container(s)");
   });
 
+  it("PAUSES when container listing fails (uncertain != empty), preserving app + state", async () => {
+    Object.assign(stateStore, { appId: "app-1", appObjectId: "obj-1", containerTypeId: "ct-1", billingClassification: "trial" });
+    vi.mocked(graph.listContainers).mockRejectedValueOnce(new Error("transient Graph error"));
+    const r = await cleanupTool.handler({ confirm: true });
+    expect(graph.deleteContainerTypeRegistration).not.toHaveBeenCalled();
+    expect(graph.deleteContainerType).not.toHaveBeenCalled();
+    expect(graph.deleteApplication).not.toHaveBeenCalled();
+    expect(stateStore.containerTypeId).toBe("ct-1");
+    expect(r.content[0].text).toContain("Cleanup Paused");
+  });
+
   it("PRESERVES a standard container type + owning app without the override", async () => {
     Object.assign(stateStore, { appId: "app-1", appObjectId: "obj-1", containerTypeId: "ct-1", billingClassification: "standard" });
     const r = await cleanupTool.handler({ confirm: true });

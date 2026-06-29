@@ -14,12 +14,12 @@
  */
 
 import { setAuthConfig } from "../auth.js";
-import { listDeletedContainers } from "../graph-client.js";
+import { listContainerTypeRegistrations, listDeletedContainers } from "../graph-client.js";
 import { ok, fail } from "../responses.js";
 import { clientSafeMessage } from "../errors.js";
 import { paginate, pageFooter, parsePageArgs } from "./pagination.js";
 import { readState } from "../state.js";
-import type { McpTool } from "../types.js";
+import type { Container, McpTool } from "../types.js";
 
 export const listDeletedContainersTool: McpTool = {
   name: "container_deleted_list",
@@ -50,22 +50,40 @@ export const listDeletedContainersTool: McpTool = {
       setAuthConfig({ clientId: state.appId, tenantId: state.tenantId });
     }
 
-    const filterCt =
-      args.allContainerTypes === true
-        ? undefined
-        : (args.containerTypeId as string) || state.containerTypeId;
+    const explicitCt = (args.containerTypeId as string) || undefined;
+    const allContainerTypes = args.allContainerTypes === true;
 
-    let deleted;
+    // The Graph deletedContainers endpoint REQUIRES a containerTypeId filter, so
+    // there is no single "all" call. For allContainerTypes we fan out: list the
+    // tenant's registrations and query each container type's recycle bin.
+    let deleted: Container[];
     try {
-      deleted = await listDeletedContainers(filterCt);
+      if (allContainerTypes) {
+        const regs = await listContainerTypeRegistrations();
+        const ids = regs.map((r) => r.id).filter((id): id is string => !!id);
+        const perType = await Promise.all(ids.map((id) => listDeletedContainers(id)));
+        deleted = perType.flat();
+      } else {
+        const filterCt = explicitCt || state.containerTypeId;
+        if (!filterCt) {
+          return fail(
+            "INVALID_ARGS",
+            "a containerTypeId is required (the recycle-bin API is per-container-type and none is provisioned).",
+            "Pass containerTypeId, or set allContainerTypes=true to scan every container type.",
+          );
+        }
+        deleted = await listDeletedContainers(filterCt);
+      }
     } catch (e) {
       return fail("UPSTREAM", `listing deleted containers: ${clientSafeMessage(e)}`);
     }
 
+    const scopeCt = allContainerTypes ? undefined : explicitCt || state.containerTypeId;
+
     if (deleted.length === 0) {
-      const scope = filterCt ? ` for container type \`${filterCt}\`` : "";
+      const scope = scopeCt ? ` for container type \`${scopeCt}\`` : "";
       return ok(
-        { items: [], totalCount: 0, hasMore: false, containerTypeId: filterCt },
+        { items: [], totalCount: 0, hasMore: false, containerTypeId: scopeCt },
         `No soft-deleted containers in the recycle bin${scope}.`,
       );
     }
@@ -84,6 +102,6 @@ export const listDeletedContainersTool: McpTool = {
       "\n\n> Permanently purge a blocker with `container_delete` (action `permanent-delete`, `confirm=true`), " +
       "or recover it with `container_delete` (action `restore`).";
 
-    return ok({ ...page, containerTypeId: filterCt }, output);
+    return ok({ ...page, containerTypeId: scopeCt }, output);
   },
 };

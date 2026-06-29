@@ -45,7 +45,8 @@ describe("container_type_registration_get", () => {
   it("reads a registration and defaults the id from state", async () => {
     vi.mocked(graph.getContainerTypeRegistration).mockResolvedValue({
       id: "ct-1",
-      registeredByAppId: "app-1",
+      owningAppId: "app-1",
+      billingClassification: "trial",
       applicationPermissionGrants: [{ appId: "app-1", delegatedPermissions: ["full"], applicationPermissions: ["full"] }],
     });
     const r = await getContainerTypeRegistrationTool.handler({});
@@ -58,8 +59,8 @@ describe("container_type_registration_get", () => {
 describe("container_type_registration_list", () => {
   it("lists registrations", async () => {
     vi.mocked(graph.listContainerTypeRegistrations).mockResolvedValue([
-      { id: "ct-1", registeredByAppId: "app-1" },
-      { id: "ct-2", registeredByAppId: "app-2" },
+      { id: "ct-1", owningAppId: "app-1" },
+      { id: "ct-2", owningAppId: "app-2" },
     ]);
     const r = await listContainerTypeRegistrationsTool.handler({});
     expect(r.content[0].text).toContain("Container Type Registrations (2)");
@@ -145,10 +146,16 @@ describe("container_deleted_list", () => {
     expect(r.content[0].text).toContain("Gone");
   });
 
-  it("can list across all container types", async () => {
+  it("can list across all container types by fanning out over registrations", async () => {
+    vi.mocked(graph.listContainerTypeRegistrations).mockResolvedValue([
+      { id: "ct-1" },
+      { id: "ct-2" },
+    ]);
     vi.mocked(graph.listDeletedContainers).mockResolvedValue([]);
     const r = await listDeletedContainersTool.handler({ allContainerTypes: true });
-    expect(graph.listDeletedContainers).toHaveBeenCalledWith(undefined);
+    expect(graph.listContainerTypeRegistrations).toHaveBeenCalled();
+    expect(graph.listDeletedContainers).toHaveBeenCalledWith("ct-1");
+    expect(graph.listDeletedContainers).toHaveBeenCalledWith("ct-2");
     expect(r.content[0].text).toContain("No soft-deleted containers");
   });
 });

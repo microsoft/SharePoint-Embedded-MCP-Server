@@ -77,8 +77,9 @@ export const getContainerTypeRegistrationTool: McpTool = {
           text:
             `## Container Type Registration\n\n` +
             "| Property | Value |\n|----------|-------|\n" +
-            `| **Registration / container type id** | \`${reg.id ?? reg.containerTypeId ?? containerTypeId}\` |\n` +
-            `| **Registered by app** | ${reg.registeredByAppId ? `\`${reg.registeredByAppId}\`` : "—"} |\n` +
+            `| **Registration / container type id** | \`${reg.id ?? containerTypeId}\` |\n` +
+            `| **Owning app** | ${reg.owningAppId ? `\`${reg.owningAppId}\`` : "—"} |\n` +
+            `| **Billing** | ${reg.billingClassification ?? "—"} |\n` +
             `| **Registered** | ${reg.registeredDateTime ?? "—"} |\n` +
             `| **App permission grants** | ${grants.length} |\n`,
         }],
@@ -110,13 +111,13 @@ export const listContainerTypeRegistrationsTool: McpTool = {
       const rows = regs
         .map(
           (r) =>
-            `| \`${r.id ?? r.containerTypeId ?? "?"}\` | ${r.registeredByAppId ? `\`${r.registeredByAppId}\`` : "—"} | ${r.registeredDateTime ?? "—"} |`,
+            `| \`${r.id ?? "?"}\` | ${r.owningAppId ? `\`${r.owningAppId}\`` : "—"} | ${r.billingClassification ?? "—"} | ${r.registeredDateTime ?? "—"} |`,
         )
         .join("\n");
       return {
         content: [{
           type: "text" as const,
-          text: `## Container Type Registrations (${regs.length})\n\n| Registration id | Registered by app | Registered |\n|---|---|---|\n${rows}`,
+          text: `## Container Type Registrations (${regs.length})\n\n| Registration id | Owning app | Billing | Registered |\n|---|---|---|---|\n${rows}`,
         }],
       };
     } catch (e) {

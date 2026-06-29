@@ -102,14 +102,15 @@ export interface ContainerTypeRegistration {
 /**
  * A container type **registration record** (the tenant↔containerType binding),
  * as returned by GET/List on `…/containerTypeRegistrations`. Distinct from a
- * single app's {@link ApplicationPermissionGrant}. Fields beyond `id` vary by
- * API version; kept permissive.
+ * single app's {@link ApplicationPermissionGrant}. The v1.0 schema exposes
+ * `owningAppId` (the SPE app the type is owned by) and `billingClassification`;
+ * fields vary by API version, so this is kept permissive.
  */
 export interface ContainerTypeRegistrationRecord {
   id?: string;
-  containerTypeId?: string;
+  owningAppId?: string;
+  billingClassification?: string;
   registeredDateTime?: string;
-  registeredByAppId?: string;
   applicationPermissionGrants?: ApplicationPermissionGrant[];
 }
 
