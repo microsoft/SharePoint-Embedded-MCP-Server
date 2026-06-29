@@ -17,13 +17,17 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { AccountInfo, PublicClientApplication } from "@azure/msal-node";
 import {
   __testing,
+  getAccessToken,
   getCacheFilePath,
   getCachedAccount,
   homeTenantOf,
+  isOwningAppConfigured,
   isWrongTenantToken,
+  OWNING_APP_REQUIRED_MESSAGE,
   selectAccountForTenant,
   setAuthConfig,
 } from "./auth.js";
+import { AppError } from "./errors.js";
 
 const TENANT_A = "475485dd-63d4-4f8c-af70-60f7a6c74940";
 const TENANT_B = "99999999-9999-9999-9999-999999999999";
@@ -199,5 +203,27 @@ describe("setAuthConfig — tenant switch resets stale in-memory state", () => {
     __testing.setPca(pca);
     setAuthConfig({ clientId: CLIENT_ID, tenantId: TENANT_A });
     expect(__testing.getPca()).toBe(pca);
+  });
+});
+
+describe("owning-app precondition guidance (UX)", () => {
+  it("isOwningAppConfigured() is true once auth is configured", () => {
+    setAuthConfig({ clientId: CLIENT_ID, tenantId: TENANT_A });
+    expect(isOwningAppConfigured()).toBe(true);
+  });
+
+  it("OWNING_APP_REQUIRED_MESSAGE points the user to project_app_create and is restart-free", () => {
+    expect(OWNING_APP_REQUIRED_MESSAGE).toMatch(/project_app_create/);
+    expect(OWNING_APP_REQUIRED_MESSAGE).toMatch(/no restart/i);
+  });
+
+  it("getAccessToken() throws a typed OWNING_APP_REQUIRED error when no owning app is configured", async () => {
+    // authConfig=null regardless of on-disk state — getConfig() gates on it, so
+    // this is deterministic and independent of the dev machine's ~/.spe-mcp state.
+    __testing.reset();
+    await expect(getAccessToken()).rejects.toMatchObject({
+      code: "OWNING_APP_REQUIRED",
+    });
+    await expect(getAccessToken()).rejects.toBeInstanceOf(AppError);
   });
 });

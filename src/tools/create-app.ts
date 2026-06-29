@@ -27,6 +27,7 @@ import {
 } from "../graph-client.js";
 import { LOCAL_SPA_REDIRECT_URI } from "../constants.js";
 import { setAuthConfig } from "../auth.js";
+import { clientSafeMessage } from "../errors.js";
 import { needChoice } from "../elicitation.js";
 import { readState, writeState } from "../state.js";
 import type { McpTool } from "../types.js";
@@ -166,14 +167,14 @@ export const createAppTool: McpTool = {
         `| **Tenant** | \`${identity.tenantId}\` |\n` +
         `| **Client type** | Public client (no secret) |\n` +
         `| **SPE permissions** | FileStorageContainer.Manage.All, FileStorageContainer.Selected, ContainerType.Manage.All, ContainerTypeReg.Manage.All, ContainerTypeReg.Selected |\n\n` +
-        "> Next: create a container type. The first SPE call will prompt a one-time sign-in " +
-        "as this app (device code / browser).";
+        "> The server is now signed in as this app for SharePoint Embedded operations — **no restart " +
+        "needed**. The first SPE call opens a browser for a one-time consent (or unset " +
+        "`SPE_NON_INTERACTIVE`); after that, container types and containers can be created.";
 
       return { content: [{ type: "text" as const, text: output }] };
     } catch (error) {
-      const msg = error instanceof Error ? error.message : "Unknown error";
       return {
-        content: [{ type: "text" as const, text: `Error creating owning app: ${msg}` }],
+        content: [{ type: "text" as const, text: `Error creating owning app: ${clientSafeMessage(error)}` }],
         isError: true,
       };
     }
