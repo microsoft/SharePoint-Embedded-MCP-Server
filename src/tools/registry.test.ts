@@ -200,7 +200,6 @@ describe("Tool Input Validation", () => {
     // Tools that should have required params
     const toolsWithRequired = [
       createContainerTypeTool,
-      listContainersTool,
       getContainerTool,
       managePermissionsTool,
       archiveRestoreTool,
@@ -210,7 +209,6 @@ describe("Tool Input Validation", () => {
       searchContentTool,
       previewFileTool,
       manageSharingTool,
-      checkBillingTool,
       listResourceGroupsTool,
     ];
 
@@ -221,5 +219,12 @@ describe("Tool Input Validation", () => {
 
   it("listContainerTypes has no required params", () => {
     expect(listContainerTypesTool.inputSchema.required).toBeUndefined();
+  });
+
+  it("container_list and billing_check have no required params (default containerTypeId from state)", () => {
+    // These read tools default the container type from provisioning state, so a
+    // 0-knowledge developer can call them with no arguments after provisioning.
+    expect(listContainersTool.inputSchema.required).toBeUndefined();
+    expect(checkBillingTool.inputSchema.required).toBeUndefined();
   });
 });

@@ -23,6 +23,7 @@ vi.mock("../state.js", () => ({
 
 import * as graph from "../graph-client.js";
 import * as azureCli from "../azure-cli.js";
+import * as state from "../state.js";
 import { checkBillingTool } from "../tools/check-billing.js";
 import { setupBillingTool } from "../tools/setup-billing.js";
 
@@ -71,6 +72,19 @@ describe("billing_check", () => {
   it("requires containerTypeId", async () => {
     const r = await checkBillingTool.handler({});
     expect(r.isError).toBe(true);
+  });
+
+  it("defaults containerTypeId from provisioning state when omitted", async () => {
+    vi.mocked(state.readState).mockReturnValueOnce({ containerTypeId: "ct-from-state" });
+    vi.mocked(graph.getContainerType).mockResolvedValue({
+      containerTypeId: "ct-from-state",
+      owningAppId: "app1",
+      displayName: "State CT",
+      billingClassification: "standard",
+    });
+    const r = await checkBillingTool.handler({});
+    expect(r.isError).toBeUndefined();
+    expect(graph.getContainerType).toHaveBeenCalledWith("ct-from-state");
   });
 });
 

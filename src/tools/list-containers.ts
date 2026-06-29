@@ -10,6 +10,7 @@
 import { listContainers } from "../graph-client.js";
 import { fail, ok } from "../responses.js";
 import { paginate, pageFooter, parsePageArgs } from "./pagination.js";
+import { readState } from "../state.js";
 import type { McpTool } from "../types.js";
 
 export const listContainersTool: McpTool = {
@@ -19,13 +20,15 @@ export const listContainersTool: McpTool = {
     "List SharePoint Embedded containers for a container type. " +
     "Use this when you need to discover existing containers or look up a container ID. " +
     "Returns container IDs, names, status, and creation dates. " +
+    "Defaults to the container type from the current provisioning state when none is given. " +
     "Supports pagination via `top` (page size, max 200) and `skip` (offset).",
   inputSchema: {
     type: "object" as const,
     properties: {
       containerTypeId: {
         type: "string",
-        description: "The container type ID (GUID) to list containers for.",
+        description:
+          "The container type ID (GUID) to list containers for. Defaults to the provisioned container type in state.",
       },
       top: {
         type: "number",
@@ -36,12 +39,15 @@ export const listContainersTool: McpTool = {
         description: "Number of containers to skip (offset). Use the nextToken/skip from a prior page to continue.",
       },
     },
-    required: ["containerTypeId"],
   },
   handler: async (args) => {
-    const containerTypeId = args.containerTypeId as string;
+    const containerTypeId = (args.containerTypeId as string) ?? readState().containerTypeId;
     if (!containerTypeId) {
-      return fail("INVALID_ARGS", "containerTypeId is required", "Provide the container type ID (GUID) to list containers for.");
+      return fail(
+        "INVALID_ARGS",
+        "containerTypeId is required (none provided and none in provisioning state).",
+        "Provision an SPE app first (project_provision) or pass a containerTypeId.",
+      );
     }
 
     const containers = await listContainers(containerTypeId);
