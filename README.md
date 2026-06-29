@@ -264,11 +264,13 @@ spe-mcp logout
 
 The server uses [MSAL](https://learn.microsoft.com/en-us/entra/identity-platform/msal-overview) with this auth waterfall:
 
-1. **Silent** — uses cached refresh token from `~/.spe-mcp/token-cache.json`
-2. **Interactive browser** — opens browser for PKCE sign-in (interactive terminals only)
-3. **Device code** — prints a URL + code to stderr (interactive terminals only)
+1. **Silent** — uses a cached token from `~/.spe-mcp/token-cache.<tenantId>.<clientId>.json`
+2. **Interactive browser** — opens a browser for PKCE sign-in. This runs **in-process by default, even when the server is launched over stdio** by an MCP client — so the first SharePoint Embedded call opens a browser for a one-time consent and caches the token live (no terminal, no restart).
+3. **Device code** — prints a URL + code to stderr; used only as a fallback when a terminal (TTY) is attached to see the code.
 
-For MCP clients that spawn the server as a subprocess (VS Code, Claude Desktop), run `spe-mcp auth` once in a terminal to cache tokens. The server will use the cached tokens silently on subsequent starts.
+For most developers nothing extra is needed: create the owning app with the `project_app_create` tool, then the first SPE call prompts a browser consent automatically.
+
+**Automation / headless:** in CI (`CI=true`) or a Linux host with no display, interactive sign-in is disabled by default, and SPE operations return an actionable error. Pre-cache a token by running `spe-mcp auth --client-id <appId> --tenant-id <tenantId>` once in a terminal. Override the defaults with `SPE_INTERACTIVE=1` (force browser sign-in) or `SPE_NON_INTERACTIVE=1` (force off).
 
 ### Token Storage
 

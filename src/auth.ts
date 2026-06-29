@@ -31,6 +31,8 @@ import {
   type SilentFlowRequest,
 } from "@azure/msal-node";
 import open from "open";
+import { AppError } from "./errors.js";
+import { readState } from "./state.js";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -46,16 +48,53 @@ const DEFAULT_SCOPES = [
   "https://graph.microsoft.com/FileStorageContainerTypeReg.Manage.All",
 ];
 
-// Device code timeout: 2 min interactive, 10 min headless (user needs time
-// to find the auth prompt in stderr / MCP logs).
-const DEVICE_CODE_TIMEOUT_MS = process.stderr.isTTY ? 120_000 : 600_000;
+function envTruthy(value: string | undefined): boolean {
+  return !!value && /^(1|true|yes|on)$/i.test(value.trim());
+}
 
-let isHeadless = !process.stderr.isTTY;
+// Best-effort detection of an environment where opening a browser will fail or
+// be pointless: CI, or a Linux box with no display server (headless server / SSH
+// / dev container). Used only to flip the DEFAULT for interactive sign-in; an
+// explicit SPE_INTERACTIVE / SPE_NON_INTERACTIVE always wins.
+function isLikelyHeadlessEnv(): boolean {
+  if (envTruthy(process.env.CI)) return true;
+  if (
+    process.platform === "linux" &&
+    !process.env.DISPLAY &&
+    !process.env.WAYLAND_DISPLAY
+  ) {
+    return true;
+  }
+  return false;
+}
+
+// Interactive sign-in is ENABLED BY DEFAULT, even over stdio (no TTY): a LOCAL
+// MCP server can open a browser on the user's machine for consent — far better
+// than forcing them to run `spe-mcp auth` in a terminal and restart. It is
+// turned OFF by default in obvious automation/headless environments (CI, Linux
+// with no DISPLAY) so a tool call never silently blocks on a browser that can't
+// open. Explicit overrides always win: SPE_INTERACTIVE=1 forces it on,
+// SPE_NON_INTERACTIVE=1 forces it off.
+let interactiveEnabled =
+  envTruthy(process.env.SPE_INTERACTIVE) ||
+  (!envTruthy(process.env.SPE_NON_INTERACTIVE) && !isLikelyHeadlessEnv());
+
+// Whether the device-code prompt (printed to stderr) can actually be seen by a
+// human. Over stdio in an MCP host, stderr is usually NOT visible, so a
+// device-code wait would hang invisibly — we only offer device code on a TTY and
+// otherwise fail fast with an actionable error after the browser attempt.
+function deviceCodeIsVisible(): boolean {
+  return process.stderr.isTTY === true;
+}
 
 /** Force interactive mode (used by `spe-mcp auth` CLI command). */
 export function setInteractiveMode(): void {
-  isHeadless = false;
+  interactiveEnabled = true;
 }
+
+// Device code timeout: 2 min interactive, 10 min headless (user needs time
+// to find the auth prompt in stderr / MCP logs).
+const DEVICE_CODE_TIMEOUT_MS = process.stderr.isTTY ? 120_000 : 600_000;
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
@@ -100,11 +139,46 @@ function resetInMemoryAuthState(): void {
   authReadyReject = null;
 }
 
+/**
+ * Actionable message shown when a control-plane SPE operation is attempted
+ * before an owning Entra app is configured. SPE container-type / container /
+ * billing operations need a delegated token from an owning app that holds the
+ * SPE Graph permissions — the Azure CLI bootstrap token cannot carry those
+ * scopes. This message tells the agent/user exactly how to proceed.
+ */
+export const OWNING_APP_REQUIRED_MESSAGE =
+  "No owning SharePoint Embedded app is configured yet. SharePoint Embedded " +
+  "operations need an owning Entra app with the SPE Graph permissions. Run the " +
+  "`project_app_create` tool to create (or reuse) one — the server then signs in " +
+  "as that app automatically, no restart needed. Alternatively, start the server " +
+  "with `--client-id <appId> --tenant-id <tenantId>` for an existing owning app.";
+
+/**
+ * Whether a previously-provisioned or explicitly-configured owning SPE app
+ * exists to acquire a delegated token with: either auth is already configured
+ * in-process, or an owning app is persisted in state (the server primes from it
+ * at startup / on demand).
+ *
+ * NOTE: this reports that an owning app is AVAILABLE, not that the auth module is
+ * already primed (`getConfig()` gates on the in-process `authConfig`). Use it for
+ * readiness/guidance messaging, not as a precondition that token acquisition will
+ * succeed without sign-in.
+ */
+export function isOwningAppConfigured(): boolean {
+  if (authConfig) return true;
+  const persisted = readState();
+  return !!(persisted.appId && persisted.tenantId);
+}
+
 function getConfig(): AuthConfig {
   if (!authConfig) {
-    throw new Error(
-      "Auth not configured. Call setAuthConfig() with clientId and tenantId before using auth.",
-    );
+    // Typed, actionable precondition (not the old internal "call setAuthConfig"
+    // message). Flows through toSafeError/clientSafeMessage so every control-plane
+    // SPE tool surfaces the same "create an owning app first" guidance.
+    throw new AppError("OWNING_APP_REQUIRED", "Auth not configured (no owning app).", {
+      safeMessage: OWNING_APP_REQUIRED_MESSAGE,
+      suggestion: "Run project_app_create, then retry.",
+    });
   }
   return authConfig;
 }
@@ -435,9 +509,17 @@ async function acquireTokenInteractiveWithFallbacks(): Promise<AuthenticationRes
   // (FileStorageContainer.Selected, etc.) that are registered on OUR app.
   // SPE requires tokens obtained via our specific app registration.
 
-  if (!isHeadless) {
+  // Interactive sign-in is attempted by default (browser first, device code as
+  // fallback) — even over stdio, since a local server can open the user's
+  // browser. SPE_NON_INTERACTIVE disables this for automation/CI.
+  if (interactiveEnabled) {
     strategies.push({ name: "interactive browser", fn: acquireTokenInteractive });
-    strategies.push({ name: "device code", fn: acquireTokenByDeviceCode });
+    // Only fall back to device code when its stderr prompt is actually visible
+    // (a TTY). Over stdio the code would print where no one can see it and the
+    // call would hang for up to 10 minutes — so we skip it and fail fast below.
+    if (deviceCodeIsVisible()) {
+      strategies.push({ name: "device code", fn: acquireTokenByDeviceCode });
+    }
   }
 
   let lastError: Error | undefined;
@@ -452,13 +534,27 @@ async function acquireTokenInteractiveWithFallbacks(): Promise<AuthenticationRes
     }
   }
 
-  if (isHeadless) {
-    throw new Error(
-      "No cached credentials found. Run `spe-mcp auth` in a terminal to authenticate, then restart the server.",
+  if (!interactiveEnabled) {
+    throw new AppError(
+      "AUTH_REQUIRED",
+      "No cached credentials and interactive sign-in is disabled (SPE_NON_INTERACTIVE).",
+      {
+        safeMessage:
+          "No cached credentials and interactive sign-in is disabled (SPE_NON_INTERACTIVE). " +
+          "Run `spe-mcp auth --client-id <appId> --tenant-id <tenantId>` in a terminal to " +
+          "pre-cache a token, then retry.",
+        suggestion: "Pre-cache a token with `spe-mcp auth`, or unset SPE_NON_INTERACTIVE.",
+      },
     );
   }
 
-  throw new Error(`Authentication failed. All sign-in methods exhausted.\n${lastError?.message}`);
+  throw new AppError("AUTH_FAILED", `Authentication failed. All sign-in methods exhausted. ${lastError?.message}`, {
+    safeMessage:
+      "Sign-in did not complete. A browser should have opened for you to consent to the SPE " +
+      "app — complete it and retry. If no browser opened (headless/remote), run " +
+      "`spe-mcp auth --client-id <appId> --tenant-id <tenantId>` in a terminal, then retry.",
+    suggestion: "Complete the browser consent and retry.",
+  });
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────

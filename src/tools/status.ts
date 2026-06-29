@@ -58,6 +58,7 @@ export const statusTool: McpTool = {
     }
 
     const state = readState();
+    const hasOwningApp = !!state.appId;
     const text =
       "## SPE Status\n\n" +
       "| Property | Value |\n|----------|-------|\n" +
@@ -69,7 +70,11 @@ export const statusTool: McpTool = {
       `| **Container** | ${state.containerId ? `\`${state.containerId}\`${state.containerName ? ` (${state.containerName})` : ""}` : "— not created yet"} |\n\n` +
       (state.containerTypeId
         ? "> Provisioning in progress — resources above are saved and reused on re-runs."
-        : "> Ready to provision. Ask to create a SharePoint Embedded app to get started.");
+        : hasOwningApp
+          ? "> Owning app ready. Next: create a container type, then containers."
+          : "> **Container types and containers require an owning app first.** Run `project_app_create` to " +
+            "create (or reuse) one — the server then signs in as that app automatically (a browser opens " +
+            "for one-time consent; no restart). Then you can list/create container types and containers.");
 
     return { content: [{ type: "text" as const, text }] };
   },

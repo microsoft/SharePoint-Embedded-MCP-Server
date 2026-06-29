@@ -40,7 +40,29 @@ describe("status_get", () => {
     expect(result.isError).toBeFalsy();
     expect(result.content[0].text).toContain("dev@contoso.com");
     expect(result.content[0].text).toContain("tenant-123");
-    expect(result.content[0].text).toContain("Ready to provision");
+    // No owning app in state → status guides the user to create one first.
+    expect(result.content[0].text).toContain("project_app_create");
+    expect(result.content[0].text).toMatch(/require an owning app first/i);
+  });
+
+  it("confirms readiness once an owning app is provisioned", async () => {
+    vi.mocked(bootstrap.assertAzCli).mockResolvedValue(undefined);
+    vi.mocked(bootstrap.getSignedInIdentity).mockResolvedValue({
+      tenantId: "tenant-123",
+      username: "dev@contoso.com",
+    });
+    const state = await import("../state.js");
+    vi.mocked(state.readState).mockReturnValueOnce({
+      appId: "app-abc",
+      appDisplayName: "My SPE App",
+      tenantId: "tenant-123",
+    });
+
+    const result = await statusTool.handler({});
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain("app-abc");
+    expect(result.content[0].text).toMatch(/Owning app ready/i);
   });
 
   it("prompts for login when az is installed but not signed in", async () => {
