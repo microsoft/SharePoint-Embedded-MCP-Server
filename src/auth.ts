@@ -263,24 +263,58 @@ export async function getCachedAccount(): Promise<AccountInfo | null> {
   const configuredTenant = authConfig?.tenantId;
   const chosen = selectAccountForTenant(accounts, configuredTenant);
 
-  if (!chosen) {
+  if (chosen) {
     log(
-      `No cached account matches configured tenant ${configuredTenant} ` +
-        `(${accounts.length} cached account(s) belong to other tenants); ` +
-        "interactive authentication required to avoid a wrong-tenant token",
+      `Selected cached account ${chosen.username} ` +
+        `(homeAccountId=${chosen.homeAccountId}, homeTenant=${homeTenantOf(chosen)}; ` +
+        `${accounts.length} cached; home-tenant match)`,
     );
-    return null;
+    return chosen;
   }
 
+  // No account whose HOME tenant equals the configured tenant. This is the
+  // normal guest / B2B case: e.g. signing into an SPE resource/test tenant with
+  // a corporate identity whose home tenant differs. The on-disk cache is
+  // partitioned by (tenant, client) — see getCacheFilePath — so every account in
+  // it was obtained under the configured authority and is valid to TRY. We
+  // therefore attempt silent acquisition for such an account rather than forcing
+  // interactive. The authoritative wrong-tenant protection is the check on the
+  // ISSUED TOKEN's tenant (see isWrongTenantToken, enforced in acquireTokenSilent)
+  // — not the account's home tenant, which is only a heuristic and wrongly
+  // excludes guests.
+  const candidate = accounts[0];
   log(
-    `Selected cached account ${chosen.username} ` +
-      `(homeAccountId=${chosen.homeAccountId}, homeTenant=${homeTenantOf(chosen)}; ` +
-      `${accounts.length} cached)`,
+    `No home-tenant match for configured tenant ${configuredTenant}; ` +
+      `attempting silent acquisition for partitioned-cache account ${candidate.username} ` +
+      `(homeTenant=${homeTenantOf(candidate)}; guest/B2B) — issued-token tenant will be verified`,
   );
-  return chosen;
+  return candidate;
 }
 
 // ─── Auth Flow: Silent ──────────────────────────────────────────────────────
+
+/**
+ * Authoritative wrong-tenant guard.
+ *
+ * Returns true when an issued token's tenant does NOT match the configured
+ * tenant. We read the tenant from the MSAL result (`tenantId`, falling back to
+ * the bound account's `tenantId`) — this is the tenant the token was actually
+ * minted for, which is the correct signal for "is this the right tenant," unlike
+ * the account's HOME tenant (a guest's home tenant legitimately differs from the
+ * resource tenant they hold a valid token for). When the configured tenant or
+ * the issued tenant is unknown we do not block (cannot prove a mismatch).
+ *
+ * Exported for unit testing.
+ */
+export function isWrongTenantToken(
+  result: Pick<AuthenticationResult, "tenantId" | "account">,
+  configuredTenant: string | undefined,
+): boolean {
+  if (!configuredTenant) return false;
+  const issuedTenant = result.tenantId || result.account?.tenantId;
+  if (!issuedTenant) return false;
+  return issuedTenant !== configuredTenant;
+}
 
 async function acquireTokenSilent(account: AccountInfo): Promise<AuthenticationResult | null> {
   try {
@@ -290,6 +324,21 @@ async function acquireTokenSilent(account: AccountInfo): Promise<AuthenticationR
       account,
     };
     const result = await ensurePcaInitialized().acquireTokenSilent(silentRequest);
+
+    // Authoritative wrong-tenant protection: verify the tenant the token was
+    // issued for, not the account's home tenant. This both (a) allows guest/B2B
+    // accounts whose home tenant differs from the configured resource tenant and
+    // (b) still refuses a token that was actually minted for the wrong tenant.
+    const configuredTenant = authConfig?.tenantId;
+    if (isWrongTenantToken(result, configuredTenant)) {
+      const issuedTenant = result.tenantId || result.account?.tenantId;
+      log(
+        `Silent token tenant ${issuedTenant} does not match configured tenant ` +
+          `${configuredTenant} — rejecting to avoid a wrong-tenant token`,
+      );
+      return null;
+    }
+
     log("Silent token acquisition succeeded");
     return result;
   } catch (error) {

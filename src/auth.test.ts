@@ -7,7 +7,9 @@
  * These cover the regression where a cached identity from a prior tenant
  * interfered on a tenant switch:
  *   - per-tenant cache file partitioning (no co-mingling),
- *   - getCachedAccount() never returning a wrong-tenant account,
+ *   - getCachedAccount() preferring a home-tenant match, and falling back to a
+ *     partitioned-cache (guest/B2B) candidate to attempt silent — with the
+ *     authoritative wrong-tenant guard on the ISSUED TOKEN (isWrongTenantToken),
  *   - setAuthConfig() tenant change dropping stale in-memory state.
  */
 
@@ -18,6 +20,7 @@ import {
   getCacheFilePath,
   getCachedAccount,
   homeTenantOf,
+  isWrongTenantToken,
   selectAccountForTenant,
   setAuthConfig,
 } from "./auth.js";
@@ -116,13 +119,19 @@ describe("selectAccountForTenant — wrong-tenant hardening", () => {
 });
 
 describe("getCachedAccount — end to end with injected cache", () => {
-  it("returns null (not a wrong-tenant account) when only a different tenant is cached", async () => {
+  it("falls back to a partitioned-cache (guest/B2B) candidate to attempt silent when no home-tenant match", async () => {
+    // BUG-1 regression: the cache file is partitioned by (tenant, client), so an
+    // account whose HOME tenant differs (a guest signed into the resource tenant)
+    // is still valid to TRY. getCachedAccount must return it for a silent attempt
+    // rather than returning null and forcing interactive sign-in. The real
+    // wrong-tenant protection is the issued-token check (see isWrongTenantToken).
     setAuthConfig({ clientId: CLIENT_ID, tenantId: TENANT_B });
-    __testing.setPca(fakePca([account(TENANT_A, "stale@a.com")]));
-    expect(await getCachedAccount()).toBeNull();
+    const guest = account(TENANT_A, "guest@corp.com", "guest-oid");
+    __testing.setPca(fakePca([guest]));
+    expect(await getCachedAccount()).toBe(guest);
   });
 
-  it("returns the matching account when a home-tenant match exists among guests", async () => {
+  it("prefers the home-tenant match when one exists among guests", async () => {
     setAuthConfig({ clientId: CLIENT_ID, tenantId: TENANT_B });
     const member = account(TENANT_B, "member@b.com", "member-oid");
     __testing.setPca(fakePca([account(TENANT_A, "guest@corp.com", "guest-oid"), member]));
@@ -133,6 +142,37 @@ describe("getCachedAccount — end to end with injected cache", () => {
     setAuthConfig({ clientId: CLIENT_ID, tenantId: TENANT_A });
     __testing.setPca(fakePca([]));
     expect(await getCachedAccount()).toBeNull();
+  });
+});
+
+describe("isWrongTenantToken — authoritative issued-token guard", () => {
+  it("accepts a guest token whose issued tenant matches the configured tenant", () => {
+    // Guest account: home tenant A, but the silent token was minted for the
+    // configured resource tenant B. This MUST be accepted.
+    const result = {
+      tenantId: TENANT_B,
+      account: account(TENANT_A, "guest@corp.com", "guest-oid"),
+    };
+    expect(isWrongTenantToken(result, TENANT_B)).toBe(false);
+  });
+
+  it("rejects a token actually minted for a different tenant", () => {
+    const result = {
+      tenantId: TENANT_A,
+      account: account(TENANT_A, "stale@a.com"),
+    };
+    expect(isWrongTenantToken(result, TENANT_B)).toBe(true);
+  });
+
+  it("falls back to the account tenant when result.tenantId is absent", () => {
+    const result = { tenantId: "", account: account(TENANT_A, "a@a.com") };
+    expect(isWrongTenantToken(result, TENANT_B)).toBe(true);
+    expect(isWrongTenantToken({ tenantId: "", account: account(TENANT_B, "b@b.com") }, TENANT_B)).toBe(false);
+  });
+
+  it("does not block when the configured or issued tenant is unknown", () => {
+    expect(isWrongTenantToken({ tenantId: TENANT_A, account: undefined }, undefined)).toBe(false);
+    expect(isWrongTenantToken({ tenantId: "", account: undefined }, TENANT_B)).toBe(false);
   });
 });
 
