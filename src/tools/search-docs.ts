@@ -73,6 +73,11 @@ export const fetchDocTool = defineTool({
     "Fetch the full markdown content of a Microsoft Learn documentation page by URL " +
     "(typically a 'learn.microsoft.com' URL returned by docs_search). " +
     "Use when a search excerpt is not enough to answer accurately.",
+  annotations: {
+    readOnly: true,
+    idempotent: true,
+    plane: "control",
+  },
   schema: fetchDocSchema,
   validationErrorMessage: firstValidationMessage,
   handler: async (args) => {

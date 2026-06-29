@@ -10,6 +10,7 @@
 import { searchContent } from "../graph-client.js";
 import { requireContentAccess } from "./content-access.js";
 import { ok, fail } from "../responses.js";
+import { clientSafeMessage } from "../errors.js";
 import { pageFromServerWindow, pageFooter, parsePageArgs } from "./pagination.js";
 import type { McpTool, SearchResponse } from "../types.js";
 
@@ -61,6 +62,7 @@ export const searchContentTool: McpTool = {
       response = await searchContent(query, top, skip);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
+      const safeMsg = clientSafeMessage(error);
       // Microsoft Search needs a broader Graph scope than SPE's container scopes
       // (FileStorageContainer.*). Surface an actionable hint rather than a raw 403.
       if (/access denied|Files\.Read|Sites\.Read|forbidden|\b403\b/i.test(msg)) {
@@ -70,10 +72,10 @@ export const searchContentTool: McpTool = {
             "Files.Read.All (or Sites.Read.All) delegated Microsoft Graph permission granted and admin-consented — " +
             "the SharePoint Embedded container scopes (FileStorageContainer.*) alone are not sufficient.",
           "Add Files.Read.All to the owning app's API permissions in Entra (admin consent required), then retry. " +
-            `Underlying error: ${msg}`,
+            `Underlying error: ${safeMsg}`,
         );
       }
-      return fail("UPSTREAM", `searching content: ${msg}`);
+      return fail("UPSTREAM", `searching content: ${safeMsg}`);
     }
 
     const hits = response.value?.[0]?.hitsContainers?.[0]?.hits ?? [];

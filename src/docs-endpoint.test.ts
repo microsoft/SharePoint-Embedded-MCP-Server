@@ -29,6 +29,16 @@ describe("resolveDocsEndpoint (SEC-007)", () => {
     expect(resolveDocsEndpoint("http://127.0.0.1:8080/mcp", true)).toBe("http://127.0.0.1:8080/mcp");
   });
 
+  it("requires https for the allowed Learn host unless insecure is allowed", () => {
+    expect(() => resolveDocsEndpoint("http://learn.microsoft.com/api/mcp", false)).toThrow(
+      /https is required/i,
+    );
+    // The insecure escape hatch still permits http on the allowed host (e.g. a local proxy).
+    expect(resolveDocsEndpoint("http://learn.microsoft.com/api/mcp", true)).toBe(
+      "http://learn.microsoft.com/api/mcp",
+    );
+  });
+
   it("rejects a malformed override URL", () => {
     expect(() => resolveDocsEndpoint("not-a-url", false)).toThrow(/not a valid URL/i);
   });

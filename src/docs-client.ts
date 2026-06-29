@@ -49,18 +49,30 @@ export function resolveDocsEndpoint(
   const trimmed = override?.trim();
   if (!trimmed) return DEFAULT_LEARN_MCP_URL;
 
-  let host: string;
+  let parsed: URL;
   try {
-    host = new URL(trimmed).hostname.toLowerCase();
+    parsed = new URL(trimmed);
   } catch {
     throw new Error(
       `SPE_LEARN_MCP_URL is not a valid URL: ${trimmed}. ` +
         `Provide a full URL such as ${DEFAULT_LEARN_MCP_URL}.`,
     );
   }
+  const host = parsed.hostname.toLowerCase();
 
   const isAllowedHost = host === ALLOWED_DOCS_HOST || host.endsWith(`.${ALLOWED_DOCS_HOST}`);
-  if (isAllowedHost || allowInsecure) return trimmed;
+  if (isAllowedHost) {
+    // Allowed Microsoft Learn host must still be reached over https unless the
+    // operator explicitly opts into an insecure endpoint (e.g. a local mock).
+    if (parsed.protocol !== "https:" && !allowInsecure) {
+      throw new Error(
+        `Refusing to use SPE_LEARN_MCP_URL over ${parsed.protocol} — https is required for ${ALLOWED_DOCS_HOST}. ` +
+          `Set SPE_ALLOW_INSECURE_DOCS_ENDPOINT=1 to override (use with caution).`,
+      );
+    }
+    return trimmed;
+  }
+  if (allowInsecure) return trimmed;
 
   throw new Error(
     `Refusing to use SPE_LEARN_MCP_URL host "${host}": only ${ALLOWED_DOCS_HOST} is allowed by default. ` +

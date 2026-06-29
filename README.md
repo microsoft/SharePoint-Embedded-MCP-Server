@@ -272,7 +272,7 @@ For MCP clients that spawn the server as a subprocess (VS Code, Claude Desktop),
 
 ### Token Storage
 
-Tokens are cached to `~/.spe-mcp/token-cache.json`. This file contains MSAL's serialized token cache (refresh tokens, account info). It's readable only by the current user.
+Tokens are cached under `~/.spe-mcp/` in per-identity files named `token-cache.<tenantId>.<clientId>.json` (a legacy `token-cache.json` may also exist). Each file contains MSAL's serialized token cache (refresh tokens, account info). On macOS/Linux the cache directory is created `0700` and the cache files `0600` (owner read/write only); on Windows the files are protected by the per-user profile ACL.
 
 > **TODO:** Add OS keychain support via [keytar](https://github.com/nicktrav/keytar) as the primary cache, falling back to file cache. Keytar provides OS-managed encryption (Windows Credential Manager / macOS Keychain / Linux Secret Service) but hit data size limits with MSAL's multi-scope cache during initial testing.
 

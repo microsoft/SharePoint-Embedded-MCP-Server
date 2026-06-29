@@ -24,6 +24,7 @@ import {
 import { readState, writeState } from "../state.js";
 import { defineTool, z } from "../tooling/define-tool.js";
 import { fail, ok } from "../responses.js";
+import { clientSafeMessage } from "../errors.js";
 
 interface CreateContainerTypeArgs {
   displayName: string;
@@ -257,8 +258,7 @@ export const createContainerTypeTool = defineTool({
         ? ok(result, formatResult(result))
         : fail("INVALID_ARGS", result.error ?? "Container type creation failed");
     } catch (error) {
-      const msg = error instanceof Error ? error.message : "Unknown error";
-      return fail("UPSTREAM", `creating container type: ${msg}`);
+      return fail("UPSTREAM", `creating container type: ${clientSafeMessage(error)}`);
     }
   },
 });

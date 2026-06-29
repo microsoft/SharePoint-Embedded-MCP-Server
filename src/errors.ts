@@ -65,3 +65,17 @@ export function toSafeError(error: unknown): SafeError {
     correlationId: id,
   };
 }
+
+/**
+ * Client-safe message for tool-local `catch` blocks (SEC-002 consistency).
+ *
+ * For an `AppError` (e.g. a Graph failure mapped by graph-client) this returns
+ * the sanitized `safeMessage` so the raw Graph/az response body is never echoed
+ * to the MCP client. For any other error it returns the plain message, which —
+ * for our own thrown errors and network/library errors — carries useful local
+ * diagnostics without leaking upstream payloads.
+ */
+export function clientSafeMessage(error: unknown): string {
+  if (error instanceof AppError) return error.safeMessage ?? error.message;
+  return error instanceof Error ? error.message : String(error);
+}

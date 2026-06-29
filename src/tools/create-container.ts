@@ -20,6 +20,7 @@ import { readState, writeState } from "../state.js";
 import type { Container } from "../types.js";
 import { defineTool, z } from "../tooling/define-tool.js";
 import { fail, ok } from "../responses.js";
+import { clientSafeMessage } from "../errors.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -37,10 +38,8 @@ export const createContainerTool = defineTool({
     "Retries through the registration propagation delay automatically. Defaults the container " +
     "type ID from the current provisioning state when omitted.",
   annotations: {
-    destructive: true,
     idempotent: false,
-    plane: "content",
-    requiresConsent: true,
+    plane: "control",
   },
   schema: createContainerSchema,
   handler: async (args) => {
@@ -54,12 +53,16 @@ export const createContainerTool = defineTool({
 
     let container: Container | undefined;
     let lastError = "";
+    let lastSafeError = "";
     for (let attempt = 1; attempt <= CONTAINER_CREATE_MAX_ATTEMPTS; attempt++) {
       try {
         container = await createContainer(containerTypeId, displayName);
         break;
       } catch (error) {
+        // Keep the raw message for propagation-pattern detection; surface only
+        // the sanitized message to the client (SEC-002).
         lastError = error instanceof Error ? error.message : String(error);
+        lastSafeError = clientSafeMessage(error);
         // Only retry genuine registration-propagation delays. Permanent errors
         // (invalid/unregistered container type → 404, unauthorized → 403) fail
         // fast instead of hanging through ~150s of backoff.
@@ -67,12 +70,12 @@ export const createContainerTool = defineTool({
           await sleep(containerCreateBackoffMs(attempt)); // 15s, 30s, 45s, 60s
           continue;
         }
-        return fail("UPSTREAM", `creating container after ${attempt} attempt(s): ${lastError}`);
+        return fail("UPSTREAM", `creating container after ${attempt} attempt(s): ${lastSafeError}`);
       }
     }
 
     if (!container) {
-      return fail("UPSTREAM", `container creation failed. ${lastError}`);
+      return fail("UPSTREAM", `container creation failed. ${lastSafeError}`);
     }
 
     // Activate if needed (new containers start inactive).

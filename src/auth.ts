@@ -15,9 +15,10 @@
  * prior tenant from interfering on a tenant switch.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { ensureSecureDir, writeSecureFile } from "./secure-fs.js";
 import {
   type AccountInfo,
   type AuthenticationResult,
@@ -161,9 +162,7 @@ export function getCacheFilePath(config: AuthConfig | null = authConfig): string
 }
 
 function ensureCacheDir(): void {
-  if (!existsSync(CACHE_DIR)) {
-    mkdirSync(CACHE_DIR, { recursive: true });
-  }
+  ensureSecureDir(CACHE_DIR);
 }
 
 const fileCachePlugin: ICachePlugin = {
@@ -185,7 +184,8 @@ const fileCachePlugin: ICachePlugin = {
       try {
         ensureCacheDir();
         const serialized = cacheContext.tokenCache.serialize();
-        writeFileSync(cacheFile, serialized, "utf-8");
+        // SEC-003: token cache holds refresh tokens — owner-only (0o600).
+        writeSecureFile(cacheFile, serialized);
         log(`Token cache written to file (${basename(cacheFile)})`);
       } catch (error) {
         log("Failed to write cache file:", error);

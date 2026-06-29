@@ -11,6 +11,7 @@
 
 import { listContainerTypes } from "../graph-client.js";
 import { ok } from "../responses.js";
+import { clientSafeMessage } from "../errors.js";
 import { paginate, pageFooter, parsePageArgs } from "./pagination.js";
 import type { McpTool } from "../types.js";
 
@@ -57,9 +58,8 @@ export const listContainerTypesTool: McpTool = {
 
       return ok(page, output);
     } catch (error) {
-      const msg = error instanceof Error ? error.message : "Unknown error";
       return {
-        content: [{ type: "text" as const, text: `Error listing container types: ${msg}` }],
+        content: [{ type: "text" as const, text: `Error listing container types: ${clientSafeMessage(error)}` }],
         isError: true,
       };
     }

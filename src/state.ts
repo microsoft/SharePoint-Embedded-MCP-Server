@@ -10,9 +10,10 @@
  * the MCP analogue of the full-setup skill's `.env.spe`.
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { ensureSecureDir, writeSecureFile } from "./secure-fs.js";
 
 const STATE_DIR = join(homedir(), ".spe-mcp");
 const STATE_FILE = join(STATE_DIR, "state.json");
@@ -54,10 +55,9 @@ export function readState(): ProvisioningState {
 
 export function writeState(patch: Partial<ProvisioningState>): ProvisioningState {
   const next = { ...readState(), ...patch };
-  if (!existsSync(STATE_DIR)) {
-    mkdirSync(STATE_DIR, { recursive: true });
-  }
-  writeFileSync(STATE_FILE, JSON.stringify(next, null, 2), "utf-8");
+  ensureSecureDir(STATE_DIR);
+  // SEC-003: state can hold tenant/app/subscription IDs — owner-only (0o600).
+  writeSecureFile(STATE_FILE, JSON.stringify(next, null, 2));
   return next;
 }
 
