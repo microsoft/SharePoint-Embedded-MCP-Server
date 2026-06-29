@@ -276,6 +276,18 @@ For most developers nothing extra is needed: create the owning app with the `pro
 
 Tokens are cached under `~/.spe-mcp/` in per-identity files named `token-cache.<tenantId>.<clientId>.json` (a legacy `token-cache.json` may also exist). Each file contains MSAL's serialized token cache (refresh tokens, account info). On macOS/Linux the cache directory is created `0700` and the cache files `0600` (owner read/write only); on Windows the files are protected by the per-user profile ACL.
 
+### Full Local Auth Reset
+
+If you want a completely clean local auth/provisioning state (tokens + Azure CLI session + remembered owning app/tenant), run:
+
+```powershell
+npx spe-mcp logout
+az logout
+Remove-Item "$HOME/.spe-mcp/state.json" -Force -ErrorAction SilentlyContinue
+```
+
+`spe-mcp logout` clears MSAL token cache files, while `state.json` stores persisted provisioning metadata used to prime bootstrap auth on startup.
+
 > **TODO:** Add OS keychain support via [keytar](https://github.com/nicktrav/keytar) as the primary cache, falling back to file cache. Keytar provides OS-managed encryption (Windows Credential Manager / macOS Keychain / Linux Secret Service) but hit data size limits with MSAL's multi-scope cache during initial testing.
 
 ## Architecture

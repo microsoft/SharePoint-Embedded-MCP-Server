@@ -9,7 +9,7 @@
     "spe": {
       "type": "stdio",
       "command": "node",
-      "args": ["${workspaceFolder}/dist/cli.js", "start"]
+      "args": ["${workspaceFolder:SharePoint-Embedded-MCP-Server}/dist/cli.js", "start"]
     }
   }
 }
