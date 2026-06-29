@@ -24,6 +24,9 @@ vi.mock("../graph-client.js", () => ({
   createContainer: vi.fn(),
   activateContainer: vi.fn(),
   deleteContainerType: vi.fn(),
+  deleteContainerTypeRegistration: vi.fn(),
+  listContainers: vi.fn(async () => []),
+  listDeletedContainers: vi.fn(async () => []),
   deleteApplication: vi.fn(),
   getSignedInUser: vi.fn(async () => ({ id: "user-1", userPrincipalName: "admin@x.com" })),
   grantContainerTypeOwner: vi.fn(async () => ({ id: "perm-1", roles: ["owner"] })),
@@ -237,9 +240,23 @@ describe("project_cleanup", () => {
   it("deletes a TRIAL container type + owning app with confirm=true", async () => {
     Object.assign(stateStore, { appId: "app-1", appObjectId: "obj-1", containerTypeId: "ct-1", billingClassification: "trial" });
     const r = await cleanupTool.handler({ confirm: true });
+    // Registration is deleted before the container type (teardown order).
+    expect(graph.deleteContainerTypeRegistration).toHaveBeenCalledWith("ct-1");
     expect(graph.deleteContainerType).toHaveBeenCalledWith("ct-1");
     expect(graph.deleteApplication).toHaveBeenCalledWith("obj-1", expect.any(Function));
     expect(r.content[0].text).toContain("Cleanup Complete");
+  });
+
+  it("PAUSES and preserves app + state when containers still block a trial container type", async () => {
+    Object.assign(stateStore, { appId: "app-1", appObjectId: "obj-1", containerTypeId: "ct-1", billingClassification: "trial" });
+    vi.mocked(graph.listContainers).mockResolvedValueOnce([{ id: "c-1" } as never]);
+    const r = await cleanupTool.handler({ confirm: true });
+    expect(graph.deleteContainerTypeRegistration).not.toHaveBeenCalled();
+    expect(graph.deleteContainerType).not.toHaveBeenCalled();
+    expect(graph.deleteApplication).not.toHaveBeenCalled(); // app preserved (shared with containers)
+    expect(stateStore.containerTypeId).toBe("ct-1"); // state retained for resume
+    expect(r.content[0].text).toContain("Cleanup Paused");
+    expect(r.content[0].text).toContain("1 live container(s)");
   });
 
   it("PRESERVES a standard container type + owning app without the override", async () => {

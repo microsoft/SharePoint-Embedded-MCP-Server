@@ -16,7 +16,14 @@
 
 import { bootstrapTokenProvider } from "../bootstrap.js";
 import { setAuthConfig } from "../auth.js";
-import { deleteApplication, deleteContainerType } from "../graph-client.js";
+import { AppError } from "../errors.js";
+import {
+  deleteApplication,
+  deleteContainerType,
+  deleteContainerTypeRegistration,
+  listContainers,
+  listDeletedContainers,
+} from "../graph-client.js";
 import { clearState, readState } from "../state.js";
 import type { McpTool } from "../types.js";
 
@@ -123,6 +130,12 @@ export const cleanupTool: McpTool = {
       results.push(`⚠️ Override: deleting a **${classLabel}** container type and its owning app as explicitly requested.`);
     }
 
+    // Tracks whether teardown is clean enough to also delete the owning app and
+    // clear local state. If containers still block the container type, we must
+    // PRESERVE the app (it's shared with those containers) and keep state so the
+    // user can resume after purging containers.
+    let blockedByContainers = false;
+
     // Container-type deletion uses the owning-app token. In bootstrap mode,
     // restore auth config from persisted state so getAccessToken() is usable.
     if (state.appId && state.tenantId) {
@@ -130,12 +143,63 @@ export const cleanupTool: McpTool = {
     }
 
     if (state.containerTypeId) {
-      try {
-        await deleteContainerType(state.containerTypeId);
-        results.push(`✅ Deleted container type \`${state.containerTypeId}\``);
-      } catch (error) {
-        results.push(`⚠️ Container type delete failed: ${error instanceof Error ? error.message : String(error)}`);
+      // Container type deletion requires that NO registration is associated, and
+      // a registration can only be deleted once it has no live or recycle-bin
+      // containers. Run the teardown in order: detect container blockers, delete
+      // the registration (best-effort), then the container type. We do NOT
+      // auto-purge containers here (a much larger destructive surface) — instead
+      // we report them and point at the right tools.
+      const ctId = state.containerTypeId;
+      let liveCount = 0;
+      let deletedCount = 0;
+      try { liveCount = (await listContainers(ctId)).length; } catch { /* non-fatal */ }
+      try { deletedCount = (await listDeletedContainers(ctId)).length; } catch { /* non-fatal */ }
+
+      if (liveCount || deletedCount) {
+        blockedByContainers = true;
+        const blockers: string[] = [];
+        if (liveCount) blockers.push(`${liveCount} live container(s)`);
+        if (deletedCount) blockers.push(`${deletedCount} recycle-bin container(s)`);
+        results.push(
+          `⚠️ Container type \`${ctId}\` still has ${blockers.join(" and ")} — preserved. ` +
+            "Permanently delete them first (container_delete soft-delete then permanent-delete; " +
+            "container_deleted_list to find recycle-bin containers), then re-run project_cleanup.",
+        );
+      } else {
+        // No containers: delete the registration (unblocks the CT delete), then the CT.
+        try {
+          await deleteContainerTypeRegistration(ctId);
+          results.push(`✅ Deleted container type registration \`${ctId}\``);
+        } catch (error) {
+          if (error instanceof AppError && error.code === "NOT_FOUND") {
+            results.push(`✓ Container type registration \`${ctId}\` already removed`);
+          } else {
+            results.push(`⚠️ Registration delete failed: ${error instanceof AppError ? error.safeMessage ?? error.message : String(error)}`);
+          }
+        }
+        try {
+          await deleteContainerType(ctId);
+          results.push(`✅ Deleted container type \`${ctId}\``);
+        } catch (error) {
+          if (error instanceof AppError && error.code === "CONFLICT") {
+            results.push(
+              `⚠️ Container type \`${ctId}\` delete blocked (existing registration). ` +
+                "Delete it with container_type_registration_delete, then retry.",
+            );
+          } else {
+            results.push(`⚠️ Container type delete failed: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
       }
+    }
+
+    if (blockedByContainers) {
+      // Preserve the owning app (shared with the surviving containers) and local
+      // state so the user can purge containers and resume.
+      results.push(
+        "↩️ Owning app and local state **preserved** — finish purging the containers above, then re-run project_cleanup.",
+      );
+      return { content: [{ type: "text" as const, text: `## Cleanup Paused\n\n${results.join("\n")}` }] };
     }
 
     if (state.appObjectId) {
