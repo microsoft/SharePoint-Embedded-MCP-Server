@@ -13,6 +13,7 @@ import type { McpTool } from "../types.js";
 
 export const previewFileTool: McpTool = {
   name: "content_file_preview",
+  annotations: { readOnly: true, plane: "content", requiresConsent: true },
   description:
     "Generate a preview URL for a file in a SharePoint Embedded container. " +
     "The preview URL can be opened in a browser to view the file.",

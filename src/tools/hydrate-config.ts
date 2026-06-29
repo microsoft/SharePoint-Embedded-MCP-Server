@@ -136,6 +136,7 @@ export function mergeAzureYaml(
 
 export const hydrateConfigTool: McpTool = {
   name: "project_hydrate_config",
+  annotations: { plane: "control" },
   description:
     "Write the current SharePoint Embedded provisioning details (tenant, client, container type, " +
     "container, subscription/resource group) into a project as .env, appsettings.Development.json, " +

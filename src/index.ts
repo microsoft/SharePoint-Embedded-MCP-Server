@@ -30,6 +30,13 @@ import type { McpTool, ServerConfig } from "./types.js";
 import { redact } from "./logging.js";
 import { fail } from "./responses.js";
 import { toSafeError } from "./errors.js";
+import {
+  buildToolPolicy,
+  isToolListed,
+  checkToolCallAllowed,
+  type ResolvedToolPolicy,
+} from "./policy.js";
+import { withConfirmation } from "./tools/confirmation.js";
 // Status / diagnostics
 import { statusTool } from "./tools/status.js";
 // Container Type tools
@@ -111,7 +118,10 @@ const TOOLS: McpTool[] = [
   createContainerTool,
   managePermissionsTool,
   archiveRestoreTool,
-  deleteContainerTool,
+  // container_delete self-guards permanent-delete; the middleware enforces the
+  // same gate uniformly at registration (SAFE-002). Both produce an identical
+  // CONFIRMATION_REQUIRED, so there is no double-prompt.
+  withConfirmation(deleteContainerTool, { actions: ["permanent-delete"] }),
   // Content Operations (content-plane: gated behind content-access opt-in)
   withContentAccess(uploadFileTool),
   withContentAccess(createFolderTool),
@@ -176,12 +186,25 @@ function validateArgs(args: Record<string, unknown>, tool: McpTool): { ok: true;
   return { ok: true, args };
 }
 
-const LIST_TOOLS = TOOLS.map((tool) => ({
-  name: tool.name,
-  description: tool.description,
-  inputSchema: tool.inputSchema,
-  ...(toMcpAnnotations(tool) ? { annotations: toMcpAnnotations(tool) } : {}),
-}));
+function toListToolEntry(tool: McpTool) {
+  return {
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+    ...(toMcpAnnotations(tool) ? { annotations: toMcpAnnotations(tool) } : {}),
+  };
+}
+
+/**
+ * Active tool policy (SAFE-003 read-only / SAFE-004 allowlist). `null` means no
+ * restriction (every tool advertised and callable). Set once in startServer().
+ */
+let activePolicy: ResolvedToolPolicy | null = null;
+
+/** Tools advertised to the client, filtered by the active policy. */
+function listVisibleTools() {
+  return TOOLS.filter((tool) => isToolListed(tool, activePolicy)).map(toListToolEntry);
+}
 
 // ─── Server Setup ───────────────────────────────────────────────────────────
 
@@ -191,8 +214,9 @@ const server = new Server(
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
-  log("ListTools request received");
-  return { tools: LIST_TOOLS };
+  const tools = listVisibleTools();
+  log(`ListTools request received`, { count: tools.length });
+  return { tools };
 });
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -214,6 +238,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     log(`Executing ${name}`, { tool: name, argKeys: Object.keys(safeArgs), args: redact(safeArgs) });
+
+    // SAFE-003/SAFE-004: enforce read-only mode and the tool allowlist BEFORE
+    // validating arguments or invoking the handler, so a denied call never
+    // touches Graph/Azure.
+    const denied = checkToolCallAllowed(tool, activePolicy);
+    if (denied) {
+      const durationMs = Date.now() - startTime;
+      log(`${name} blocked by tool policy in ${durationMs}ms`);
+      return {
+        content: denied.content.map((c) => ({ type: "text" as const, text: c.text })),
+        isError: true,
+        structuredContent: withDuration(denied.structuredContent, durationMs),
+      } as const;
+    }
+
     const validated = validateArgs(safeArgs, tool);
     if (!validated.ok) {
       const durationMs = Date.now() - startTime;
@@ -286,6 +325,20 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 
 export async function startServer(config: ServerConfig) {
   log("Starting SharePoint Embedded MCP Server...");
+
+  // SAFE-003 / SAFE-004: build the tool policy once from config (read-only mode
+  // and/or an allowlist profile or CSV). When neither is set, `activePolicy`
+  // stays null and every tool is advertised and callable.
+  activePolicy = buildToolPolicy(TOOLS, config.readOnly ?? false, config.tools);
+  if (activePolicy.readOnly || activePolicy.allow) {
+    const parts: string[] = [];
+    if (activePolicy.readOnly) parts.push("read-only mode (mutating tools rejected)");
+    if (config.tools) parts.push(`tool allowlist '${config.tools}'`);
+    const visible = TOOLS.filter((t) => isToolListed(t, activePolicy)).length;
+    console.error(
+      `[SPE MCP Server] Tool policy active: ${parts.join(" + ") || "restricted"} — ${visible}/${TOOLS.length} tools exposed`,
+    );
+  }
 
   // Stamp outbound `az` / `azd` traffic for aggregate attribution. The Azure
   // CLI and Developer CLI append AZURE_HTTP_USER_AGENT to their User-Agent on

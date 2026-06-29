@@ -12,6 +12,7 @@ import type { McpTool } from "../types.js";
 
 export const listContainersTool: McpTool = {
   name: "container_list",
+  annotations: { readOnly: true },
   description:
     "List all SharePoint Embedded containers for a container type. " +
     "Returns container IDs, names, status, and creation dates.",

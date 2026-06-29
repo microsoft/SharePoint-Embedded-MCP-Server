@@ -32,6 +32,7 @@ function isTrialContainerType(billingClassification?: string): boolean {
 
 export const cleanupTool: McpTool = {
   name: "project_cleanup",
+  annotations: { destructive: true, localRequired: true },
   description:
     "Delete the SharePoint Embedded resources provisioned by the SPE Builder and clear local state. " +
     "By default only a TRIAL container type and its owning Entra app are removed; standard / " +

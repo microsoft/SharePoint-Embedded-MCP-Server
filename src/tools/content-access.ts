@@ -20,6 +20,7 @@ import type { McpTool, McpToolResult } from "../types.js";
 
 export const grantContentAccessTool: McpTool = {
   name: "content_access_grant",
+  annotations: { requiresConsent: true },
   description:
     "Grant the SPE Builder access to read and manage files inside your containers (content plane). " +
     "This is off by default and separate from provisioning. Pass confirm=true to enable; the next " +
@@ -66,6 +67,7 @@ export const grantContentAccessTool: McpTool = {
 
 export const revokeContentAccessTool: McpTool = {
   name: "content_access_revoke",
+  annotations: { destructive: true },
   description:
     "Revoke the SPE Builder's content-plane (file read/manage) access. Control-plane provisioning " +
     "is unaffected.",

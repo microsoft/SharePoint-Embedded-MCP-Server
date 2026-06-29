@@ -33,6 +33,7 @@ import type { McpTool } from "../types.js";
 
 export const createAppTool: McpTool = {
   name: "project_app_create",
+  annotations: { plane: "control" },
   description:
     "Create the owning Entra application for a SharePoint Embedded setup (a public-client app " +
     "with the required SPE delegated permissions). Uses your signed-in Azure CLI session — no " +

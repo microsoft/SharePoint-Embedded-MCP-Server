@@ -13,6 +13,7 @@ import type { McpTool, SearchResponse } from "../types.js";
 
 export const searchContentTool: McpTool = {
   name: "content_search",
+  annotations: { readOnly: true, plane: "content", requiresConsent: true },
   description:
     "Search for files and content across SharePoint Embedded containers " +
     "using the Microsoft Search API with includeHiddenContent. " +

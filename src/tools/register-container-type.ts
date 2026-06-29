@@ -23,6 +23,7 @@ interface RegisterArgs {
 
 export const registerContainerTypeTool: McpTool = {
   name: "container_type_register",
+  annotations: { plane: "control" },
   description:
     "Register a SharePoint Embedded container type on the local tenant with the owning app's " +
     "permission grants. Required before any containers can be created. Defaults the container " +

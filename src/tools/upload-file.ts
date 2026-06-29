@@ -13,6 +13,7 @@ import type { McpTool } from "../types.js";
 
 export const uploadFileTool: McpTool = {
   name: "content_file_upload",
+  annotations: { plane: "content", requiresConsent: true },
   description:
     "Upload text content to a file in a SharePoint Embedded container. " +
     "Provide the content as a string. For binary/large files, use the resumable upload pattern.",

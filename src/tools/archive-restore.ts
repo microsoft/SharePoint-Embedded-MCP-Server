@@ -12,6 +12,7 @@ import type { McpTool } from "../types.js";
 
 export const archiveRestoreTool: McpTool = {
   name: "container_archive_restore",
+  annotations: { plane: "control" },
   description:
     "Archive (lock to read-only) or restore (unlock) a SharePoint Embedded container. " +
     "Archived containers are in cold storage — content is read-only.",

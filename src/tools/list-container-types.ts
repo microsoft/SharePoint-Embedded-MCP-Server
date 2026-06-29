@@ -44,6 +44,7 @@ function formatResult(result: Awaited<ReturnType<typeof executeListContainerType
 
 export const listContainerTypesTool: McpTool = {
   name: "container_type_list",
+  annotations: { readOnly: true },
   description:
     "List all SharePoint Embedded container types in the tenant. " +
     "Shows container type IDs, display names, owning applications, and billing classification. " +

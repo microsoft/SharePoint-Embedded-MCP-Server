@@ -62,6 +62,7 @@ function sleep(ms: number): Promise<void> {
 
 export const provisionTool: McpTool = {
   name: "project_provision",
+  annotations: { plane: "control" },
   description:
     "Provision a complete SharePoint Embedded setup in one call: create the owning Entra app, " +
     "create and register a container type, and create an active container. Supports trial or " +

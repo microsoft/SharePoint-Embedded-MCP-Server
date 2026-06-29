@@ -48,6 +48,7 @@ function roleValidationError(action: string, role: unknown): McpToolResult | nul
 
 export const managePermissionsTool: McpTool = {
   name: "container_permissions_manage",
+  annotations: { destructive: true, plane: "control" },
   description:
     "Add, update, or remove user permissions on a SharePoint Embedded container. " +
     "Valid roles: reader, writer, manager, owner.",

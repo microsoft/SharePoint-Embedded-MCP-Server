@@ -62,6 +62,7 @@ function toPermissions(value: unknown, fallback: string[]): string[] {
 
 export const addContainerTypeAppGrantTool: McpTool = {
   name: "container_type_app_grant_add",
+  annotations: { plane: "control" },
   description:
     "Add or update an application permission grant on a SharePoint Embedded container type registration " +
     "(Microsoft Graph v1.0). Authorizes one consuming app (by appId) to act on the container type with the " +
@@ -118,6 +119,7 @@ export const addContainerTypeAppGrantTool: McpTool = {
 
 export const listContainerTypeAppGrantsTool: McpTool = {
   name: "container_type_app_grants_list",
+  annotations: { readOnly: true },
   description:
     "List the application permission grants on a SharePoint Embedded container type registration " +
     "(Microsoft Graph v1.0) — the apps authorized on the container type and their delegated/application permissions.",
@@ -154,6 +156,7 @@ export const listContainerTypeAppGrantsTool: McpTool = {
 
 export const removeContainerTypeAppGrantTool: McpTool = {
   name: "container_type_app_grant_remove",
+  annotations: { destructive: true, plane: "control" },
   description:
     "Remove an application permission grant from a SharePoint Embedded container type registration " +
     "(Microsoft Graph v1.0), revoking that app's access to the container type. Removing the owning app's grant " +

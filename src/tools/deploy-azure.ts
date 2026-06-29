@@ -163,6 +163,7 @@ async function deployWithArgLagRetry(
 
 export const deployAzureTool: McpTool = {
   name: "project_deploy",
+  annotations: { localRequired: true },
   description:
     "Deploy the scaffolded SharePoint Embedded app to Azure using the Azure Developer CLI " +
     "(`azd up`) and return the live URL. Requires `azd` installed and an Azure login. Provisions " +
