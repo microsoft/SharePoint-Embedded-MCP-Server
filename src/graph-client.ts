@@ -21,6 +21,7 @@ import type {
   ContainerPermission,
   ContainerType,
   ContainerTypePermission,
+  ContainerTypeRegistrationRecord,
   CustomProperties,
   Drive,
   DriveItem,
@@ -710,6 +711,50 @@ export async function listContainerTypeAppPermissions(
   return result.value ?? [];
 }
 
+// ─── Container Type Registrations — CRUDL on the registration RECORD ─────────
+//
+// A registration is the tenant↔containerType binding (distinct from a single
+// app's permission grant). It must exist before containers can be created, and
+// it MUST be deleted before the container type can be deleted. Per Graph, a
+// registration can only be deleted once it has NO containers AND NO deleted
+// (recycle-bin) containers.
+
+interface ContainerTypeRegistrationsListResponse {
+  value: ContainerTypeRegistrationRecord[];
+}
+
+/** Read a single container type registration record (v1.0). */
+export async function getContainerTypeRegistration(
+  containerTypeId: string,
+): Promise<ContainerTypeRegistrationRecord> {
+  return graphRequest<ContainerTypeRegistrationRecord>(
+    "GET",
+    `/storage/fileStorage/containerTypeRegistrations/${containerTypeId}`,
+  );
+}
+
+/** List the container type registrations on the tenant (v1.0). */
+export async function listContainerTypeRegistrations(): Promise<ContainerTypeRegistrationRecord[]> {
+  const result = await graphRequest<ContainerTypeRegistrationsListResponse>(
+    "GET",
+    "/storage/fileStorage/containerTypeRegistrations",
+  );
+  return result.value ?? [];
+}
+
+/**
+ * Delete a container type registration record (v1.0). Graph:
+ * DELETE /storage/fileStorage/containerTypeRegistrations/{id} → 204. Fails with
+ * 409 if the registration still has containers or deleted (recycle-bin)
+ * containers. This is the step that unblocks container type deletion.
+ */
+export async function deleteContainerTypeRegistration(containerTypeId: string): Promise<void> {
+  await graphRequest<unknown>(
+    "DELETE",
+    `/storage/fileStorage/containerTypeRegistrations/${containerTypeId}`,
+  );
+}
+
 /** Remove a single application's permission grant from a container type registration (v1.0). */
 export async function revokeContainerTypeAppPermission(
   containerTypeId: string,
@@ -798,6 +843,40 @@ export async function createContainer(
     displayName,
     containerTypeId,
   });
+}
+
+/**
+ * Update (rename / edit) a container's editable properties (displayName,
+ * description). Graph: PATCH /storage/fileStorage/containers/{id}. Only the
+ * provided fields are sent. Returns the updated container.
+ */
+export async function updateContainer(
+  containerId: string,
+  patch: { displayName?: string; description?: string },
+): Promise<Container> {
+  const body: Record<string, unknown> = {};
+  if (patch.displayName !== undefined) body.displayName = patch.displayName;
+  if (patch.description !== undefined) body.description = patch.description;
+  return graphRequest<Container>(
+    "PATCH",
+    `/storage/fileStorage/containers/${containerId}`,
+    body,
+  );
+}
+
+/**
+ * List soft-deleted containers in the tenant recycle bin (optionally filtered by
+ * container type). Graph: GET /storage/fileStorage/deletedContainers. These are
+ * containers that have been soft-deleted but not yet permanently purged; a
+ * container type registration cannot be deleted while any (live OR deleted)
+ * container exists, so this is required to find recycle-bin blockers.
+ */
+export async function listDeletedContainers(containerTypeId?: string): Promise<Container[]> {
+  const path = containerTypeId
+    ? `/storage/fileStorage/deletedContainers?$filter=containerTypeId eq ${containerTypeId}`
+    : "/storage/fileStorage/deletedContainers";
+  const result = await graphRequest<ListContainersResponse>("GET", path);
+  return result.value ?? [];
 }
 
 export async function activateContainer(containerId: string): Promise<void> {

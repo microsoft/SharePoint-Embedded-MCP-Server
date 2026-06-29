@@ -11,6 +11,7 @@
  */
 
 import { setAuthConfig } from "../auth.js";
+import { AppError } from "../errors.js";
 import {
   deleteContainerType,
   getContainerType,
@@ -164,6 +165,18 @@ export const deleteContainerTypeTool: McpTool = {
         }],
       };
     } catch (e) {
+      // The most common failure is a 409 because the container type still has a
+      // registration. Removing app *grants* does NOT clear this — the
+      // registration RECORD must be deleted. Point the caller at the right tool.
+      if (e instanceof AppError && e.code === "CONFLICT") {
+        return err(
+          `cannot delete container type \`${id}\`: it still has an active registration. ` +
+            "Delete the registration first with `container_type_registration_delete` (a registration can only " +
+            "be deleted once its live and recycle-bin containers are permanently removed — use " +
+            "`container_deleted_list` to find recycle-bin containers). Removing an app permission *grant* is not " +
+            "sufficient. Then retry container_type_delete.",
+        );
+      }
       return err(`deleting container type: ${reason(e)}`);
     }
   },

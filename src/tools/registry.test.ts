@@ -40,7 +40,10 @@ import { registerContainerTypeTool } from "../tools/register-container-type.js";
 import { getContainerTypeTool, updateContainerTypeTool, deleteContainerTypeTool } from "../tools/container-type-crud.js";
 import { grantContainerTypeOwnerTool, listContainerTypeOwnersTool, revokeContainerTypeOwnerTool } from "../tools/container-type-permissions.js";
 import { addContainerTypeAppGrantTool, listContainerTypeAppGrantsTool, removeContainerTypeAppGrantTool } from "../tools/container-type-app-grants.js";
+import { getContainerTypeRegistrationTool, listContainerTypeRegistrationsTool, deleteContainerTypeRegistrationTool } from "../tools/container-type-registration.js";
 import { createContainerTool } from "../tools/create-container.js";
+import { updateContainerTool } from "../tools/update-container.js";
+import { listDeletedContainersTool } from "../tools/list-deleted-containers.js";
 import { provisionTool } from "../tools/provision.js";
 import { listSubscriptionsTool, listResourceGroupsTool } from "../tools/list-azure.js";
 import { hydrateConfigTool } from "../tools/hydrate-config.js";
@@ -68,12 +71,17 @@ const ALL_TOOLS: McpTool[] = [
   addContainerTypeAppGrantTool,
   listContainerTypeAppGrantsTool,
   removeContainerTypeAppGrantTool,
+  getContainerTypeRegistrationTool,
+  listContainerTypeRegistrationsTool,
+  deleteContainerTypeRegistrationTool,
   createContainerTool,
   listContainersTool,
   getContainerTool,
+  updateContainerTool,
   managePermissionsTool,
   archiveRestoreTool,
   deleteContainerTool,
+  listDeletedContainersTool,
   uploadFileTool,
   createFolderTool,
   searchContentTool,
@@ -96,8 +104,8 @@ const ALL_TOOLS: McpTool[] = [
 ];
 
 describe("Tool Registry", () => {
-  it("has 40 tools registered", () => {
-    expect(ALL_TOOLS).toHaveLength(40);
+  it("has 45 tools registered", () => {
+    expect(ALL_TOOLS).toHaveLength(45);
   });
 
   it("all tools have unique names", () => {
@@ -151,12 +159,17 @@ describe("Tool Registry", () => {
       "container_type_app_grant_add",
       "container_type_app_grants_list",
       "container_type_app_grant_remove",
+      "container_type_registration_get",
+      "container_type_registration_list",
+      "container_type_registration_delete",
       "container_create",
       "container_list",
       "container_get",
+      "container_update",
       "container_permissions_manage",
       "container_archive_restore",
       "container_delete",
+      "container_deleted_list",
       "content_file_upload",
       "content_folder_create",
       "content_search",
