@@ -260,11 +260,25 @@ describe("container_delete", () => {
     expect(result.content[0].text).toContain("93-day");
   });
 
-  it("permanently deletes a container", async () => {
+  it("permanently deletes a container (with confirm=true)", async () => {
     vi.mocked(graph.permanentDeleteContainer).mockResolvedValue();
-    const result = await deleteContainerTool.handler({ containerId: "c1", action: "permanent-delete" });
+    const result = await deleteContainerTool.handler({ containerId: "c1", action: "permanent-delete", confirm: true });
     expect(result.content[0].text).toContain("permanently deleted");
     expect(result.content[0].text).toContain("IRREVERSIBLE");
+    expect(graph.permanentDeleteContainer).toHaveBeenCalledWith("c1");
+  });
+
+  it("blocks permanent-delete without confirm and does NOT call Graph (SAFE-002)", async () => {
+    const result = await deleteContainerTool.handler({ containerId: "c1", action: "permanent-delete" });
+    expect(result.isError).toBe(true);
+    expect((result.structuredContent as { error?: { code?: string } }).error?.code).toBe("CONFIRMATION_REQUIRED");
+    expect(graph.permanentDeleteContainer).not.toHaveBeenCalled();
+  });
+
+  it("blocks permanent-delete when confirm is not strictly true (SAFE-002)", async () => {
+    const result = await deleteContainerTool.handler({ containerId: "c1", action: "permanent-delete", confirm: "yes" });
+    expect(result.isError).toBe(true);
+    expect(graph.permanentDeleteContainer).not.toHaveBeenCalled();
   });
 
   it("restores a deleted container", async () => {

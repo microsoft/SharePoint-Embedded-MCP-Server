@@ -13,6 +13,7 @@ import type { McpTool } from "../types.js";
 
 export const createFolderTool: McpTool = {
   name: "content_folder_create",
+  annotations: { plane: "content", requiresConsent: true },
   description:
     "Create a folder or nested folder path inside a SharePoint Embedded container. " +
     "Intermediate folders are created automatically. Already-existing folders are skipped.",

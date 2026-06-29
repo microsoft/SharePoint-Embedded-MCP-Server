@@ -14,6 +14,7 @@ import type { McpTool } from "../types.js";
 
 export const listSubscriptionsTool: McpTool = {
   name: "azure_subscriptions_list",
+  annotations: { readOnly: true, localRequired: true },
   description:
     "List the Azure subscriptions the signed-in user can access (via Azure CLI). " +
     "Use this to choose a subscription for SharePoint Embedded standard billing.",
@@ -57,6 +58,7 @@ export const listSubscriptionsTool: McpTool = {
 
 export const listResourceGroupsTool: McpTool = {
   name: "azure_resource_groups_list",
+  annotations: { readOnly: true, localRequired: true },
   description:
     "List the resource groups in an Azure subscription (via Azure CLI). " +
     "Use this to choose a resource group for SharePoint Embedded standard billing.",

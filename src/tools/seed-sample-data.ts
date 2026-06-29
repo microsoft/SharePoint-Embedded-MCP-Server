@@ -35,6 +35,7 @@ const SAMPLE_CONTAINERS: Array<{ name: string; docs: string[] }> = [
 
 export const seedSampleDataTool: McpTool = {
   name: "project_seed_sample_data",
+  annotations: { plane: "content", requiresConsent: true },
   description:
     "Seed sample containers and documents into a SharePoint Embedded setup so you can start " +
     "exploring immediately (e.g., Blueprints, Permits, Site Photos with sample files). Uses the " +

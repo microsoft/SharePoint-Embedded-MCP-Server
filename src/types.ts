@@ -47,6 +47,19 @@ export interface ServerConfig {
   clientId?: string;
   /** Entra tenant ID. Optional; discovered from the Azure CLI when omitted. */
   tenantId?: string;
+  /**
+   * Read-only mode (SAFE-003). When true, only tools annotated `readOnly` are
+   * advertised and any non-readOnly tool call is rejected. Also settable via
+   * the `SPE_READ_ONLY` env var.
+   */
+  readOnly?: boolean;
+  /**
+   * Tool allowlist (SAFE-004): a built-in profile name (`readOnly`, `docsOnly`,
+   * `provisioning`, `content`, `admin`) or a comma-separated list of tool names.
+   * Tools outside the allowlist are hidden from ListTools and rejected at call
+   * time. Also settable via the `SPE_TOOLS` env var.
+   */
+  tools?: string;
 }
 
 // ─── Graph API Types: Container Types ────────────────────────────────────────

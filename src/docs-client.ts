@@ -23,9 +23,50 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 const DEFAULT_LEARN_MCP_URL = "https://learn.microsoft.com/api/mcp";
+const ALLOWED_DOCS_HOST = "learn.microsoft.com";
 const SEARCH_TOOL = "microsoft_docs_search";
 const FETCH_TOOL = "microsoft_docs_fetch";
 const CALL_TIMEOUT_MS = 25_000;
+
+function isTruthyEnv(value: string | undefined): boolean {
+  if (!value) return false;
+  return /^(1|true|yes|on)$/i.test(value.trim());
+}
+
+/**
+ * Resolve and validate the Learn MCP endpoint (SEC-007).
+ *
+ * The docs proxy defaults to the first-party Microsoft Learn MCP host. An
+ * `SPE_LEARN_MCP_URL` override that points at any other host is refused unless
+ * the operator explicitly opts in via `SPE_ALLOW_INSECURE_DOCS_ENDPOINT`, so a
+ * stray/hostile env var cannot silently redirect documentation traffic
+ * off-Microsoft.
+ */
+export function resolveDocsEndpoint(
+  override: string | undefined = process.env.SPE_LEARN_MCP_URL,
+  allowInsecure: boolean = isTruthyEnv(process.env.SPE_ALLOW_INSECURE_DOCS_ENDPOINT),
+): string {
+  const trimmed = override?.trim();
+  if (!trimmed) return DEFAULT_LEARN_MCP_URL;
+
+  let host: string;
+  try {
+    host = new URL(trimmed).hostname.toLowerCase();
+  } catch {
+    throw new Error(
+      `SPE_LEARN_MCP_URL is not a valid URL: ${trimmed}. ` +
+        `Provide a full URL such as ${DEFAULT_LEARN_MCP_URL}.`,
+    );
+  }
+
+  const isAllowedHost = host === ALLOWED_DOCS_HOST || host.endsWith(`.${ALLOWED_DOCS_HOST}`);
+  if (isAllowedHost || allowInsecure) return trimmed;
+
+  throw new Error(
+    `Refusing to use SPE_LEARN_MCP_URL host "${host}": only ${ALLOWED_DOCS_HOST} is allowed by default. ` +
+      `Set SPE_ALLOW_INSECURE_DOCS_ENDPOINT=1 to override (use with caution — this redirects documentation queries off Microsoft Learn).`,
+  );
+}
 
 function log(message: string, data?: unknown): void {
   const timestamp = new Date().toISOString();
@@ -51,7 +92,7 @@ let toolsByName: Map<string, DiscoveredTool> | null = null;
 let connectPromise: Promise<void> | null = null;
 
 function getEndpoint(): string {
-  return process.env.SPE_LEARN_MCP_URL?.trim() || DEFAULT_LEARN_MCP_URL;
+  return resolveDocsEndpoint();
 }
 
 async function connect(): Promise<void> {

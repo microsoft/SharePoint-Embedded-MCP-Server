@@ -13,15 +13,19 @@ import {
   permanentDeleteContainer,
   restoreDeletedContainer,
 } from "../graph-client.js";
+import { fail } from "../responses.js";
 import type { McpTool } from "../types.js";
 
 export const deleteContainerTool: McpTool = {
   name: "container_delete",
   description:
     "Delete or restore a SharePoint Embedded container. " +
+    "Use this when you need to remove a container or recover one from the recycle bin. " +
     "soft-delete: moves to 93-day recycle bin. " +
-    "permanent-delete: irreversible removal. " +
-    "restore: recovers a soft-deleted container from the recycle bin.",
+    "permanent-delete: irreversible removal — requires confirm=true. " +
+    "restore: recovers a soft-deleted container from the recycle bin. " +
+    "DESTRUCTIVE: permanent-delete cannot be undone.",
+  annotations: { destructive: true, plane: "control" },
   inputSchema: {
     type: "object" as const,
     properties: {
@@ -33,6 +37,11 @@ export const deleteContainerTool: McpTool = {
         type: "string",
         enum: ["soft-delete", "permanent-delete", "restore"],
         description: "The delete action. 'permanent-delete' is IRREVERSIBLE.",
+      },
+      confirm: {
+        type: "boolean",
+        description:
+          "Required for 'permanent-delete'. Set true to confirm irreversible permanent deletion.",
       },
     },
     required: ["containerId", "action"],
@@ -66,6 +75,14 @@ export const deleteContainerTool: McpTool = {
       }
 
       case "permanent-delete": {
+        // SAFE-002: never permanently delete without explicit confirmation.
+        if (args.confirm !== true) {
+          return fail(
+            "CONFIRMATION_REQUIRED",
+            `Permanent deletion of container ${containerId} is IRREVERSIBLE and was not confirmed.`,
+            "Re-run container_delete with action='permanent-delete' and confirm=true to proceed.",
+          );
+        }
         await permanentDeleteContainer(containerId);
         return {
           content: [{

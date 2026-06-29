@@ -161,6 +161,7 @@ function startDetached(command: string, args: string[], cwd: string): Promise<Sp
 
 export const runLocalTool: McpTool = {
   name: "project_run_local",
+  annotations: { localRequired: true },
   description:
     "Install dependencies and start the scaffolded SharePoint Embedded app locally, returning the " +
     "local URL. Detects Node (npm) or .NET (dotnet) projects and reports the actual dev-server port " +

@@ -19,6 +19,7 @@ import type { McpTool } from "../types.js";
 
 export const manageSharingTool: McpTool = {
   name: "content_sharing_manage",
+  annotations: { plane: "content", requiresConsent: true },
   description:
     "Create, list, or revoke sharing links for files in a SharePoint Embedded container.",
   inputSchema: {

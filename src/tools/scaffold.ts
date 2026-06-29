@@ -23,6 +23,7 @@ interface ScaffoldArgs {
 
 export const scaffoldTool: McpTool = {
   name: "project_scaffold",
+  annotations: { localRequired: true },
   description:
     "Scaffold a SharePoint Embedded reference architecture into a project directory (runnable " +
     "locally, deployable to Azure unchanged). Call with no 'architecture' to list available " +

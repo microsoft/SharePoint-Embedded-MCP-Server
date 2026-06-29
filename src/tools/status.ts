@@ -18,6 +18,7 @@ import type { McpTool } from "../types.js";
 
 export const statusTool: McpTool = {
   name: "status_get",
+  annotations: { readOnly: true },
   description:
     "Report SharePoint Embedded Builder status: the signed-in Azure CLI identity " +
     "(tenant and user) used for control-plane provisioning, and whether the environment " +

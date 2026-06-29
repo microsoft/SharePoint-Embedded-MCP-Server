@@ -12,6 +12,7 @@ import type { McpTool } from "../types.js";
 
 export const checkBillingTool: McpTool = {
   name: "billing_check",
+  annotations: { readOnly: true, localRequired: true },
   description:
     "Check the billing configuration for a SharePoint Embedded container type. " +
     "Shows billing classification, trial expiry, and Azure subscription info.",

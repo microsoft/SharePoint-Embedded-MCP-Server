@@ -37,6 +37,7 @@ function reason(e: unknown): string {
 
 export const getContainerTypeTool: McpTool = {
   name: "container_type_get",
+  annotations: { readOnly: true },
   description: "Get a SharePoint Embedded container type by id (Microsoft Graph beta).",
   inputSchema: {
     type: "object" as const,
@@ -71,6 +72,7 @@ export const getContainerTypeTool: McpTool = {
 
 export const updateContainerTypeTool: McpTool = {
   name: "container_type_update",
+  annotations: { plane: "control" },
   description: "Update a SharePoint Embedded container type's mutable properties, e.g. displayName (Microsoft Graph beta).",
   inputSchema: {
     type: "object" as const,
@@ -102,6 +104,7 @@ export const updateContainerTypeTool: McpTool = {
 
 export const deleteContainerTypeTool: McpTool = {
   name: "container_type_delete",
+  annotations: { destructive: true, plane: "control" },
   description:
     "Delete a SharePoint Embedded container type (Microsoft Graph beta). Trial-only by default: standard / " +
     "direct-to-customer container types are billed production resources and are PROTECTED unless you pass " +

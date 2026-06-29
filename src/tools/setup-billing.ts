@@ -42,6 +42,7 @@ interface SetupBillingArgs {
 
 export const setupBillingTool: McpTool = {
   name: "billing_setup",
+  annotations: { plane: "control", localRequired: true },
   description:
     "Attach Standard (Azure) billing to a SharePoint Embedded container type that was created as " +
     "standard: registers the Microsoft.Syntex resource provider on the chosen Azure subscription " +

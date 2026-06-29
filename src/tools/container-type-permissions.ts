@@ -43,6 +43,7 @@ function reason(e: unknown): string {
 
 export const grantContainerTypeOwnerTool: McpTool = {
   name: "container_type_grant_owner",
+  annotations: { plane: "control" },
   description:
     "Grant the `owner` role on a SharePoint Embedded container type to a user (Microsoft Graph beta). " +
     "An owner can create containers using a public client (PCA) — the v1.0 container API rejects container " +
@@ -91,6 +92,7 @@ export const grantContainerTypeOwnerTool: McpTool = {
 
 export const listContainerTypeOwnersTool: McpTool = {
   name: "container_type_owners_list",
+  annotations: { readOnly: true },
   description: "List the owner permissions on a SharePoint Embedded container type (Microsoft Graph beta).",
   inputSchema: {
     type: "object" as const,
@@ -125,6 +127,7 @@ export const listContainerTypeOwnersTool: McpTool = {
 
 export const revokeContainerTypeOwnerTool: McpTool = {
   name: "container_type_revoke_owner",
+  annotations: { destructive: true, plane: "control" },
   description: "Remove an owner permission from a SharePoint Embedded container type (Microsoft Graph beta).",
   inputSchema: {
     type: "object" as const,

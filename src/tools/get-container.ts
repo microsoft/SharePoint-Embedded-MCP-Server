@@ -17,6 +17,7 @@ import type { McpTool } from "../types.js";
 
 export const getContainerTool: McpTool = {
   name: "container_get",
+  annotations: { readOnly: true },
   description:
     "Get detailed information about a SharePoint Embedded container, " +
     "including its status, permissions, drive info, and custom properties.",
