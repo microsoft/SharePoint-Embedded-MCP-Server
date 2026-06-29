@@ -47,13 +47,20 @@ import { registerContainerTypeTool } from "./tools/register-container-type.js";
 import { getContainerTypeTool, updateContainerTypeTool, deleteContainerTypeTool } from "./tools/container-type-crud.js";
 import { grantContainerTypeOwnerTool, listContainerTypeOwnersTool, revokeContainerTypeOwnerTool } from "./tools/container-type-permissions.js";
 import { addContainerTypeAppGrantTool, listContainerTypeAppGrantsTool, removeContainerTypeAppGrantTool } from "./tools/container-type-app-grants.js";
+import {
+  getContainerTypeRegistrationTool,
+  listContainerTypeRegistrationsTool,
+  deleteContainerTypeRegistrationTool,
+} from "./tools/container-type-registration.js";
 import { createContainerTool } from "./tools/create-container.js";
 // Container Management tools
 import { listContainersTool } from "./tools/list-containers.js";
 import { getContainerTool } from "./tools/get-container.js";
+import { updateContainerTool } from "./tools/update-container.js";
 import { managePermissionsTool } from "./tools/manage-permissions.js";
 import { archiveRestoreTool } from "./tools/archive-restore.js";
 import { deleteContainerTool } from "./tools/delete-container.js";
+import { listDeletedContainersTool } from "./tools/list-deleted-containers.js";
 // Content Operations tools
 import { uploadFileTool } from "./tools/upload-file.js";
 import { createFolderTool } from "./tools/create-folder.js";
@@ -112,16 +119,27 @@ const TOOLS: McpTool[] = [
   addContainerTypeAppGrantTool,
   listContainerTypeAppGrantsTool,
   removeContainerTypeAppGrantTool,
+  // Container Type registration RECORD — CRUDL on the registration itself (v1.0).
+  // Deleting the registration is REQUIRED before a container type can be deleted.
+  // The delete tool self-gates on `confirm` and shows a blocker-aware preview, so
+  // it is intentionally NOT wrapped with withConfirmation (which would suppress
+  // that richer preview).
+  getContainerTypeRegistrationTool,
+  listContainerTypeRegistrationsTool,
+  deleteContainerTypeRegistrationTool,
   // Container Management
   listContainersTool,
   getContainerTool,
   createContainerTool,
+  updateContainerTool,
   managePermissionsTool,
   archiveRestoreTool,
   // container_delete self-guards permanent-delete; the middleware enforces the
   // same gate uniformly at registration (SAFE-002). Both produce an identical
   // CONFIRMATION_REQUIRED, so there is no double-prompt.
   withConfirmation(deleteContainerTool, { actions: ["permanent-delete"] }),
+  // Recycle bin — list soft-deleted containers (blockers for registration delete)
+  listDeletedContainersTool,
   // Content Operations (content-plane: gated behind content-access opt-in)
   withContentAccess(uploadFileTool),
   withContentAccess(createFolderTool),
