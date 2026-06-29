@@ -24,7 +24,8 @@
  * stalling the whole suite.
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,6 +56,14 @@ describe("MCP protocol-level e2e (spawned dist/cli.js start)", () => {
   let isolatedHome: string;
 
   beforeAll(async () => {
+    // Self-build guard: this suite drives the *built* server (dist/cli.js). The
+    // `ci` script and CI workflow build before test, but a direct `vitest` run
+    // (or test-before-build ordering) may not have dist/ yet — so build it once
+    // here if missing, rather than failing with an opaque "Connection closed".
+    if (!existsSync(CLI_ENTRY)) {
+      execSync("npm run build", { cwd: REPO_ROOT, stdio: "ignore" });
+    }
+
     // Isolated, empty HOME/USERPROFILE => empty persisted state => content gate
     // is closed and no prior run can leak `contentAccessGranted: true`.
     isolatedHome = mkdtempSync(join(tmpdir(), "spe-mcp-e2e-home-"));
@@ -83,7 +92,7 @@ describe("MCP protocol-level e2e (spawned dist/cli.js start)", () => {
     client = new Client({ name: "spe-mcp-e2e-test", version: "0.0.0" }, {});
     // connect() performs the MCP `initialize` handshake.
     await client.connect(transport);
-  }, 30000);
+  }, 90000);
 
   afterAll(async () => {
     try {

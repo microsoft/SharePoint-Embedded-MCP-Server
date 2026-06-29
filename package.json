@@ -46,7 +46,7 @@
     "typecheck": "tsc --noEmit",
     "notices": "node scripts/generate-third-party-notices.mjs",
     "prepublishOnly": "npm run build",
-    "ci": "npm run typecheck && npm run test && npm run build"
+    "ci": "npm run typecheck && npm run build && npm run test"
   },
   "dependencies": {
     "@azure/msal-node": "^2.6.0",
