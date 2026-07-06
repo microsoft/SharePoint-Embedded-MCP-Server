@@ -121,6 +121,19 @@ describe("MCP protocol-level e2e (spawned dist/cli.js start)", () => {
     expect(client.getServerCapabilities()?.tools).toBeDefined();
   });
 
+  // (a2) The `initialize` result carries the server `instructions` primer over
+  //      the real wire, so clients can prime the model before any tool call.
+  it("returns the SPE domain primer via the initialize instructions field", () => {
+    const instructions = client.getInstructions();
+    expect(instructions).toBeTruthy();
+    // Anchor on stable, load-bearing content: the routing precondition and the
+    // samples-repo citation a client is expected to relay to the model.
+    expect(instructions).toContain("OWNING_APP_REQUIRED");
+    expect(instructions).toContain(
+      "https://github.com/microsoft/SharePoint-Embedded-Samples",
+    );
+  });
+
   // (b) tools/list returns tools with NO handler field, each has inputSchema;
   //     spot-check a known tool and that container_delete is destructive.
   it("lists tools without leaking handlers and with correct annotations", async () => {

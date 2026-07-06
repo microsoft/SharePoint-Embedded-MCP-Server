@@ -84,6 +84,7 @@ import { grantContentAccessTool, revokeContentAccessTool, withContentAccess } fr
 import { cleanupTool } from "./tools/cleanup.js";
 import { SPE_PROMPTS, getPromptMessages } from "./prompts.js";
 import { SPE_RESOURCES, readResource } from "./resources.js";
+import { SPE_SERVER_INSTRUCTIONS } from "./server-instructions.js";
 
 const SERVER_VERSION = "0.1.0";
 
@@ -228,7 +229,13 @@ function listVisibleTools() {
 
 const server = new Server(
   { name: "spe-mcp-server", version: SERVER_VERSION },
-  { capabilities: { tools: {}, prompts: {}, resources: {} } },
+  {
+    capabilities: { tools: {}, prompts: {}, resources: {} },
+    // Domain primer returned in the MCP `initialize` result so clients can prime
+    // the model with SPE's mental model + first-request routing before any tool
+    // is called. See src/server-instructions.ts.
+    instructions: SPE_SERVER_INSTRUCTIONS,
+  },
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
