@@ -64,7 +64,12 @@ export function resolveToolAllowlist(
   spec: string,
 ): { allow: Set<string>; profile?: string } {
   const trimmed = spec.trim();
-  const predicate = TOOL_PROFILES[trimmed];
+  // Only treat OWN, enumerable keys as profiles. Indexing the object literal
+  // directly would resolve inherited Object.prototype members (e.g. `toString`,
+  // `hasOwnProperty`, `constructor`, `__proto__`) to functions and let a crafted
+  // `--tools` value bypass the SAFE-004 allowlist. Unknown names fall through to
+  // the CSV tool-name path below.
+  const predicate = Object.hasOwn(TOOL_PROFILES, trimmed) ? TOOL_PROFILES[trimmed] : undefined;
   if (predicate) {
     return { allow: new Set(tools.filter(predicate).map((t) => t.name)), profile: trimmed };
   }
