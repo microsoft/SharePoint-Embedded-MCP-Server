@@ -133,6 +133,24 @@ export function setAuthConfig(config: AuthConfig): void {
  * Does NOT touch on-disk token caches.
  */
 function resetInMemoryAuthState(): void {
+  // Settle any in-flight readiness promise FIRST so concurrent awaiters
+  // (getAccessToken's `await authReadyPromise`, or a second initializeAuth
+  // caller) don't hang on a promise that could never settle once the
+  // resolve/reject handles are dropped below.
+  //
+  // Reject (not resolve): the pending init was started against the OLD
+  // authority, so completing it as "ready" would be wrong after a tenant/client
+  // switch. getAccessToken's catch around the await falls through to on-demand
+  // acquisition against the NEW config, so a rejection here degrades gracefully.
+  // The in-flight promise already has a no-op `.catch()` attached in
+  // initializeAuth, so rejecting it cannot raise an unhandled rejection.
+  authReadyReject?.(
+    new AppError("AUTH_RESET", "Auth state was reset (tenant/client switch) while initializing.", {
+      safeMessage: "Authentication was reset because the tenant or app changed; retry.",
+      suggestion:
+        "Retry the operation; the server will re-initialize auth against the new tenant/app.",
+    }),
+  );
   pca = null;
   authReadyPromise = null;
   authReadyResolve = null;
@@ -743,6 +761,28 @@ export const __testing = {
   /** Read the current in-memory PublicClientApplication (null after a reset). */
   getPca(): PublicClientApplication | null {
     return pca;
+  },
+  /**
+   * Reproduce the in-flight readiness state that initializeAuth() establishes
+   * while an acquisition is still pending (see initializeAuth): a pending
+   * authReadyPromise with its resolve/reject handles captured into module state,
+   * plus the same no-op `.catch()` so a later reset-driven rejection can never
+   * surface as an unhandled rejection. Returns the pending promise so a test can
+   * assert how it settles (e.g. that resetInMemoryAuthState rejects rather than
+   * abandons it). Kept as a test seam so the hang can be asserted hermetically,
+   * without invoking real MSAL interactive sign-in.
+   */
+  primeInflightReadiness(): Promise<void> {
+    authReadyPromise = new Promise<void>((resolve, reject) => {
+      authReadyResolve = resolve;
+      authReadyReject = reject;
+    });
+    authReadyPromise.catch(() => {});
+    return authReadyPromise;
+  },
+  /** Read the current in-memory readiness promise (null after a reset). */
+  getAuthReadyPromise(): Promise<void> | null {
+    return authReadyPromise;
   },
   /** Fully reset module auth state between tests. */
   reset(): void {
