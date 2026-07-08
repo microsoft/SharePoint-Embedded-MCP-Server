@@ -326,7 +326,7 @@ src/
 
 > Unit/integration tests live alongside their modules as `*.test.ts` (run with `npm test`).
 
-Modeled after [azure-core/enghub-mcp-server-tools](https://github.com/azure-core/enghub-mcp-server-tools):
+Architecture highlights:
 - Transport connects before auth (MCP handshake never blocked)
 - Auth initializes in background; retries on first tool call if startup auth fails
 - Tools are `{ name, description, inputSchema, handler }` — ListTools strips handlers for serialization

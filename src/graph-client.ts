@@ -4,7 +4,7 @@
 /**
  * Microsoft Graph client for SPE operations.
  *
- * Follows the enghub-mcp-server-tools pattern:
+ * The client:
  *   - Auth interceptor injects Bearer token on every request
  *   - Centralized error handling with actionable messages
  *   - Retry logic for transient failures (429, 5xx)

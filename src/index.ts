@@ -4,7 +4,7 @@
 /**
  * SPE MCP Server — main entry point.
  *
- * Architecture follows enghub-mcp-server-tools:
+ * Architecture:
  *   1. Connect transport first (so MCP `initialize` handshake succeeds immediately)
  *   2. Initialize auth in background (non-blocking)
  *   3. Tools array with { name, description, inputSchema, handler }
