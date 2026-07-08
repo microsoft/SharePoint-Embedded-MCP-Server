@@ -1152,16 +1152,19 @@ export async function updateContainerType(
 ): Promise<ContainerType> {
   // The beta Update fileStorageContainerType API accepts only name/settings/etag
   // (the display name field is `name`, NOT `displayName`), and **etag is REQUIRED**
-  // for optimistic concurrency: omitting it returns HTTP 400 "One of the provided
-  // arguments is not acceptable" (see the docs' "Update without ETag" example). So
-  // fetch the current etag via a Get when the caller didn't supply one, then PATCH
-  // with it. Normalize the response (a PATCH may also return 204 No Content) so
-  // callers read a populated id/name.
-  const body: Record<string, unknown> = { ...update };
-  if (body.etag === undefined) {
-    const current = await getContainerType(containerTypeId);
-    if (current.etag) body.etag = current.etag;
-  }
+  // for optimistic concurrency: it must equal the CURRENT server value from a
+  // fresh Get/Create — it is an included concurrency token, NOT a client-set
+  // field. Omitting it returns HTTP 400 "One of the provided arguments is not
+  // acceptable" (see the docs' "Update without ETag" example). Defensive
+  // hardening: always source the etag from a fresh Get and DROP any
+  // caller-supplied `etag` (a stale value would cause a 412 / lost update).
+  // Normalize the response (a PATCH may also return 204 No Content) so callers
+  // read a populated id/name.
+  const { etag: _ignoredCallerEtag, ...safeUpdate } = update;
+  void _ignoredCallerEtag; // intentionally discarded: never trust a caller etag
+  const body: Record<string, unknown> = { ...safeUpdate };
+  const current = await getContainerType(containerTypeId);
+  if (current.etag) body.etag = current.etag;
   const raw = await graphRequestBeta<RawContainerType>(
     "PATCH",
     `/storage/fileStorage/containerTypes/${containerTypeId}`,

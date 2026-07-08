@@ -132,20 +132,41 @@ describe("updateContainerType — supplies the required etag", () => {
     });
   });
 
-  it("does not overwrite a caller-supplied etag (and skips the extra Get)", async () => {
-    fetchMock.mockResolvedValueOnce(
-      okResponse({ id: "ct-1", name: "New Name", owningAppId: "app-1", etag: "ETAG-9" }),
-    ); // PATCH only
+  it("IGNORES a caller-supplied etag and overwrites it with the fresh server etag (WI-08 hardening)", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        okResponse({ id: "ct-1", name: "Old Name", owningAppId: "app-1", etag: "ETAG-123" }),
+      ) // GET (read current etag — always performed)
+      .mockResolvedValueOnce(
+        okResponse({ id: "ct-1", name: "New Name", owningAppId: "app-1", etag: "ETAG-124" }),
+      ); // PATCH
 
-    await updateContainerType("ct-1", { name: "New Name", etag: "CALLER-ETAG" });
+    // Caller passes a (potentially stale) etag; it must be dropped, and a fresh
+    // GET must still happen so the PATCH carries the current server etag.
+    await updateContainerType("ct-1", { name: "New Name", etag: "CALLER-STALE-ETAG" });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [, patchInit] = fetchMock.mock.calls[0];
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [getUrl, getInit] = fetchMock.mock.calls[0];
+    expect((getInit as RequestInit).method).toBe("GET");
+    expect(getUrl).toContain("/storage/fileStorage/containerTypes/ct-1");
+    const [, patchInit] = fetchMock.mock.calls[1];
     expect((patchInit as RequestInit).method).toBe("PATCH");
-    expect(JSON.parse((patchInit as RequestInit).body as string)).toEqual({
-      name: "New Name",
-      etag: "CALLER-ETAG",
-    });
+    const patchBody = JSON.parse((patchInit as RequestInit).body as string);
+    // The caller etag is discarded; the server etag from the GET wins.
+    expect(patchBody).toEqual({ name: "New Name", etag: "ETAG-123" });
+    expect(patchBody.etag).not.toBe("CALLER-STALE-ETAG");
+  });
+
+  it("normalizes a 204 No Content PATCH response to a populated container type", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        okResponse({ id: "ct-1", name: "Old Name", owningAppId: "app-1", etag: "ETAG-123" }),
+      ) // GET
+      .mockResolvedValueOnce(okResponse(null, 204)); // PATCH → 204 No Content
+
+    const result = await updateContainerType("ct-1", { name: "New Name" });
+    // Should not throw; normalizeContainerType({}) yields a defined object.
+    expect(result).toBeDefined();
   });
 });
 

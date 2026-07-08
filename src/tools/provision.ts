@@ -39,6 +39,8 @@ import {
   CONTAINER_CREATE_MAX_ATTEMPTS,
   containerCreateBackoffMs,
   isContainerPropagationError,
+  toClassifiableError,
+  type ClassifiableError,
 } from "../container-retry.js";
 import { needChoice } from "../elicitation.js";
 import { readState, writeState } from "../state.js";
@@ -303,6 +305,7 @@ export const provisionTool: McpTool = {
       // 5. Create + activate a container, with propagation backoff.
       let containerId = "";
       let lastError = "";
+      let lastErrorClass: ClassifiableError = { message: "" };
       for (let attempt = 1; attempt <= CONTAINER_CREATE_MAX_ATTEMPTS; attempt++) {
         try {
           const container = await createContainer(containerTypeId, containerName);
@@ -317,11 +320,13 @@ export const provisionTool: McpTool = {
           break;
         } catch (error) {
           lastError = error instanceof Error ? error.message : String(error);
+          lastErrorClass = toClassifiableError(error);
           // Retry only genuine registration-propagation delays. A wrong/
           // unregistered container type (404) or authorization failure (403)
           // is permanent — fail fast rather than hang ~150s through every
-          // backoff.
-          if (attempt < CONTAINER_CREATE_MAX_ATTEMPTS && isContainerPropagationError(lastError)) {
+          // backoff. Classify on the error object (HTTP status), not a message
+          // substring.
+          if (attempt < CONTAINER_CREATE_MAX_ATTEMPTS && isContainerPropagationError(lastErrorClass)) {
             await sleep(containerCreateBackoffMs(attempt));
             continue;
           }
@@ -331,7 +336,7 @@ export const provisionTool: McpTool = {
       if (containerId) {
         writeState({ containerId, containerName });
         steps.push(`Created container **${containerName}** (\`${containerId}\`)`);
-      } else if (isContainerPropagationError(lastError)) {
+      } else if (isContainerPropagationError(lastErrorClass)) {
         // Transient: the grant is still propagating. The earlier steps DID
         // succeed; the container can be created later with `container_create`.
         steps.push(`⚠️ Container creation still pending (registration propagation) — retry with \`container_create\`: ${lastError}`);
