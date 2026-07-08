@@ -7,7 +7,7 @@
     "url": "https://github.com/microsoft/SharePoint-Embedded-MCP-Server",
     "source": "github"
   },
-  "websiteUrl": "https://github.com/microsoft/SharePoint-Embedded-MCP-Server#readme",
+  "websiteUrl": "https://learn.microsoft.com/sharepoint/dev/embedded/overview",
   "packages": [
     {
       "registryType": "npm",
