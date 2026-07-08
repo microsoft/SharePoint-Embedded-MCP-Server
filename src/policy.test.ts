@@ -87,4 +87,30 @@ describe("tool profiles (SAFE-004)", () => {
     expect(isToolListed(tool("container_create", { destructive: true }), null)).toBe(true);
     expect(checkToolCallAllowed(tool("container_create", { destructive: true }), null)).toBeNull();
   });
+
+  it("inherited object keys are not treated as profiles (prototype-pollution / allowlist bypass)", () => {
+    for (const reserved of ["toString", "hasOwnProperty", "constructor", "__proto__", "valueOf"]) {
+      const { allow, profile } = resolveToolAllowlist(registry, reserved);
+      // Must NOT resolve to a built-in profile...
+      expect(profile).toBeUndefined();
+      // ...must NOT expose all tools (bypass) and must NOT deny-all via an
+      // inherited predicate: it is an unknown tool name, so the allowlist is
+      // exactly that single (non-existent) name.
+      expect([...allow]).toEqual([reserved]);
+      expect(allow.size).toBe(1);
+      expect(allow.has("container_create")).toBe(false);
+    }
+  });
+
+  it("a reserved key as --tools rejects every real tool at call time", () => {
+    // `toString` would previously map to Object.prototype.toString (truthy for
+    // every tool) and expose the whole registry. It must now reject.
+    const policy = buildToolPolicy(registry, false, "toString");
+    expect(policy.profile).toBeUndefined();
+    for (const t of registry) {
+      const denied = checkToolCallAllowed(t, policy);
+      expect(denied?.isError).toBe(true);
+      expect(denied?.content[0].text).toContain("allowlist");
+    }
+  });
 });
