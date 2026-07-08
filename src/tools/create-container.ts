@@ -10,11 +10,12 @@
  * 05.1, gotchas #5/#9).
  */
 
-import { activateContainer, createContainer } from "../graph-client.js";
+import { activateContainer, createContainer, getContainerTypeRegistration } from "../graph-client.js";
 import {
   CONTAINER_CREATE_MAX_ATTEMPTS,
   containerCreateBackoffMs,
   isContainerPropagationError,
+  toClassifiableError,
 } from "../container-retry.js";
 import { readState, writeState } from "../state.js";
 import type { Container } from "../types.js";
@@ -51,22 +52,47 @@ export const createContainerTool = defineTool({
       return fail("INVALID_ARGS", "containerTypeId is required (none in state). Create and register a container type first.");
     }
 
+    // Positive registration precheck (standalone container_create only; the
+    // provisioning flow registers immediately before creating, so it does not
+    // need this). A GET on the registration RECORD is created synchronously by
+    // container_type_register, so a 404 here means the container type is
+    // genuinely NOT registered on this tenant — fail fast with an actionable
+    // message instead of burning ~150s of propagation backoff. A transient /
+    // 5xx / 429 / network error on the pre-check itself is INCONCLUSIVE: do not
+    // block a valid create on a flaky read — fall through to the retry loop.
+    // (The slow ~10–30s grant propagation surfaces LATER as a phrase-bearing
+    // 403 on createContainer, which the loop retries — not as a 404 here.)
+    try {
+      await getContainerTypeRegistration(containerTypeId);
+    } catch (error) {
+      if (toClassifiableError(error).status === 404) {
+        return fail(
+          "FAILED_PRECONDITION",
+          `container type \`${containerTypeId}\` is not registered on this tenant. ` +
+            "Register it first with container_type_register (or run project_provision), then retry.",
+        );
+      }
+      // Non-404 (transient/permission/network) → inconclusive; proceed to loop.
+    }
+
     let container: Container | undefined;
-    let lastError = "";
     let lastSafeError = "";
     for (let attempt = 1; attempt <= CONTAINER_CREATE_MAX_ATTEMPTS; attempt++) {
       try {
         container = await createContainer(containerTypeId, displayName);
         break;
       } catch (error) {
-        // Keep the raw message for propagation-pattern detection; surface only
-        // the sanitized message to the client (SEC-002).
-        lastError = error instanceof Error ? error.message : String(error);
+        // Surface only the sanitized message to the client (SEC-002); classify
+        // on the error object so retry decisions use the HTTP status, not a
+        // substring of the (localizable) message.
         lastSafeError = clientSafeMessage(error);
         // Only retry genuine registration-propagation delays. Permanent errors
         // (invalid/unregistered container type → 404, unauthorized → 403) fail
         // fast instead of hanging through ~150s of backoff.
-        if (attempt < CONTAINER_CREATE_MAX_ATTEMPTS && isContainerPropagationError(lastError)) {
+        if (
+          attempt < CONTAINER_CREATE_MAX_ATTEMPTS &&
+          isContainerPropagationError(toClassifiableError(error))
+        ) {
           await sleep(containerCreateBackoffMs(attempt)); // 15s, 30s, 45s, 60s
           continue;
         }

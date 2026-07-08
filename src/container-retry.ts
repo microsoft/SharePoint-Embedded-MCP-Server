@@ -32,20 +32,23 @@
  * 403, so a genuinely-unauthorized caller (wrong app / missing registration)
  * still burned the full ~150s backoff window before surfacing the 403.
  *
- * ── Classification (body-phrase priority, then explicit transient allowlist) ─
+ * ── Classification (HTTP-STATUS-FIRST, phrase override, string fallback) ─────
+ * The thrown `AppError` already carries the numeric HTTP `status`
+ * (`graphErrorForStatus` in graph-client.ts). We classify on that status rather
+ * than sniffing substrings of the (localizable, format-drifting) message:
  *   1. An explicit propagation/replication PHRASE ("not registered", "not yet",
  *      "propagat", "replicat", "try again", "temporarily", "timeout") ALWAYS
- *      means transient — regardless of the 403/404 status it is wrapped in. This
- *      keeps a genuine, correctly-registered grant retrying through replication.
- *   2. A genuinely-transient INFRASTRUCTURE signal (5xx / 429 throttling /
- *      timeout / network blip) is on an explicit allowlist → transient (retry).
- *   3. Everything else — a bare authorization 403 ("access denied" /
- *      "unauthorized"), a 404 / "not found" / "itemnotfound", a 400 / "bad
- *      request", or any unrecognized failure — is PERMANENT → fail fast
- *     . A wrong containerTypeId or an unauthorized caller can never
- *      be fixed by waiting, so we surface it on the FIRST attempt instead of
- *      hanging. Retry is gated behind the explicit transient checks above and a
- *      bare 403 now defaults to permanent.
+ *      means transient — regardless of the 403/404 it is wrapped in. This keeps
+ *      a genuine, correctly-registered grant retrying through replication (the
+ *      real "propagation wrapped in a 403" case).
+ *   2. By STATUS: `429` or any `5xx` → transient (retry); `400`/`403`/`404`/
+ *      `409` → PERMANENT (fail fast). A wrong containerTypeId or an unauthorized
+ *      caller can never be fixed by waiting, so we surface it on the FIRST
+ *      attempt instead of burning ~150s of backoff. Any other explicit status
+ *      with no phrase → fail fast.
+ *   3. NO status (a raw network/library error such as ECONNRESET, or a bare
+ *      thrown Error) → fall back to the explicit transient-infrastructure
+ *      allowlist on the message string.
  *
  * Tradeoff (documented intentionally): a 403 emitted DURING genuine propagation
  * must carry one of the rule-1 phrases to be retried. Empirically the content
@@ -56,6 +59,8 @@
  * Used by both `container_create` and `project_provision` (step 5) so the two
  * code paths classify retries identically.
  */
+
+import { AppError } from "./errors.js";
 
 /** Maximum container-create attempts (1 initial + up to 4 propagation retries). */
 export const CONTAINER_CREATE_MAX_ATTEMPTS = 5;
@@ -130,19 +135,69 @@ function isTransientInfraError(m: string): boolean {
 }
 
 /**
- * True for conditions that should be retried through the registration-
- * propagation window. See the file-level comment for the full classification
- * and the deliberate body-phrase-over-status ordering.
+ * The minimal shape the classifier needs: the numeric HTTP `status` carried by
+ * an {@link AppError} (set by `graphErrorForStatus`) plus the raw `message`. A
+ * raw network/library error has no status; a Graph failure always does.
  */
-export function isContainerPropagationError(message: string): boolean {
-  const m = message.toLowerCase();
-  // 1. Explicit propagation phrase wins over any wrapped HTTP status.
+export interface ClassifiableError {
+  status?: number;
+  message: string;
+}
+
+/** Extract the classifiable `{status, message}` shape from an unknown throw. */
+export function toClassifiableError(error: unknown): ClassifiableError {
+  if (error instanceof AppError) return { status: error.status, message: error.message };
+  if (error instanceof Error) return { message: error.message };
+  return { message: String(error) };
+}
+
+/**
+ * Legacy string-only classification (no HTTP status available): phrase →
+ * transient-infra allowlist → otherwise permanent. Retained for the statusless
+ * path and for back-compat string callers.
+ */
+function classifyByMessage(m: string): boolean {
+  if (hasPropagationPhrase(m)) return true; // propagation/replication phrase
+  if (isTransientInfraError(m)) return true; // 5xx / 429 / network blip
+  if (isDefinitelyPermanent(m)) return false; // bare 403 / 404 / 400
+  return false; // unknown → fail fast
+}
+
+/**
+ * True for conditions that should be retried through the registration-
+ * propagation window. Classification is HTTP-STATUS-FIRST (see the file-level
+ * comment for the full rationale and the deliberate phrase-over-status override):
+ *   1. An explicit propagation/replication PHRASE always wins — a genuine,
+ *      correctly-registered grant that is still replicating can surface wrapped
+ *      in a 403/404 and MUST keep retrying.
+ *   2. By status: 429 or any 5xx → transient (retry); 400/403/404/409 →
+ *      permanent (fail fast). Any other explicit status with no phrase → fail
+ *      fast.
+ *   3. No status (network/library error) → fall back to the string allowlist of
+ *      transient infrastructure signals.
+ *
+ * Accepts either the error object (preferred — carries `status`) or a bare
+ * message string (back-compat with older string callers/tests).
+ */
+export function isContainerPropagationError(error: ClassifiableError | string): boolean {
+  if (typeof error === "string") return classifyByMessage(error.toLowerCase());
+
+  const m = (error.message ?? "").toLowerCase();
+  // 1. Propagation phrase overrides any wrapped status (403/404 propagation).
   if (hasPropagationPhrase(m)) return true;
-  // 2. Genuinely-transient infrastructure signal (5xx / 429 / network) → retry.
-  if (isTransientInfraError(m)) return true;
-  // 3. Permanent shape — bare 403/access-denied, 404/not-found, 400/bad-request
-  //    → fail fast on the first attempt.
-  if (isDefinitelyPermanent(m)) return false;
-  // 4. Unknown / unrecognized failure → fail fast.
-  return false;
+
+  if (typeof error.status === "number") {
+    const status = error.status;
+    // 2a. Throttling / server errors are transient → retry.
+    if (status === 429 || status >= 500) return true;
+    // 2b. Client errors (bad request / unauthorized / not-found / conflict) are
+    //     permanent → fail fast; the phrase override above already rescued a
+    //     genuine propagation case wrapped in a 403/404.
+    if (status === 400 || status === 403 || status === 404 || status === 409) return false;
+    // Any other explicit status with no phrase → fail fast.
+    return false;
+  }
+
+  // 3. Statusless (raw network error) → fall back to the transient-infra allowlist.
+  return isTransientInfraError(m);
 }

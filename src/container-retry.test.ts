@@ -18,7 +18,9 @@ import {
   CONTAINER_CREATE_MAX_ATTEMPTS,
   containerCreateBackoffMs,
   isContainerPropagationError,
+  toClassifiableError,
 } from "./container-retry.js";
+import { AppError } from "./errors.js";
 
 describe("isContainerPropagationError — classification", () => {
   // Permanent — must fail fast (return false). These are the real 404/400/403 forms.
@@ -73,6 +75,62 @@ describe("isContainerPropagationError — classification", () => {
     expect(containerCreateBackoffMs(1)).toBe(15_000);
     expect(containerCreateBackoffMs(2)).toBe(30_000);
     expect(containerCreateBackoffMs(4)).toBe(60_000);
+  });
+});
+
+describe("isContainerPropagationError — HTTP-status-first classification (WI-08)", () => {
+  // Transient by STATUS: 429 throttling or any 5xx → retry, regardless of the
+  // message wording.
+  it.each([429, 500, 502, 503, 504])(
+    "classifies status %i as retryable (transient)",
+    (status) => {
+      const err = new AppError("UPSTREAM", "Graph API error", { status });
+      expect(isContainerPropagationError(toClassifiableError(err))).toBe(true);
+    },
+  );
+
+  // Permanent by STATUS: client errors fail fast — no phrase present.
+  it.each([400, 403, 404, 409])(
+    "classifies status %i as NON-retryable (permanent) when no propagation phrase",
+    (status) => {
+      const err = new AppError("FORBIDDEN", "Access denied: AccessDenied", { status });
+      expect(isContainerPropagationError(toClassifiableError(err))).toBe(false);
+    },
+  );
+
+  it("retries a 403 that CARRIES a propagation phrase (phrase overrides status)", () => {
+    // The real "propagation wrapped in a 403" case — must NOT regress.
+    const err = new AppError("FORBIDDEN", "Access denied: not registered yet", { status: 403 });
+    expect(isContainerPropagationError(toClassifiableError(err))).toBe(true);
+  });
+
+  it("retries a 404 that CARRIES a propagation phrase (phrase overrides status)", () => {
+    const err = new AppError("NOT_FOUND", "Resource not found: still propagating", { status: 404 });
+    expect(isContainerPropagationError(toClassifiableError(err))).toBe(true);
+  });
+
+  // Statusless (raw network/library error) → fall back to the transient-infra
+  // string allowlist.
+  it.each(["econnreset", "max retries exceeded", "socket hang up: etimedout"])(
+    "retries a statusless network error via the string allowlist: %s",
+    (message) => {
+      const err = new Error(message);
+      expect(isContainerPropagationError(toClassifiableError(err))).toBe(true);
+    },
+  );
+
+  it("fails fast on a statusless, non-infra error", () => {
+    const err = new Error("Access denied: AccessDenied");
+    expect(isContainerPropagationError(toClassifiableError(err))).toBe(false);
+  });
+
+  it("toClassifiableError extracts status from AppError and message-only from Error", () => {
+    expect(toClassifiableError(new AppError("X", "boom", { status: 503 }))).toEqual({
+      status: 503,
+      message: "boom",
+    });
+    expect(toClassifiableError(new Error("plain"))).toEqual({ message: "plain" });
+    expect(toClassifiableError("weird")).toEqual({ message: "weird" });
   });
 });
 
