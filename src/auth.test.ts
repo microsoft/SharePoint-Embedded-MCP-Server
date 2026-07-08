@@ -206,6 +206,72 @@ describe("setAuthConfig — tenant switch resets stale in-memory state", () => {
   });
 });
 
+describe("resetInMemoryAuthState — settles in-flight readiness (WI-06 hang fix)", () => {
+  // Race a promise against a timeout so a REGRESSION surfaces as a clear test
+  // failure instead of a suite-wide hang. On the fixed code the awaiter settles
+  // in a microtask, so this resolves effectively instantly.
+  function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+    return Promise.race([
+      p,
+      new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`timeout: ${label}`)), ms)),
+    ]);
+  }
+
+  it("rejects a previously-captured in-flight readiness promise with AUTH_RESET after a switch", async () => {
+    // Model an initializeAuth() that is mid-flight (acquisition pending) against
+    // the OLD authority.
+    setAuthConfig({ clientId: CLIENT_ID, tenantId: TENANT_A });
+    const inflight = __testing.primeInflightReadiness();
+    expect(__testing.getAuthReadyPromise()).not.toBeNull();
+
+    // A tenant switch drops in-memory MSAL state via resetInMemoryAuthState().
+    setAuthConfig({ clientId: CLIENT_ID, tenantId: TENANT_B });
+
+    // The captured promise MUST settle (reject) rather than be abandoned unsettled —
+    // rejected because the pending init was against the old authority.
+    await expect(inflight).rejects.toBeInstanceOf(AppError);
+    await expect(inflight).rejects.toMatchObject({ code: "AUTH_RESET" });
+    // Handles are dropped only AFTER the settle, and the module reference is cleared.
+    expect(__testing.getAuthReadyPromise()).toBeNull();
+  });
+
+  it("rejects the in-flight readiness promise on a client change too", async () => {
+    setAuthConfig({ clientId: "client-one", tenantId: TENANT_A });
+    const inflight = __testing.primeInflightReadiness();
+    setAuthConfig({ clientId: "client-two", tenantId: TENANT_A });
+    await expect(inflight).rejects.toMatchObject({ code: "AUTH_RESET" });
+  });
+
+  it("releases a concurrent getAccessToken-style awaiter on a tenant switch (no hang)", async () => {
+    // Concurrency regression: initializeAuth() is in flight, a concurrent caller
+    // is parked on `await authReadyPromise` (getAccessToken's readiness guard),
+    // and a tenant/client switch resets in-memory state. Before the fix the
+    // resolve/reject handles were nulled WITHOUT settling the pending promise, so
+    // this awaiter hung forever. We assert at the exact await site — hermetically,
+    // without real MSAL interactive sign-in — that it is released.
+    setAuthConfig({ clientId: CLIENT_ID, tenantId: TENANT_A });
+    const inflight = __testing.primeInflightReadiness();
+
+    let released = false;
+    const awaiter = (async () => {
+      // Mirror getAccessToken's guard: await readiness, swallow a rejection, then
+      // fall through to on-demand acquisition against the NEW config.
+      try {
+        await inflight;
+      } catch {
+        // getAccessToken proceeds to acquire a token on demand here.
+      }
+      released = true;
+    })();
+
+    // Switch tenants mid-init -> resetInMemoryAuthState() settles the promise.
+    setAuthConfig({ clientId: CLIENT_ID, tenantId: TENANT_B });
+
+    await withTimeout(awaiter, 1000, "awaiter did not settle after reset (hang regression)");
+    expect(released).toBe(true);
+  });
+});
+
 describe("owning-app precondition guidance (UX)", () => {
   it("isOwningAppConfigured() is true once auth is configured", () => {
     setAuthConfig({ clientId: CLIENT_ID, tenantId: TENANT_A });
