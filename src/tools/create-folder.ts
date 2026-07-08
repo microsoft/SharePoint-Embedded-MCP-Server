@@ -5,48 +5,47 @@
  * Tool: content_folder_create
  *
  * Create a folder (or nested folder path) inside a container.
+ *
+ * Argument validation is declared once as a Zod schema (see `defineTool` and the
+ * shared field builders in `../tooling/fields.ts`). The `folderPath` builder
+ * normalizes the path — trimming, splitting on `/`, and dropping empty segments —
+ * so pathological inputs like `"/"`, `"///"`, or `"a//b"` can never reach Graph
+ * as a blank folder name; a path that normalizes to zero segments is rejected as
+ * a clean validation error instead of a Graph 400.
  */
 
 import { createFolder, getContainerDrive, listDriveChildren } from "../graph-client.js";
+import { defineTool } from "../tooling/define-tool.js";
+import { nonEmptyString, folderPath, folderSegments, z } from "../tooling/fields.js";
 import { requireContentAccess } from "./content-access.js";
-import type { McpTool } from "../types.js";
+import { ok } from "../responses.js";
 
-export const createFolderTool: McpTool = {
+const schema = z.object({
+  containerId: nonEmptyString("containerId", "The container ID."),
+  folderPath: folderPath("folderPath", {
+    required: true,
+    description: "Folder path to create (e.g., 'Documents/Reports/Q1').",
+  }),
+});
+
+export const createFolderTool = defineTool({
   name: "content_folder_create",
   annotations: { plane: "content", requiresConsent: true },
   description:
     "Create a folder or nested folder path inside a SharePoint Embedded container. " +
     "Intermediate folders are created automatically. Already-existing folders are skipped.",
-  inputSchema: {
-    type: "object" as const,
-    properties: {
-      containerId: {
-        type: "string",
-        description: "The container ID.",
-      },
-      folderPath: {
-        type: "string",
-        description: "Folder path to create (e.g., 'Documents/Reports/Q1').",
-      },
-    },
-    required: ["containerId", "folderPath"],
-  },
+  schema,
   handler: async (args) => {
     const gate = requireContentAccess();
     if (gate) return gate;
 
-    const containerId = args.containerId as string;
-    const folderPath = args.folderPath as string;
-
-    if (!containerId || !folderPath) {
-      return {
-        content: [{ type: "text", text: "Error: containerId and folderPath are required" }],
-        isError: true,
-      };
-    }
+    const { containerId } = args;
+    // `folderPath` arrives normalized (non-empty segments joined by `/`), and the
+    // required refinement guarantees at least one segment — so `segments` is never
+    // empty and `createFolder` is never called with a blank name.
+    const segments = folderSegments(args.folderPath);
 
     const drive = await getContainerDrive(containerId);
-    const segments = folderPath.replace(/^\/+|\/+$/g, "").split("/");
     let currentParent = "root";
     const results: Array<{ name: string; id: string; status: string }> = [];
 
@@ -80,6 +79,7 @@ export const createFolderTool: McpTool = {
     }
     output += `\n**Leaf folder ID:** \`${currentParent}\``;
 
-    return { content: [{ type: "text", text: output }] };
+    return ok({ folders: results, leafFolderId: currentParent }, output);
   },
-};
+});
+

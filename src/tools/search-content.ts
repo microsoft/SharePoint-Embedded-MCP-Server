@@ -5,16 +5,40 @@
  * Tool: content_search
  *
  * Search for content across SPE containers using Microsoft Search API.
+ *
+ * `query` is validated as a non-empty string via the shared field builders /
+ * `defineTool`. Pagination is intentionally NOT strictly typed here: the schema
+ * uses `.passthrough()` so back-compat aliases (`maxResults`→`top`,
+ * `continuationToken`/`nextToken`→`skip`) survive validation and are sanitized by
+ * `parsePageArgs`, which is the single source of truth for clamping page args.
  */
 
 import { searchContent } from "../graph-client.js";
+import { defineTool } from "../tooling/define-tool.js";
+import { nonEmptyString, z } from "../tooling/fields.js";
 import { requireContentAccess } from "./content-access.js";
 import { ok, fail } from "../responses.js";
 import { clientSafeMessage } from "../errors.js";
 import { pageFromServerWindow, pageFooter, parsePageArgs } from "./pagination.js";
-import type { McpTool, SearchResponse } from "../types.js";
+import type { SearchResponse } from "../types.js";
 
-export const searchContentTool: McpTool = {
+// Page-size / offset args accept a number OR a numeric string: `nextToken`/`skip`
+// cursors are surfaced to callers as strings (see pageFooter), so we must not
+// reject a string offset. `parsePageArgs` coerces + clamps whatever arrives.
+const pageArg = (description: string) => z.union([z.number(), z.string()]).optional().describe(description);
+
+const schema = z
+  .object({
+    query: nonEmptyString("query", "The search query string."),
+    top: pageArg("Maximum results to return in this page (default 25, max 200). Alias: maxResults."),
+    skip: pageArg("Number of results to skip (offset). Use the nextToken/skip from a prior page to continue."),
+    maxResults: pageArg("Deprecated alias for `top`. Maximum results to return. Default: 25."),
+  })
+  // Preserve undeclared back-compat aliases (`continuationToken`, `nextToken`,
+  // `limit`) so parsePageArgs can read them.
+  .passthrough();
+
+export const searchContentTool = defineTool({
   name: "content_search",
   annotations: { readOnly: true, plane: "content", requiresConsent: true },
   description:
@@ -24,37 +48,12 @@ export const searchContentTool: McpTool = {
     "Content-gated: requires content access consent. " +
     "Supports pagination via `top` (page size, max 200) and `skip` (offset). " +
     "Note: newly uploaded files may take 1-5 minutes to appear in search results.",
-  inputSchema: {
-    type: "object" as const,
-    properties: {
-      query: {
-        type: "string",
-        description: "The search query string.",
-      },
-      top: {
-        type: "number",
-        description: "Maximum results to return in this page (default 25, max 200). Alias: maxResults.",
-      },
-      skip: {
-        type: "number",
-        description: "Number of results to skip (offset). Use the nextToken/skip from a prior page to continue.",
-      },
-      maxResults: {
-        type: "number",
-        description: "Deprecated alias for `top`. Maximum results to return. Default: 25.",
-      },
-    },
-    required: ["query"],
-  },
+  schema,
   handler: async (args) => {
     const gate = requireContentAccess();
     if (gate) return gate;
 
-    const query = args.query as string;
-    if (!query) {
-      return fail("INVALID_ARGS", "query is required", "Provide a search query string.");
-    }
-
+    const query = args.query;
     const { top, skip } = parsePageArgs(args, { defaultTop: 25 });
 
     let response: SearchResponse;
@@ -101,4 +100,4 @@ export const searchContentTool: McpTool = {
 
     return ok({ ...page, query }, output);
   },
-};
+});

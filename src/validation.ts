@@ -9,6 +9,20 @@
  * wrong-typed arguments themselves. These helpers return the standard MCP error
  * envelope (`{ content, isError: true }`) so handlers fail with a clean,
  * actionable validation message instead of leaking an internal TypeError.
+ *
+ * NEW TOOLS should prefer the Zod-based {@link defineTool} factory + the shared
+ * field builders in `./tooling/fields.ts`, which derive the advertised
+ * `inputSchema` and the runtime check from one schema. These imperative helpers
+ * remain for tools that have not yet migrated and for one-off guards.
+ *
+ * @example
+ * // Guard a handler argument before use — no `as string` cast, no TypeError on
+ * // a numeric/object/missing value:
+ * import { requireString } from "../validation.js";
+ *
+ * const parsed = requireString(args.containerId, "containerId");
+ * if (!parsed.ok) return parsed.error; // standard { isError: true } envelope
+ * const containerId = parsed.value;     // trimmed, guaranteed non-empty string
  */
 
 import type { McpToolResult } from "./types.js";

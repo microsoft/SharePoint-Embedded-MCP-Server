@@ -28,6 +28,7 @@ import {
   setAuthConfig,
 } from "./auth.js";
 import { AppError } from "./errors.js";
+import { guid, GUID_REGEX } from "./tooling/fields.js";
 
 const TENANT_A = "475485dd-63d4-4f8c-af70-60f7a6c74940";
 const TENANT_B = "99999999-9999-9999-9999-999999999999";
@@ -55,6 +56,27 @@ function fakePca(accounts: AccountInfo[]): PublicClientApplication {
 
 afterEach(() => {
   __testing.reset();
+});
+
+describe("test identity constants", () => {
+  // Tenant and client IDs are Entra directory GUIDs. Enforce the canonical GUID
+  // shape on the fixtures so the auth tests cannot drift onto placeholder values
+  // that would never occur in a real token/config. Scoped to tenant/client IDs
+  // (container/containerType IDs are validated as opaque non-empty strings).
+  const guidSchema = guid("id");
+
+  it.each([
+    ["TENANT_A", TENANT_A],
+    ["TENANT_B", TENANT_B],
+    ["CLIENT_ID", CLIENT_ID],
+  ])("%s is a canonical GUID", (_name, value) => {
+    expect(value).toMatch(GUID_REGEX);
+    expect(guidSchema.safeParse(value).success).toBe(true);
+  });
+
+  it("the shared guid builder rejects a non-GUID id", () => {
+    expect(guidSchema.safeParse("not-a-guid").success).toBe(false);
+  });
 });
 
 describe("homeTenantOf", () => {
