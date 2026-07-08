@@ -4,7 +4,7 @@
 /**
  * Authentication module for the SPE MCP Server.
  *
- * Auth strategy waterfall (modeled after enghub-mcp-server-tools):
+ * Auth strategy waterfall:
  *   1. Silent (cached refresh token via MSAL + file cache)
  *   2. Interactive browser (PKCE with localhost redirect)
  *   3. Device code flow (headless fallback)
