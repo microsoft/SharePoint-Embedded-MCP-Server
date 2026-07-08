@@ -26,6 +26,7 @@ import { initializeAuth, setAuthConfig } from "./auth.js";
 import { assertAzCli, getSignedInIdentity } from "./bootstrap.js";
 import { readState } from "./state.js";
 import { USER_AGENT } from "./user-agent.js";
+import { PACKAGE_VERSION } from "./version.js";
 import type { McpTool, ServerConfig } from "./types.js";
 import { redact } from "./logging.js";
 import { fail } from "./responses.js";
@@ -86,7 +87,8 @@ import { SPE_PROMPTS, getPromptMessages } from "./prompts.js";
 import { SPE_RESOURCES, readResource } from "./resources.js";
 import { SPE_SERVER_INSTRUCTIONS } from "./server-instructions.js";
 
-const SERVER_VERSION = "0.1.0";
+// Derived from package.json (single source of truth) — see src/version.ts.
+const SERVER_VERSION = PACKAGE_VERSION;
 
 function log(message: string, data?: unknown): void {
   const timestamp = new Date().toISOString();
