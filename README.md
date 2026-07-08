@@ -179,6 +179,11 @@ The server accepts configuration via CLI flags or environment variables:
 |----------|---------|-------------|
 | `--client-id` | `SPE_CLIENT_ID` | Entra ID Application (Client) ID |
 | `--tenant-id` | `SPE_TENANT_ID` | Entra ID Tenant ID |
+| `--read-only` | `SPE_READ_ONLY` | Advertise/allow only read/list/get/search tools; reject mutating calls (SAFE-003) |
+| `--tools` | `SPE_TOOLS` | Restrict exposed tools to a profile (`readOnly`, `docsOnly`, `provisioning`, `content`, `admin`) or a comma-separated tool list (SAFE-004) |
+
+> The CLI flag wins when both a flag and its env var are set. Run
+> `spe-mcp start --help` to see the authoritative option list and descriptions.
 
 For troubleshooting, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
@@ -251,14 +256,24 @@ Add to `%APPDATA%\Claude\claude_desktop_config.json` (Windows) or `~/Library/App
 
 ```bash
 # Start the MCP server (stdio transport)
-spe-mcp start [--client-id ID] [--tenant-id ID]
+spe-mcp start [--client-id ID] [--tenant-id ID] [--read-only] [--tools <profileOrCsv>]
 
 # Authenticate interactively (cache tokens for headless use)
-spe-mcp auth --client-id ID --tenant-id ID
+spe-mcp auth --client-id ID --tenant-id ID [--reset]
 
 # Clear cached tokens
 spe-mcp logout
 ```
+
+Every command has built-in help — run `spe-mcp <command> --help` (e.g.
+`spe-mcp start --help`) for the full flag list and descriptions. `start` flags:
+
+| Flag | Description |
+|------|-------------|
+| `--client-id <id>` | Owning Entra app Client ID. Omit to run in bootstrap mode (Azure CLI control plane). |
+| `--tenant-id <id>` | Entra ID Tenant ID. Discovered from the Azure CLI when omitted. |
+| `--read-only` | Read-only mode (SAFE-003): only read/list/get/search tools are exposed and callable. |
+| `--tools <profileOrCsv>` | Tool allowlist (SAFE-004): a profile (`readOnly`, `docsOnly`, `provisioning`, `content`, `admin`) or a comma-separated list of tool names. |
 
 ## Authentication
 
@@ -373,6 +388,79 @@ npm run lint      # eslint
 npm run typecheck # tsc --noEmit
 npm run ci        # typecheck + test + build (what CI runs)
 ```
+
+Vitest runs in watch mode with `npm run test:watch`, which is handy alongside a
+debugger (see below). `npm run build:watch` recompiles on save.
+
+## Debugging
+
+The server is a **stdio MCP server**: its entry point is `dist/cli.js start`
+(the `spe-mcp` bin), and its stdout carries the MCP JSON-RPC stream while all
+logs/diagnostics go to stderr. TypeScript is compiled with `sourceMap: true`, so
+`.js.map` files are shipped next to the build and breakpoints set in `src/*.ts`
+map straight onto the running `dist/*.js`.
+
+**1. Build first** so the source maps exist:
+
+```bash
+npm run build
+```
+
+**2. VS Code — launch the server (and tests) under the debugger.** Add a
+`.vscode/launch.json`:
+
+```json
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug SPE MCP server",
+      "program": "${workspaceFolder}/dist/cli.js",
+      "args": ["start"],
+      "console": "integratedTerminal",
+      "sourceMaps": true,
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"]
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug vitest",
+      "program": "${workspaceFolder}/node_modules/vitest/vitest.mjs",
+      "args": ["run"],
+      "console": "integratedTerminal",
+      "sourceMaps": true
+    }
+  ]
+}
+```
+
+Set breakpoints in `src/` (e.g. a tool handler, `dispatch` in `index.ts`, or the
+`catch` in `startServer`), then press **F5**. The "Debug SPE MCP server" config
+starts a bootstrap-mode session (sign in first with
+`az login --allow-no-subscriptions`); pass `--client-id`/`--tenant-id` in `args`
+for pre-provisioned-app mode.
+
+**3. Attach with `--inspect` (CLI, Chrome DevTools, or when an MCP client spawns
+the server).** Break on the first line so you can attach before startup runs:
+
+```bash
+node --inspect-brk dist/cli.js start
+```
+
+Then attach from VS Code (**Attach to Node Process**) or open `chrome://inspect`.
+Because logs are on stderr, the inspector banner and server logs never corrupt
+the JSON-RPC stream on stdout. You can also exercise the server interactively
+under the debugger with the MCP Inspector:
+
+```bash
+npx @modelcontextprotocol/inspector node dist/cli.js start
+```
+
+When a failure surfaces a `correlationId`, grep the server's stderr for that id
+to find the matching `Tool error (<id>)` log line — see
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md#correlation-ids).
 
 ## Contributing
 

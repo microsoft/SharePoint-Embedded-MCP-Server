@@ -58,6 +58,10 @@ export interface ServerConfig {
    * `provisioning`, `content`, `admin`) or a comma-separated list of tool names.
    * Tools outside the allowlist are hidden from ListTools and rejected at call
    * time. Also settable via the `SPE_TOOLS` env var.
+   *
+   * Surfaced to end users as the `--tools <profileOrCsv>` flag on the CLI —
+   * run `spe-mcp start --help` (or `npx @microsoft/spe-mcp-server start --help`)
+   * to see the profile list and description.
    */
   tools?: string;
 }

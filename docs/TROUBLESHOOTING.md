@@ -51,3 +51,32 @@ content_access_grant confirm=true
 ```
 
 Access can be disabled later with `content_access_revoke`.
+
+## Correlation IDs
+
+When a tool fails, the client-facing error carries a short **correlation ID**,
+for example:
+
+```text
+The tool failed. See server logs for details. (correlationId: a1b2c3d4)
+```
+
+That same id is logged to the server's **stderr** at the point of failure:
+
+```text
+[2026-07-08T12:34:56.789Z] [MCP] Tool error (a1b2c3d4) {"tool":"container_create","argKeys":["displayName","containerTypeId"], ...}
+```
+
+To debug a reported failure, grep the server's stderr log for the id to find the
+redacted argument preview and the sanitized upstream (Graph/ARM) error that
+produced it:
+
+```bash
+grep a1b2c3d4 spe-mcp.log
+```
+
+(stdout is reserved for the MCP JSON-RPC protocol, so all logs — including this
+line — go to stderr; redirect stderr to a file to retain it, e.g.
+`node dist/cli.js start 2> spe-mcp.log`.) The correlation ID is a client↔log
+join key only: it is generated locally per failure and is **not** sent to
+Graph/ARM as an `x-ms-client-request-id`.
