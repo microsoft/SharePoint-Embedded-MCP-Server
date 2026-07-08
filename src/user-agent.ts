@@ -11,6 +11,9 @@
  * container type). The SharePoint Embedded service can filter request logs on
  * this token to measure how much traffic this tool drives.
  *
- * Keep the version in sync with package.json / SERVER_VERSION on release.
+ * The version segment is derived from package.json (the single source of truth)
+ * via {@link PACKAGE_VERSION}, so it can never drift out of sync on release.
  */
-export const USER_AGENT = "spe-mcp-server/0.1.0";
+import { PACKAGE_VERSION } from "./version.js";
+
+export const USER_AGENT = `spe-mcp-server/${PACKAGE_VERSION}`;
