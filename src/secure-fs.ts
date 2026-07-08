@@ -18,33 +18,55 @@
 
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 
-const DIR_MODE = 0o700;
-const FILE_MODE = 0o600;
+/**
+ * POSIX permission modes as octal literals (the leading `0o` is octal in JS).
+ * Each octal digit is a 3-bit rwx group for owner/group/other respectively:
+ *   0o700 = rwx------  → owner read/write/execute(traverse), no group/other.
+ *   0o600 = rw-------  → owner read/write, no group/other.
+ * Directories need the execute bit (`x`) to be traversable, hence 0o700 for
+ * dirs vs 0o600 for files.
+ */
+const OWNER_RWX = 0o700; // rwx------  (directories)
+const OWNER_RW = 0o600; //  rw-------  (files)
+
+/**
+ * These POSIX mode bits are only meaningful on POSIX platforms. On Windows the
+ * FS ignores them and `fs.chmod` is a near no-op (it can only toggle the
+ * read-only attribute), so we gate the permission calls behind an explicit
+ * platform check. On Windows protection instead comes from the per-user
+ * profile ACL on `%USERPROFILE%\.spe-mcp`.
+ */
+const IS_POSIX = process.platform !== "win32";
 
 /** Create a directory (recursively) with owner-only permissions. */
 export function ensureSecureDir(dir: string): void {
   if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true, mode: DIR_MODE });
+    // `mode` is honored on POSIX at creation time; ignored (harmless) on Windows.
+    mkdirSync(dir, { recursive: true, mode: OWNER_RWX });
     return;
   }
-  // Repair perms on a dir that may predate this hardening.
+  if (!IS_POSIX) return; // Windows: ACL governs; nothing to repair.
+  // POSIX: repair perms on a dir that may predate this hardening (best-effort).
   try {
-    chmodSync(dir, DIR_MODE);
+    chmodSync(dir, OWNER_RWX);
   } catch {
-    /* not supported on this platform (e.g. Windows) — ACL governs instead */
+    /* best-effort repair (e.g. not the owner) — leave existing perms as-is */
   }
 }
 
 /**
  * Write a file with owner-only (0o600) permissions. `mode` on writeFileSync is
- * only honored when the file is *created*, so we also chmod to repair an
- * existing file that may have been written world-readable previously.
+ * only honored when the file is *created* (and only on POSIX), so on POSIX we
+ * also chmod to repair an existing file that may have been written
+ * world-readable previously. On Windows the chmod is skipped and the profile
+ * ACL provides the protection.
  */
 export function writeSecureFile(path: string, data: string): void {
-  writeFileSync(path, data, { encoding: "utf-8", mode: FILE_MODE });
+  writeFileSync(path, data, { encoding: "utf-8", mode: OWNER_RW });
+  if (!IS_POSIX) return; // Windows: ACL governs; chmod would be a no-op.
   try {
-    chmodSync(path, FILE_MODE);
+    chmodSync(path, OWNER_RW);
   } catch {
-    /* not supported on this platform (e.g. Windows) — ACL governs instead */
+    /* best-effort repair (e.g. not the owner) — leave existing perms as-is */
   }
 }

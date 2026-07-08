@@ -8,6 +8,10 @@
  * container). We persist the resulting IDs to `~/.spe-mcp/state.json` so the
  * flow is resumable/idempotent and `status_get` can report what exists. This is
  * the MCP analogue of the full-setup skill's `.env.spe`.
+ *
+ * Cross-platform: there are no shell-command invocations here; every path is
+ * built with `node:path.join` + `os.homedir()`, so it resolves correctly on
+ * Windows (`%USERPROFILE%\.spe-mcp`) and POSIX (`~/.spe-mcp`) alike.
  */
 
 import { existsSync, readFileSync, rmSync } from "node:fs";
