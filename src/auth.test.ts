@@ -34,7 +34,15 @@ const TENANT_A = "475485dd-63d4-4f8c-af70-60f7a6c74940";
 const TENANT_B = "99999999-9999-9999-9999-999999999999";
 const CLIENT_ID = "11111111-2222-3333-4444-555555555555";
 
-/** Build a minimal AccountInfo with a given home tenant. */
+/**
+ * Build a minimal AccountInfo with a given HOME tenant.
+ *
+ * The home tenant is encoded here in `homeAccountId` ("<oid>.<homeTenant>") — it
+ * is what `homeTenantOf()` parses, and it is NOT set by `setAuthConfig()`.
+ * `setAuthConfig()` only records the CONFIGURED/resource tenant the server
+ * targets; the two legitimately differ for guest/B2B accounts (home tenant ≠
+ * resource tenant), which is why the tests supply them independently.
+ */
 function account(homeTenant: string, username: string, oid = "oid-0000"): AccountInfo {
   return {
     homeAccountId: `${oid}.${homeTenant}`,
@@ -47,8 +55,12 @@ function account(homeTenant: string, username: string, oid = "oid-0000"): Accoun
 
 /** A fake PCA whose token cache returns the supplied accounts. */
 function fakePca(accounts: AccountInfo[]): PublicClientApplication {
+  // getTokenCache carries an explicit return-type annotation. Without it, its
+  // type is inferred through the outer `as unknown as PublicClientApplication`
+  // cast and IntelliSense reports `getTokenCache` as implicitly `any` (ts7022,
+  // "referenced directly or indirectly in its own initializer").
   return {
-    getTokenCache: () => ({
+    getTokenCache: (): { getAllAccounts: () => Promise<AccountInfo[]> } => ({
       getAllAccounts: async () => accounts,
     }),
   } as unknown as PublicClientApplication;
@@ -173,8 +185,11 @@ describe("getCachedAccount — end to end with injected cache", () => {
 
 describe("isWrongTenantToken — authoritative issued-token guard", () => {
   it("accepts a guest token whose issued tenant matches the configured tenant", () => {
-    // Guest account: home tenant A, but the silent token was minted for the
-    // configured resource tenant B. This MUST be accepted.
+    // Why the home and issued tenants differ here (a normal B2B flow, not a corner
+    // case): a user whose HOME tenant is A can be invited as a guest into tenant B.
+    // MSAL then mints a token ISSUED for the configured resource tenant B while the
+    // account's home tenant stays A. Because the tenants legitimately differ, the
+    // guard keys off the ISSUED tenant and MUST accept this token.
     const result = {
       tenantId: TENANT_B,
       account: account(TENANT_A, "guest@corp.com", "guest-oid"),
@@ -300,9 +315,17 @@ describe("owning-app precondition guidance (UX)", () => {
     expect(isOwningAppConfigured()).toBe(true);
   });
 
-  it("OWNING_APP_REQUIRED_MESSAGE points the user to project_app_create and is restart-free", () => {
+  it("OWNING_APP_REQUIRED_MESSAGE carries the actionable remediation guidance", () => {
+    // Assert on the actionable substrings the user needs, not the exact prose
+    // (which stays free to be reworded). Cover BOTH remediation paths plus the
+    // restart-free promise so a regression that drops either path is caught:
+    //   1. the primary fix — the project_app_create tool,
     expect(OWNING_APP_REQUIRED_MESSAGE).toMatch(/project_app_create/);
+    //   2. that it takes effect with no restart,
     expect(OWNING_APP_REQUIRED_MESSAGE).toMatch(/no restart/i);
+    //   3. the alternative for an already-provisioned app — the CLI flags.
+    expect(OWNING_APP_REQUIRED_MESSAGE).toMatch(/--client-id/);
+    expect(OWNING_APP_REQUIRED_MESSAGE).toMatch(/--tenant-id/);
   });
 
   it("getAccessToken() throws a typed OWNING_APP_REQUIRED error when no owning app is configured", async () => {
