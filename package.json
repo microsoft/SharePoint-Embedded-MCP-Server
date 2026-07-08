@@ -13,7 +13,7 @@
     "ai-tools",
     "copilot"
   ],
-  "homepage": "https://github.com/microsoft/SharePoint-Embedded-MCP-Server#readme",
+  "homepage": "https://learn.microsoft.com/sharepoint/dev/embedded/overview",
   "bugs": {
     "url": "https://github.com/microsoft/SharePoint-Embedded-MCP-Server/issues"
   },
@@ -21,7 +21,10 @@
     "type": "git",
     "url": "git+https://github.com/microsoft/SharePoint-Embedded-MCP-Server.git"
   },
-  "author": "Microsoft Corporation",
+  "author": {
+    "name": "Microsoft Corporation",
+    "url": "https://www.microsoft.com"
+  },
   "type": "module",
   "main": "dist/index.js",
   "bin": {
