@@ -38,7 +38,7 @@ export interface McpToolResult {
  * A Microsoft Graph OData collection envelope: the `value` array of results plus
  * the optional `@odata.nextLink` continuation URL. Replaces the ad-hoc
  * `{ value: T[] }` inline shapes previously spread across the Graph client
- * (PR #3 review `r-graph-types`).
+ * (per PR #3 review feedback).
  */
 export interface GraphCollection<T> {
   value: T[];
@@ -231,11 +231,11 @@ export type Container = Required<
  * `grantedToV2` is kept as a narrowed local shape rather than the official
  * `sharePointIdentitySet`: the official `identity` type does not surface
  * `userPrincipalName`, which we render for container members
- * (PR #3 review `r-graph-types`).
+ * (per PR #3 review feedback).
  */
 export type ContainerPermission = Pick<GraphPermission, "id"> & {
   roles: NonNullable<GraphPermission["roles"]>;
-  // r-graph-types: official `Identity` omits `userPrincipalName`; retain a
+  // official `Identity` omits `userPrincipalName`; retain a
   // narrowed local shape for just the member fields we actually read/render.
   grantedToV2?: {
     user?: { userPrincipalName: string; displayName?: string };
@@ -258,7 +258,7 @@ export interface Drive {
  * Derived from the official `DriveItem`, keeping only the subset of fields we
  * consume. `id`/`name` stay non-null (our code always reads them); the remaining
  * fields keep the official optional/nullable shape and are only ever read
- * null-tolerantly (PR #3 review `r-graph-types`).
+ * null-tolerantly (per PR #3 review feedback).
  */
 export type DriveItem = Required<Pick<GraphDriveItem, "id">> & {
   name: NonNullable<GraphDriveItem["name"]>;
@@ -274,7 +274,7 @@ export interface UploadSession {
  * `permission` resource that *carries* a `link` (the official `sharingLink`
  * sub-object); our reads use the permission `id` plus `link.{type,scope,webUrl}`,
  * so we derive from the official `Permission` type — the nested `link` is then
- * the official `sharingLink` automatically (PR #3 review `r-graph-types`).
+ * the official `sharingLink` automatically (per PR #3 review feedback).
  */
 export type SharingLink = Required<Pick<GraphPermission, "id">> & Pick<GraphPermission, "link">;
 
