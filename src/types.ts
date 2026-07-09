@@ -189,6 +189,10 @@ export type ContainerTypePermission = Pick<GraphBetaPermission, "id"> & {
  * (typed there as `NullableOption<FileStorageContainerTypeAppPermissionGrant[]>`),
  * narrowed to our required, non-null {@link ApplicationPermissionGrant}[] — whose
  * element type is itself derived from the official grant type (per PR #3 review).
+ *
+ * NOTE: retained intentionally though currently unused in a type position — it
+ * documents the narrowed request/registration shape and keeps the contract close
+ * to the official type for future callers.
  */
 export interface ContainerTypeRegistration {
   applicationPermissionGrants: ApplicationPermissionGrant[];
