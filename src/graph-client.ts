@@ -41,6 +41,10 @@ import type {
   ResourceAccess as GraphResourceAccess,
 } from "@microsoft/microsoft-graph-types";
 
+// Container types are a Microsoft Graph **beta** control-plane resource; the
+// official type comes from the types-only, dev-only `-beta` package.
+import type { FileStorageContainerType } from "@microsoft/microsoft-graph-types-beta";
+
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 // SPE container-type `permissions` (the `owner` role that lets a public client /
 // PCA create containers) exist only under the beta endpoint. v1.0 stays the
@@ -648,25 +652,27 @@ export async function getSignedInUser(
 
 // ─── Container Types ────────────────────────────────────────────────────────
 
-interface ListContainerTypesResponse {
-  value: RawContainerType[];
-}
-
 // Graph returns container types with `id` and `name`; our model uses
 // `containerTypeId` and `displayName`. Normalize at the boundary so callers
 // (and the 1:1 owning-app guard / auto-registration) read a populated id.
-interface RawContainerType {
-  id?: string;
+//
+// Derived from the official beta `FileStorageContainerType` (types-only, dev-only
+// dependency): the scalar wire fields (`id`, `name`, `owningAppId`,
+// `createdDateTime`, `expirationDateTime`, `etag`) are `Pick`ed from the official
+// type; the normalize-friendly extras our model adds (`containerTypeId`,
+// `displayName`, `azureSubscriptionId`) and the locally-narrowed
+// `billingClassification` union are intersected on. Every field stays optional so
+// `normalizeContainerType({})` (used for an empty PATCH/204 body) still
+// type-checks (per PR #3 review).
+type RawContainerType = Pick<
+  FileStorageContainerType,
+  "id" | "name" | "owningAppId" | "createdDateTime" | "expirationDateTime" | "etag"
+> & {
   containerTypeId?: string;
-  name?: string;
   displayName?: string;
-  owningAppId?: string;
   billingClassification?: ContainerType["billingClassification"];
   azureSubscriptionId?: string;
-  createdDateTime?: string;
-  expirationDateTime?: string;
-  etag?: string;
-}
+};
 
 function normalizeContainerType(raw: RawContainerType): ContainerType {
   return {
@@ -697,7 +703,7 @@ function recordManagesAllContainerTypes(value: boolean): void {
 
 export async function listContainerTypes(): Promise<ContainerType[]> {
   try {
-    const result = await graphRequestBeta<ListContainerTypesResponse>(
+    const result = await graphRequestBeta<GraphCollection<RawContainerType>>(
       "GET",
       "/storage/fileStorage/containerTypes",
     );
@@ -831,11 +837,8 @@ export async function registerContainerType(
 // registration above (PUT on the registration) replaces the WHOLE collection;
 // these helpers add / list / remove a SINGLE app's grant without disturbing the
 // others — the supported way to authorize additional apps on an existing
-// registration. The appId is part of the URL, never the body.
-
-interface ApplicationPermissionGrantsResponse {
-  value: ApplicationPermissionGrant[];
-}
+// registration. The appId is part of the URL, never the body. The list endpoint
+// returns the standard OData `{ value: [...] }` envelope (shared `GraphCollection`).
 
 /**
  * Grant (create or replace) a single application's permission grant on a
@@ -860,7 +863,7 @@ export async function grantContainerTypeAppPermission(
 export async function listContainerTypeAppPermissions(
   containerTypeId: string,
 ): Promise<ApplicationPermissionGrant[]> {
-  const result = await graphRequest<ApplicationPermissionGrantsResponse>(
+  const result = await graphRequest<GraphCollection<ApplicationPermissionGrant>>(
     "GET",
     `/storage/fileStorage/containerTypeRegistrations/${containerTypeId}/applicationPermissionGrants`,
   );
@@ -876,12 +879,9 @@ export async function listContainerTypeAppPermissions(
 // (recycle-bin) containers.
 
 // Microsoft Graph returns collections as an OData envelope — `{ value: [...] }`
-// (plus optional paging fields) — never a bare JSON array. This interface types
-// only that raw wire shape; the public helpers below unwrap `.value` and return
-// a plain `ContainerTypeRegistrationRecord[]` so callers never see the envelope.
-interface ContainerTypeRegistrationsListResponse {
-  value: ContainerTypeRegistrationRecord[];
-}
+// (plus optional paging fields), never a bare JSON array — modeled by the shared
+// `GraphCollection<T>`. The public helpers below unwrap `.value` and return a
+// plain `ContainerTypeRegistrationRecord[]` so callers never see the envelope.
 
 /** Read a single container type registration record (v1.0). */
 export async function getContainerTypeRegistration(
@@ -898,7 +898,7 @@ export async function getContainerTypeRegistration(
  * OData `{ value: [...] }` envelope and returns the bare array.
  */
 export async function listContainerTypeRegistrations(): Promise<ContainerTypeRegistrationRecord[]> {
-  const result = await graphRequest<ContainerTypeRegistrationsListResponse>(
+  const result = await graphRequest<GraphCollection<ContainerTypeRegistrationRecord>>(
     "GET",
     "/storage/fileStorage/containerTypeRegistrations",
   );
@@ -930,10 +930,6 @@ export async function revokeContainerTypeAppPermission(
 }
 // ─── Container Type Permissions (owner role — beta only) ─────────────────
 
-interface ContainerTypePermissionsResponse {
-  value: ContainerTypePermission[];
-}
-
 /**
  * Grant the `owner` role on a container type to a USER (beta). Owners can create
  * containers using a public client (PCA) / delegated token — v1.0 rejects
@@ -956,7 +952,7 @@ export async function grantContainerTypeOwner(
 export async function listContainerTypePermissions(
   containerTypeId: string,
 ): Promise<ContainerTypePermission[]> {
-  const result = await graphRequestBeta<ContainerTypePermissionsResponse>(
+  const result = await graphRequestBeta<GraphCollection<ContainerTypePermission>>(
     "GET",
     `/storage/fileStorage/containerTypes/${containerTypeId}/permissions`,
   );
