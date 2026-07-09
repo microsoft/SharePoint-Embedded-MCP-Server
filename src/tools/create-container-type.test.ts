@@ -33,12 +33,17 @@ vi.mock("../state.js", () => ({
 import * as graph from "../graph-client.js";
 import * as azureCli from "../azure-cli.js";
 import { createContainerTypeTool } from "../tools/create-container-type.js";
+import { getSessionId } from "../session.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
   for (const k of Object.keys(stateStore)) delete stateStore[k];
   // An owning app is present for all cases (validation is about billing args).
   stateStore.appId = "app-1";
+  // r-appgate: container_type_create is gated by the restart confirmation guard;
+  // seed a confirmed session so the gate no-ops and the billing-validation logic
+  // under test runs (gate behavior is covered in context-gate.test.ts).
+  stateStore.confirmedSessionId = getSessionId();
   vi.mocked(graph.listContainerTypes).mockResolvedValue([]);
   // Standard-billing Azure prerequisite succeeds by default; rollback tests
   // override this to reject.

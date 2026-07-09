@@ -14,11 +14,13 @@
 
 import { registerContainerType } from "../graph-client.js";
 import { readState, writeState } from "../state.js";
+import { resolveContextGate } from "./context-gate.js";
 import type { McpTool } from "../types.js";
 
 interface RegisterArgs {
   containerTypeId?: string;
   appId?: string;
+  contextChoice?: "confirm" | "switch";
 }
 
 export const registerContainerTypeTool: McpTool = {
@@ -39,9 +41,22 @@ export const registerContainerTypeTool: McpTool = {
         type: "string",
         description: "The owning app (client) ID to grant. Defaults to the provisioned owning app.",
       },
+      contextChoice: {
+        type: "string",
+        enum: ["confirm", "switch"],
+        description:
+          "On a freshly restarted session, confirm the remembered owning app / container type " +
+          "('confirm') or switch to a different one ('switch'). Supplied in response to the " +
+          "confirmation prompt; omit on the first call.",
+      },
     },
   },
   handler: async (args) => {
+    // Restart confirmation gate (r-appgate): confirm the remembered owning app /
+    // container type before mutating tenant registration on a fresh session.
+    const gate = resolveContextGate((args as RegisterArgs).contextChoice);
+    if (gate) return gate;
+
     const state = readState();
     const { containerTypeId = state.containerTypeId, appId = state.appId } = args as RegisterArgs;
 

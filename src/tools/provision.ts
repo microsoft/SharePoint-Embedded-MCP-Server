@@ -43,6 +43,7 @@ import {
   type ClassifiableError,
 } from "../container-retry.js";
 import { needChoice } from "../elicitation.js";
+import { isContextConfirmedThisSession, stampContextConfirmed } from "../session.js";
 import { readState, writeState } from "../state.js";
 import type { Guid, McpTool } from "../types.js";
 
@@ -171,11 +172,16 @@ export const provisionTool: McpTool = {
       }
 
       // Ask before silently reusing the last app (PM feedback: "it favors using
-      // the last one — it should ask"). Only when an app is remembered and the
-      // caller hasn't already chosen (an explicit name, or a prior reuse/new
-      // pick). Comes before the billing prompt so the app is settled first; the
-      // chosen app also drives which signed-in identity the SPE calls use.
-      if (state.appId && !explicitAppName && !appSelection) {
+      // the last one — it should ask"). Critical always-ask (r-appgate): fire
+      // whenever an app is remembered, this call carries no appSelection, and
+      // the context is NOT confirmed under the current session — so a freshly
+      // restarted process always re-asks even though state already holds an app.
+      // The agent re-invokes with appSelection (reuse/new); no loop. An explicit
+      // appDisplayName alone no longer bypasses the ask on an unconfirmed
+      // session (appSelection is the new-vs-existing answer). Comes before the
+      // billing prompt so the app is settled first; the chosen app also drives
+      // which signed-in identity the SPE calls use.
+      if (state.appId && !appSelection && !isContextConfirmedThisSession(state)) {
         return needChoice(
           `You previously used the owning app "${state.appDisplayName ?? state.appId}". Reuse it, or use a different app?`,
           [
@@ -243,8 +249,10 @@ export const provisionTool: McpTool = {
         // Attach/reuse path: adding permissions is best-effort and non-blocking.
         await addSpePermissions(app.objectId, getToken, { bestEffort: true });
       }
-      writeState({ tenantId: identity.tenantId, appId: app.appId, appObjectId: app.objectId, appDisplayName: app.displayName });
-      // Hand off to the owning-app token for SPE operations.
+      // Mark this session confirmed (r-appgate) as the app is settled, and hand
+      // off to the owning-app token for SPE operations. Confirming here keeps the
+      // always-ask above from re-firing on later calls in the same process.
+      stampContextConfirmed({ tenantId: identity.tenantId, appId: app.appId, appObjectId: app.objectId, appDisplayName: app.displayName });
       setAuthConfig({ clientId: app.appId, tenantId: identity.tenantId });
 
       // 2. Standard billing prerequisite: register the Syntex provider.

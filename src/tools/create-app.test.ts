@@ -51,6 +51,7 @@ vi.mock("../state.js", () => ({
 }));
 
 import { createAppTool } from "./create-app.js";
+import { getSessionId } from "../session.js";
 
 const EXISTING_APP = {
   appId: "cd7243b7-f00c-4aec-8a96-67e0a15ea5e6",
@@ -181,8 +182,12 @@ describe("project_app_create — ask before reusing a remembered app (PM feedbac
     expect(createApplicationMock).toHaveBeenCalledTimes(1);
   });
 
-  it("an explicit displayName still wins without prompting even when an app is remembered", async () => {
-    readStateMock.mockReturnValue(REMEMBERED);
+  it("an explicit displayName still wins without prompting once the session is CONFIRMED", async () => {
+    // r-appgate: an explicit displayName no longer bypasses the always-ask on an
+    // UNconfirmed (freshly restarted) session — see the companion test below.
+    // Once the context is confirmed under the current session, the explicit-name
+    // fast path is restored (no friction mid-session).
+    readStateMock.mockReturnValue({ ...REMEMBERED, confirmedSessionId: getSessionId() });
     findApplicationByNameMock.mockResolvedValue({ appId: "named-app", objectId: "obj-named", displayName: "Other App" });
 
     const r = await createAppTool.handler({ displayName: "Other App" });
@@ -190,6 +195,21 @@ describe("project_app_create — ask before reusing a remembered app (PM feedbac
     expect(r.content[0].text).toContain("Owning App Found");
     expect(findApplicationByNameMock).toHaveBeenCalledWith("Other App", expect.anything());
     expect(findApplicationByAppIdMock).not.toHaveBeenCalled();
+  });
+
+  it("PROMPTS even with an explicit displayName on a freshly restarted (unconfirmed) session", async () => {
+    // r-appgate (critical always-ask): a restart is a new process with a new
+    // session id, so a remembered app is unconfirmed and the new-vs-existing
+    // choice must fire — appSelection (not a name) is the answer, so displayName
+    // alone must NOT silently target an app.
+    readStateMock.mockReturnValue(REMEMBERED);
+
+    const r = await createAppTool.handler({ displayName: "Other App" });
+
+    expect(r.isError).toBeFalsy();
+    expect(r.content[0].text).toContain("appSelection=reuse");
+    expect(findApplicationByNameMock).not.toHaveBeenCalled();
+    expect(createApplicationMock).not.toHaveBeenCalled();
   });
 
   it("does NOT prompt on a first run when nothing is remembered", async () => {

@@ -22,6 +22,16 @@ import {
 } from "../graph-client.js";
 import type { McpTool } from "../types.js";
 import { authContainerTypeState, err, reason } from "./container-type-shared.js";
+import { resolveContextGate } from "./context-gate.js";
+
+/** Optional restart-confirmation arg surfaced on the mutation tools (r-appgate). */
+const contextChoiceSchema = {
+  type: "string" as const,
+  enum: ["confirm", "switch"],
+  description:
+    "On a freshly restarted session, confirm the remembered owning app / container type ('confirm') " +
+    "or switch to a different one ('switch'). Supplied in response to the confirmation prompt; omit on the first call.",
+};
 
 /** Point MSAL at the owning app and return the provisioned container-type id as
  *  the default. Thin wrapper over the shared helper (owner tools only need the
@@ -43,9 +53,14 @@ export const grantContainerTypeOwnerTool: McpTool = {
     properties: {
       containerTypeId: { type: "string", description: "Container type id. Default: the provisioned container type." },
       userId: { type: "string", description: "Object id of the user to grant `owner`. Default: the signed-in user." },
+      contextChoice: contextChoiceSchema,
     },
   },
   handler: async (args) => {
+    // Restart confirmation gate (r-appgate) before mutating owners on a fresh session.
+    const gate = resolveContextGate(args.contextChoice as string | undefined);
+    if (gate) return gate;
+
     const defaultCt = authAndDefaultCt();
     const containerTypeId = (args.containerTypeId as string) || defaultCt;
     if (!containerTypeId) return err("no containerTypeId provided and none in provisioning state.");
@@ -123,10 +138,15 @@ export const revokeContainerTypeOwnerTool: McpTool = {
     properties: {
       containerTypeId: { type: "string", description: "Container type id. Default: the provisioned container type." },
       permissionId: { type: "string", description: "The permission id to remove (from container_type_owners_list)." },
+      contextChoice: contextChoiceSchema,
     },
     required: ["permissionId"],
   },
   handler: async (args) => {
+    // Restart confirmation gate (r-appgate) before mutating owners on a fresh session.
+    const gate = resolveContextGate(args.contextChoice as string | undefined);
+    if (gate) return gate;
+
     const defaultCt = authAndDefaultCt();
     const containerTypeId = (args.containerTypeId as string) || defaultCt;
     const permissionId = args.permissionId as string | undefined;
