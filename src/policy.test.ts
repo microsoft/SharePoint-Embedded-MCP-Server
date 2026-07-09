@@ -33,7 +33,7 @@ const registry: McpTool[] = [
   tool("docs_fetch", { readOnly: true }),
 ];
 
-describe("read-only mode (SAFE-003)", () => {
+describe("read-only mode (SAFE-003 read-only tool policy)", () => {
   it("lists only read-only tools and rejects mutating calls", () => {
     const policy = buildToolPolicy(registry, true, undefined);
 
@@ -49,7 +49,7 @@ describe("read-only mode (SAFE-003)", () => {
   });
 });
 
-describe("tool profiles (SAFE-004)", () => {
+describe("tool profiles (SAFE-004 tool allowlist)", () => {
   it("docsOnly profile exposes only the docs tools", () => {
     const { allow, profile } = resolveToolAllowlist(registry, "docsOnly");
     expect(profile).toBe("docsOnly");
