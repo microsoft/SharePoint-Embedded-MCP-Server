@@ -70,6 +70,13 @@ beforeEach(() => {
 // ── project_provision ─────────────────────────────────────────────────────────────
 
 describe("project_provision", () => {
+  // Least-privilege intent (PR #3 review) is settled here so the ownerScope gate
+  // is a resumable no-op for these end-to-end chains; the gate's own
+  // elicit/persist behavior is covered separately in provision-prompt.test.ts.
+  beforeEach(() => {
+    stateStore.ownerScope = "selected";
+  });
+
   it("elicits billing model when not provided", async () => {
     const r = await provisionTool.handler({ appDisplayName: "App" });
     expect(r.content[0].text).toContain("billing model");
@@ -92,6 +99,9 @@ describe("project_provision", () => {
 
     expect(graph.createApplication).toHaveBeenCalled();
     expect(graph.createContainerType).toHaveBeenCalled();
+    // Full-setup registers WITHOUT app-only permissions (exactly 2 args) — the
+    // real registerContainerType then defaults applicationPermissions to ["none"]
+    // (PR #3 review: least privilege; opt in to ["full"] only for daemon apps).
     expect(graph.registerContainerType).toHaveBeenCalledWith("ct-1", "app-1");
     expect(graph.grantContainerTypeOwner).toHaveBeenCalledWith("ct-1", "user-1");
     expect(graph.createContainer).toHaveBeenCalledWith("ct-1", "Default Container");
@@ -232,6 +242,85 @@ describe("project_provision", () => {
     expect(graph.createApplication).not.toHaveBeenCalled();
     expect(r.content[0].text).toContain("Reused owning app");
     expect(r.content[0].text).toContain("SPE Provisioned");
+  });
+});
+
+// ── ownerScope least-privilege intent (PR #3 review) ────────────────────────────────
+
+describe("project_provision — ownerScope intent", () => {
+  // A fresh, unconfirmed session with no recorded ownerScope must ask which
+  // scope posture the owning app should take before provisioning.
+  it("elicits ownerScope when unset and not resumable from state", async () => {
+    const r = await provisionTool.handler({ appDisplayName: "App", billingClassification: "trial" });
+
+    expect(r.content[0].text).toContain("manage ALL container types");
+    // Both options are offered with their re-run hints, and nothing was created.
+    expect(r.content[0].text).toContain("ownerScope=manage-all");
+    expect(r.content[0].text).toContain("ownerScope=selected");
+    expect(graph.createApplication).not.toHaveBeenCalled();
+  });
+
+  it("does NOT re-elicit when ownerScope is resumable from state", async () => {
+    stateStore.ownerScope = "selected";
+    vi.mocked(graph.findApplicationByName).mockResolvedValue(null);
+    vi.mocked(graph.createApplication).mockResolvedValue({ appId: "app-1", objectId: "obj-1", displayName: "App" });
+    vi.mocked(graph.createContainerType).mockResolvedValue({ containerTypeId: "ct-1", owningAppId: "app-1", displayName: "App Container Type" });
+    vi.mocked(graph.createContainer).mockResolvedValue({ id: "c-1", displayName: "Default Container", containerTypeId: "ct-1", status: "inactive" });
+
+    const r = await provisionTool.handler({ appDisplayName: "App", billingClassification: "trial" });
+
+    expect(r.content[0].text).not.toContain("manage ALL container types");
+    expect(graph.createApplication).toHaveBeenCalled();
+  });
+
+  it("manage-all persists ownerScope and sets owningAppManagesAllContainerTypes=true", async () => {
+    vi.mocked(graph.findApplicationByName).mockResolvedValue(null);
+    vi.mocked(graph.createApplication).mockResolvedValue({ appId: "app-1", objectId: "obj-1", displayName: "App" });
+    vi.mocked(graph.createContainerType).mockResolvedValue({ containerTypeId: "ct-1", owningAppId: "app-1", displayName: "App Container Type" });
+    vi.mocked(graph.createContainer).mockResolvedValue({ id: "c-1", displayName: "Default Container", containerTypeId: "ct-1", status: "inactive" });
+
+    const r = await provisionTool.handler({ appDisplayName: "App", billingClassification: "trial", ownerScope: "manage-all" });
+
+    expect(r.content[0].text).toContain("SPE Provisioned");
+    // Broad admin/console intent → request the manage-all scope set and flag it.
+    expect(graph.addSpePermissions).toHaveBeenCalledWith("obj-1", expect.any(Function), { ownerScope: "manage-all" });
+    expect(stateStore.ownerScope).toBe("manage-all");
+    expect(stateStore.owningAppManagesAllContainerTypes).toBe(true);
+  });
+
+  it("selected persists ownerScope; a freshly created selected app still holds Manage.All so the flag is true", async () => {
+    vi.mocked(graph.findApplicationByName).mockResolvedValue(null);
+    vi.mocked(graph.createApplication).mockResolvedValue({ appId: "app-1", objectId: "obj-1", displayName: "App" });
+    vi.mocked(graph.createContainerType).mockResolvedValue({ containerTypeId: "ct-1", owningAppId: "app-1", displayName: "App Container Type" });
+    vi.mocked(graph.createContainer).mockResolvedValue({ id: "c-1", displayName: "Default Container", containerTypeId: "ct-1", status: "inactive" });
+
+    const r = await provisionTool.handler({ appDisplayName: "App", billingClassification: "trial", ownerScope: "selected" });
+
+    expect(r.content[0].text).toContain("SPE Provisioned");
+    // Least-privilege intent → the NARROW scope set is requested. But a freshly
+    // CREATED app is still granted FileStorageContainerType.Manage.All (kept in the
+    // selected set), so it CAN enumerate all container types → flag true. The false
+    // case comes only from the runtime 403 self-correction for reused/external apps
+    // that lack the scope (PR #3 review).
+    expect(graph.addSpePermissions).toHaveBeenCalledWith("obj-1", expect.any(Function), { ownerScope: "selected" });
+    expect(stateStore.ownerScope).toBe("selected");
+    expect(stateStore.owningAppManagesAllContainerTypes).toBe(true);
+  });
+
+  it("does NOT stamp the managesAll flag from intent when reusing an existing app (defers to runtime detection)", async () => {
+    // A reused/external app may or may not hold Manage.All, so the stamp must omit
+    // the flag and let the runtime listContainerTypes 403-check decide (PR #3 review).
+    vi.mocked(graph.findApplicationByName).mockResolvedValue({ appId: "app-x", objectId: "obj-x", displayName: "App" });
+    vi.mocked(graph.createContainerType).mockResolvedValue({ containerTypeId: "ct-1", owningAppId: "app-x", displayName: "App Container Type" });
+    vi.mocked(graph.createContainer).mockResolvedValue({ id: "c-1", displayName: "Default Container", containerTypeId: "ct-1", status: "inactive" });
+
+    const r = await provisionTool.handler({ appDisplayName: "App", appSelection: "reuse", billingClassification: "trial", ownerScope: "selected" });
+
+    expect(r.content[0].text).toContain("SPE Provisioned");
+    expect(stateStore.ownerScope).toBe("selected");
+    // graph-client is mocked, so the real runtime wrapper doesn't run → flag stays
+    // unset for the reused app (not asserted true from intent).
+    expect(stateStore.owningAppManagesAllContainerTypes).toBeUndefined();
   });
 });
 

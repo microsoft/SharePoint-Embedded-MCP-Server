@@ -59,7 +59,7 @@ describe("project_app_create", () => {
 
     expect(result.isError).toBeFalsy();
     expect(graph.createApplication).toHaveBeenCalledWith("My App", expect.any(Function));
-    expect(graph.addSpePermissions).toHaveBeenCalledWith("obj-1", expect.any(Function));
+    expect(graph.addSpePermissions).toHaveBeenCalledWith("obj-1", expect.any(Function), { ownerScope: "selected" });
     expect(setAuthConfig).toHaveBeenCalledWith({ clientId: "app-1", tenantId: "t-1" });
     expect(result.content[0].text).toContain("app-1");
     expect(stateStore.appId).toBe("app-1");

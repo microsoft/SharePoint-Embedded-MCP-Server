@@ -54,6 +54,9 @@ import { provisionTool } from "../tools/provision.js";
 beforeEach(() => {
   vi.clearAllMocks();
   for (const k of Object.keys(stateStore)) delete stateStore[k];
+  // Settle least-privilege intent (PR #3 review) so the ownerScope gate is a
+  // resumable no-op for these mid-flow-failure chains.
+  stateStore.ownerScope = "selected";
 });
 
 describe("project_provision — partial progress on mid-flow failure (WI-16)", () => {

@@ -60,7 +60,8 @@ export const addContainerTypeAppGrantTool: McpTool = {
     "(Microsoft Graph v1.0). Authorizes one consuming app (by appId) to act on the container type with the " +
     "given delegated/application permissions. Idempotent upsert — re-running for the same appId overwrites its " +
     "permissions. Defaults the container type to the provisioned one and the appId to the provisioned owning app; " +
-    "permissions default to `full`. Use this to authorize additional apps without overwriting existing grants " +
+    "delegated permissions default to `full` and application (app-only) permissions default to `none` (opt-in). " +
+    "Use this to authorize additional apps without overwriting existing grants " +
     "(unlike container_type_register, which replaces the whole collection).",
   inputSchema: {
     type: "object" as const,
@@ -76,7 +77,11 @@ export const addContainerTypeAppGrantTool: McpTool = {
       applicationPermissions: {
         type: "array",
         items: { type: "string" },
-        description: "Permissions for application (app-only) tokens, e.g. [\"full\"] or [\"none\"]. Default: [\"full\"].",
+        description:
+          "Permissions for application (app-only) tokens, e.g. [\"full\"] or [\"none\"]. Default: [\"none\"]. " +
+          "App-only permissions are only for a daemon / app-only consumer that accesses containers without a " +
+          "signed-in user; the delegated full-setup path does not use them, so leave this at [\"none\"] unless " +
+          "you are authorizing an app-only client.",
       },
       contextChoice: contextChoiceSchema,
     },
@@ -93,7 +98,7 @@ export const addContainerTypeAppGrantTool: McpTool = {
     if (!appId) return err("no appId provided and no owning app in provisioning state. Run project_app_create first or pass appId.");
 
     const delegated = toPermissions(args.delegatedPermissions, ["full"]);
-    const application = toPermissions(args.applicationPermissions, ["full"]);
+    const application = toPermissions(args.applicationPermissions, ["none"]);
 
     try {
       const grant = await grantContainerTypeAppPermission(containerTypeId, appId, delegated, application);

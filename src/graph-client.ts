@@ -14,6 +14,7 @@ import { getAccessToken } from "./auth.js";
 import { LOCAL_SPA_REDIRECT_URI } from "./constants.js";
 import { AppError } from "./errors.js";
 import { parseRetryAfterMs } from "./http-client.js";
+import { readState, writeState } from "./state.js";
 import { USER_AGENT } from "./user-agent.js";
 import type {
   ApplicationPermissionGrant,
@@ -27,6 +28,7 @@ import type {
   DriveItem,
   GraphCollection,
   Guid,
+  OwnerScope,
   PreviewResult,
   SearchResponse,
   SharingLink,
@@ -273,16 +275,29 @@ type RequiredResourceAccess = Required<Pick<GraphRequiredResourceAccess, "resour
 };
 
 // Desired delegated (type "Scope") Microsoft Graph permissions for the owning
-// app. TODO: least-privilege scope set pending PM decision — the
-// broad-vs-least-privilege (.Manage.All vs .Selected) call is gated there; for
-// now we keep the existing .Manage.All scopes AND add the .Selected pair.
-const DESIRED_GRAPH_RESOURCE_ACCESS: ResourceAccess[] = [
-  { id: SPE_DELEGATED_PERMISSION_IDS.FileStorageContainer_ManageAll, type: "Scope" },
-  { id: SPE_DELEGATED_PERMISSION_IDS.FileStorageContainer_Selected, type: "Scope" },
-  { id: SPE_DELEGATED_PERMISSION_IDS.FileStorageContainerType_ManageAll, type: "Scope" },
-  { id: SPE_DELEGATED_PERMISSION_IDS.FileStorageContainerTypeReg_ManageAll, type: "Scope" },
-  { id: SPE_DELEGATED_PERMISSION_IDS.FileStorageContainerTypeReg_Selected, type: "Scope" },
-];
+// app, as a function of the captured owner intent (PR #3 review). The broad
+// `.Manage.All` Container/Reg scopes are requested ONLY for an admin/console app
+// that manages every container type ("manage-all"); a standard ISV/LOB app
+// ("selected") gets the least-privilege `.Selected` pair instead. Note:
+// FileStorageContainerType.Manage.All is KEPT in BOTH sets — it is delegated-only
+// (there is no `.Selected` or app-only counterpart) and is REQUIRED to create /
+// enumerate container types, so narrowing it is not possible.
+export function desiredGraphResourceAccess(ownerScope: OwnerScope): ResourceAccess[] {
+  if (ownerScope === "selected") {
+    return [
+      { id: SPE_DELEGATED_PERMISSION_IDS.FileStorageContainer_Selected, type: "Scope" },
+      { id: SPE_DELEGATED_PERMISSION_IDS.FileStorageContainerType_ManageAll, type: "Scope" },
+      { id: SPE_DELEGATED_PERMISSION_IDS.FileStorageContainerTypeReg_Selected, type: "Scope" },
+    ];
+  }
+  return [
+    { id: SPE_DELEGATED_PERMISSION_IDS.FileStorageContainer_ManageAll, type: "Scope" },
+    { id: SPE_DELEGATED_PERMISSION_IDS.FileStorageContainer_Selected, type: "Scope" },
+    { id: SPE_DELEGATED_PERMISSION_IDS.FileStorageContainerType_ManageAll, type: "Scope" },
+    { id: SPE_DELEGATED_PERMISSION_IDS.FileStorageContainerTypeReg_ManageAll, type: "Scope" },
+    { id: SPE_DELEGATED_PERMISSION_IDS.FileStorageContainerTypeReg_Selected, type: "Scope" },
+  ];
+}
 
 /**
  * Non-destructively merge `desiredAccess` for `resourceAppId` into an app's
@@ -557,11 +572,17 @@ export async function addSpaRedirectUris(
  *   or patch permissions is logged as a warning and swallowed so provisioning is
  *   non-blocking, mirroring SPAC. The create-new path leaves this false so errors
  *   propagate.
+ * @param options.ownerScope The captured owner intent (PR #3 review) that selects
+ *   the least-privilege scope set: "selected" (default here is "manage-all" for
+ *   backward-compatible callers) requests only the `.Selected` scopes, while
+ *   "manage-all" requests the broad `.Manage.All` set. The merge stays
+ *   non-destructive either way, so an existing broad app is never downgraded —
+ *   only a brand-new app gets the narrower set.
  */
 export async function addSpePermissions(
   appObjectId: string,
   getToken: () => Promise<string>,
-  options: { bestEffort?: boolean } = {},
+  options: { bestEffort?: boolean; ownerScope?: OwnerScope } = {},
 ): Promise<void> {
   try {
     // 1. Read the app's existing requiredResourceAccess so we can merge, not replace.
@@ -574,10 +595,13 @@ export async function addSpePermissions(
     );
 
     // 2. Merge in only the missing Graph scopes (dedupe by resourceAppId + id + type).
+    //    An unspecified ownerScope defaults to "manage-all" so pre-existing
+    //    callers keep the historical broad set; the intent-aware tools pass
+    //    "selected" explicitly to request least privilege for new apps.
     const merged = mergeRequiredResourceAccess(
       existing.requiredResourceAccess ?? [],
       GRAPH_RESOURCE_APP_ID,
-      DESIRED_GRAPH_RESOURCE_ACCESS,
+      desiredGraphResourceAccess(options.ownerScope ?? "manage-all"),
     );
 
     // 3. PATCH the merged array back.
@@ -649,12 +673,45 @@ function normalizeContainerType(raw: RawContainerType): ContainerType {
   } as ContainerType;
 }
 
+/**
+ * Record whether the owning app can enumerate ALL container types (i.e., holds
+ * FileStorageContainerType.Manage.All) into persisted state (PR #3 review). This
+ * lights up the context-gate staleness warning when the flag is `false`. It is
+ * deliberately NON-THROWING and only writes on an actual change: a failed state
+ * write must never mask the caller's list result or error semantics, and it must
+ * not churn the state file on every read.
+ */
+function recordManagesAllContainerTypes(value: boolean): void {
+  try {
+    if (readState().owningAppManagesAllContainerTypes !== value) {
+      writeState({ owningAppManagesAllContainerTypes: value });
+    }
+  } catch {
+    /* best-effort flag write — swallow so the caller's semantics are unchanged */
+  }
+}
+
 export async function listContainerTypes(): Promise<ContainerType[]> {
-  const result = await graphRequestBeta<ListContainerTypesResponse>(
-    "GET",
-    "/storage/fileStorage/containerTypes",
-  );
-  return (result.value ?? []).map(normalizeContainerType);
+  try {
+    const result = await graphRequestBeta<ListContainerTypesResponse>(
+      "GET",
+      "/storage/fileStorage/containerTypes",
+    );
+    // Success ⇒ this app can enumerate ALL container types (it holds
+    // FileStorageContainerType.Manage.All). Self-heal the staleness flag to true;
+    // this runtime signal wins over recorded intent for reused apps (PR #3 review).
+    recordManagesAllContainerTypes(true);
+    return (result.value ?? []).map(normalizeContainerType);
+  } catch (error) {
+    // A 403 (FORBIDDEN) means the app lacks FileStorageContainerType.Manage.All
+    // and cannot enumerate all container types — record the flag false so the
+    // context-gate staleness warning fires, then rethrow the original error
+    // UNCHANGED so callers see the same failure semantics as before.
+    if (error instanceof AppError && (error.status === 403 || error.code === "FORBIDDEN")) {
+      recordManagesAllContainerTypes(false);
+    }
+    throw error;
+  }
 }
 
 export async function createContainerType(params: {
@@ -700,21 +757,62 @@ export async function registerContainerType(
   containerTypeId: string,
   appId: string,
   delegatedPermissions: string[] = ["full"],
-  applicationPermissions: string[] = ["full"],
+  applicationPermissions?: string[],
 ): Promise<void> {
+  // App-only (application) permissions default to ["none"] (PR #3 review). The
+  // full-setup path uses ONLY delegated tokens (an Azure CLI bootstrap token and
+  // an MSAL device-code token acquired AS the owning app); there is no app-only
+  // token path, so the owning app needs no app-only grant. App-only permissions
+  // are opt-in — for a separate daemon/app-only consumer — and passed explicitly.
+  //
+  // Re-grant safety: the registration PUT REPLACES the entire
+  // applicationPermissionGrants collection, so a naive re-run that dropped a
+  // pre-existing app-only grant would silently REVOKE it. When the caller does
+  // not specify app-only permissions, read-merge any grant this app already holds
+  // instead of clobbering it; an explicit value always wins.
+  let effectiveAppPermissions: string[];
+  if (applicationPermissions !== undefined) {
+    effectiveAppPermissions = applicationPermissions;
+  } else {
+    effectiveAppPermissions = ["none"];
+    try {
+      const existingGrants = await listContainerTypeAppPermissions(containerTypeId);
+      const priorGrant = existingGrants.find(
+        (g) => g.appId?.toLowerCase() === appId.toLowerCase(),
+      );
+      if (priorGrant?.applicationPermissions && priorGrant.applicationPermissions.length > 0) {
+        effectiveAppPermissions = priorGrant.applicationPermissions;
+      }
+    } catch (lookupError) {
+      // Only a genuine "no existing registration/grant" (404 NOT_FOUND) is safe to
+      // treat as an absent grant and keep the least-privilege ["none"] default. Any
+      // OTHER failure (e.g. 403, or a transient error that exhausted retries) is
+      // AMBIGUOUS: proceeding with the PUT would replace the whole grant collection
+      // and could silently REVOKE an app-only grant we merely failed to read. Fail
+      // closed by rethrowing rather than risk a silent downgrade (PR #3 review).
+      if (
+        !(lookupError instanceof AppError &&
+          (lookupError.code === "NOT_FOUND" || lookupError.status === 404))
+      ) {
+        throw lookupError;
+      }
+    }
+  }
+
   const body = {
     applicationPermissionGrants: [
       {
         appId,
         delegatedPermissions,
-        applicationPermissions,
+        applicationPermissions: effectiveAppPermissions,
       } satisfies ApplicationPermissionGrant,
     ],
   };
 
   // Tenant-level registration endpoint (verified by the live-tested skill
-  // 04-container-type.ps1). MUST include applicationPermissionGrants or
-  // container creation later fails with UnauthorizedAccessException.
+  // 04-container-type.ps1). MUST include a grant entry with sufficient
+  // delegatedPermissions, or container creation later fails with
+  // UnauthorizedAccessException — it is the DELEGATED grant that matters here.
   await graphRequest<void>(
     "PUT",
     `/storage/fileStorage/containerTypeRegistrations/${containerTypeId}`,

@@ -123,6 +123,19 @@ export interface AuthConfig {
  */
 export type BillingClassification = "trial" | "standard" | "directToCustomer";
 
+/**
+ * The owning app's intended container-type authority, captured up front so the
+ * requested Graph scopes / app-permission grants can be least-privilege by
+ * default (PR #3 review). Two intents:
+ *   - "manage-all": an admin/console app that manages ALL container types in the
+ *     tenant (broad `.Manage.All` scopes).
+ *   - "selected":   a standard ISV/LOB app that only needs its own container
+ *     type (the least-privilege `.Selected` scopes). This is the default.
+ * The single source of truth for the union — the tool input enum and persisted
+ * state both reference it so the allowed values can't drift apart.
+ */
+export type OwnerScope = "manage-all" | "selected";
+
 export interface ContainerType {
   containerTypeId: string;
   owningAppId: string;
