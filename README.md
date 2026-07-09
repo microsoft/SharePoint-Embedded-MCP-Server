@@ -181,6 +181,7 @@ The server accepts configuration via CLI flags or environment variables:
 | `--tenant-id` | `SPE_TENANT_ID` | Entra ID Tenant ID |
 | `--read-only` | `SPE_READ_ONLY` | Advertise/allow only read/list/get/search tools; reject mutating calls |
 | `--tools` | `SPE_TOOLS` | Restrict exposed tools to a profile (`readOnly`, `docsOnly`, `provisioning`, `content`, `admin`) or a comma-separated tool list |
+| `--data-dir` | `SPE_DATA_DIR` | Directory for the token cache + provisioning state (default `~/.spe-mcp`). Point each instance at a unique **absolute** path (or `~/...`; CWD-relative paths are rejected) to run multiple servers without clobbering state |
 
 > The CLI flag wins when both a flag and its env var are set. Run
 > `spe-mcp start --help` to see the authoritative option list and descriptions.
@@ -312,7 +313,31 @@ This keeps sub-agents non-blocking: they either use a pre-cached token silently 
 
 ### Token Storage
 
-Tokens are cached under `~/.spe-mcp/` in per-identity files named `token-cache.<tenantId>.<clientId>.json` (a legacy `token-cache.json` may also exist). Each file contains MSAL's serialized token cache (refresh tokens, account info). On macOS/Linux the cache directory is created `0700` and the cache files `0600` (owner read/write only); on Windows the files are protected by the per-user profile ACL.
+Tokens are cached under the **data directory** (default `~/.spe-mcp/`, or a `--data-dir` / `SPE_DATA_DIR` override) in per-identity files named `token-cache.<tenantId>.<clientId>.json` (a legacy `token-cache.json` may also exist). Each file contains MSAL's serialized token cache (refresh tokens, account info). On macOS/Linux the cache directory is created `0700` and the cache files `0600` (owner read/write only), and the server fails closed if the directory is a symlink, owned by another user, or group/other-accessible; on Windows the files are protected by the per-user profile ACL (an off-profile `--data-dir` override is given an owner-only DACL, or refused).
+
+### Running multiple instances (isolating state)
+
+The data directory holds a single provisioning `state.json` plus the token cache, so two servers pointed at the **same** directory can clobber each other's state. To run more than one instance (e.g. two tenants, or a published build alongside a local build), give each its own `--data-dir` / `SPE_DATA_DIR`:
+
+```jsonc
+// .vscode/mcp.json — two isolated instances
+{
+  "servers": {
+    "spe-tenantA": {
+      "command": "npx",
+      "args": ["-y", "@microsoft/spe-mcp-server", "start"],
+      "env": { "SPE_DATA_DIR": "~/.spe-mcp-tenantA", "SPE_TENANT_ID": "<tenant-A>" }
+    },
+    "spe-tenantB": {
+      "command": "npx",
+      "args": ["-y", "@microsoft/spe-mcp-server", "start"],
+      "env": { "SPE_DATA_DIR": "~/.spe-mcp-tenantB", "SPE_TENANT_ID": "<tenant-B>" }
+    }
+  }
+}
+```
+
+The path must be **absolute** (a leading `~/` is expanded against your home directory); CWD-relative paths are rejected so credentials can never be written into a working directory. The same value must be used for `start`, `auth`, and `logout` of a given instance — set it once via `SPE_DATA_DIR` (as above) and all three commands agree.
 
 ### Full Local Auth Reset
 

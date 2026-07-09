@@ -9,19 +9,17 @@
  * flow is resumable/idempotent and `status_get` can report what exists. This is
  * the MCP analogue of the full-setup skill's `.env.spe`.
  *
- * Cross-platform: there are no shell-command invocations here; every path is
- * built with `node:path.join` + `os.homedir()`, so it resolves correctly on
- * Windows (`%USERPROFILE%\.spe-mcp`) and POSIX (`~/.spe-mcp`) alike.
+ * Cross-platform: there are no shell-command invocations here; the data
+ * directory and state-file paths come from the resolve-once seam in `paths.ts`
+ * (built with `node:path` + `os.homedir()`), so they resolve correctly on
+ * Windows (`%USERPROFILE%\.spe-mcp`) and POSIX (`~/.spe-mcp`) alike, and honor a
+ * `--data-dir` / `SPE_DATA_DIR` override.
  */
 
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { ensureSecureDir, writeSecureFile } from "./secure-fs.js";
+import { existsSync, rmSync } from "node:fs";
+import { getDataDir, getStateFile } from "./paths.js";
+import { ensureSecureDir, readSecureFile, writeSecureFile } from "./secure-fs.js";
 import type { BillingClassification, OwnerScope } from "./types.js";
-
-const STATE_DIR = join(homedir(), ".spe-mcp");
-const STATE_FILE = join(STATE_DIR, "state.json");
 
 export interface ProvisioningState {
   tenantId?: string;
@@ -74,28 +72,33 @@ export interface ProvisioningState {
 
 export function readState(): ProvisioningState {
   try {
-    if (existsSync(STATE_FILE)) {
-      return JSON.parse(readFileSync(STATE_FILE, "utf-8")) as ProvisioningState;
+    // O_NOFOLLOW + owner check (readSecureFile): a symlinked or foreign-owned
+    // state.json is refused (throws → treated as empty) rather than followed,
+    // consistent with the writeState hardening. Returns null when absent.
+    const raw = readSecureFile(getStateFile());
+    if (raw !== null) {
+      return JSON.parse(raw) as ProvisioningState;
     }
   } catch {
-    /* ignore corrupt state — treat as empty */
+    /* ignore corrupt or insecure state — treat as empty */
   }
   return {};
 }
 
 export function writeState(patch: Partial<ProvisioningState>): ProvisioningState {
   const next = { ...readState(), ...patch };
-  ensureSecureDir(STATE_DIR);
+  ensureSecureDir(getDataDir());
   // SEC-003: state can hold tenant/app/subscription IDs — owner-only (0o600).
-  writeSecureFile(STATE_FILE, JSON.stringify(next, null, 2));
+  writeSecureFile(getStateFile(), JSON.stringify(next, null, 2));
   return next;
 }
 
 /** Delete the persisted provisioning state (used by cleanup). */
 export function clearState(): void {
   try {
-    if (existsSync(STATE_FILE)) {
-      rmSync(STATE_FILE);
+    const stateFile = getStateFile();
+    if (existsSync(stateFile)) {
+      rmSync(stateFile);
     }
   } catch {
     /* ignore */

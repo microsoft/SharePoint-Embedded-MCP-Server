@@ -28,6 +28,27 @@ function isTruthyEnv(value: string | undefined): boolean {
   return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
 }
 
+/** Shared `--data-dir` option description (start / auth / logout). */
+const DATA_DIR_OPTION =
+  "Directory for the token cache + provisioning state (default ~/.spe-mcp). " +
+  "Point each instance at a unique path to run multiple servers without clobbering state. " +
+  "Must be absolute (or ~/...). Can also be set via SPE_DATA_DIR.";
+
+/**
+ * Resolve the data directory from `--data-dir` (falling back to SPE_DATA_DIR),
+ * record it as the process-wide override BEFORE any state/auth module reads the
+ * location, propagate it via SPE_DATA_DIR for defense-in-depth, and log the
+ * resolved path to stderr only (path-only; stdout is the MCP JSON-RPC channel).
+ * Throws AppError on an invalid (e.g. CWD-relative) path — caught by each
+ * command's try/catch so the failure is loud, not silent.
+ */
+async function applyDataDir(dataDir?: string): Promise<void> {
+  const { setDataDirOverride } = await import("./paths.js");
+  const resolved = setDataDirOverride(dataDir || process.env.SPE_DATA_DIR);
+  process.env.SPE_DATA_DIR = resolved;
+  console.error(`[SPE MCP Server] Data directory: ${resolved}`);
+}
+
 const program = new Command();
 
 program
@@ -54,8 +75,12 @@ program
     "--tools <profileOrCsv>",
     "Restrict exposed tools: a built-in profile (readOnly, docsOnly, provisioning, content, admin) or a comma-separated list of tool names. Can also be set via SPE_TOOLS.",
   )
-  .action(async (options: { clientId?: string; tenantId?: string; readOnly?: boolean; tools?: string }) => {
+  .option("--data-dir <path>", DATA_DIR_OPTION)
+  .action(async (options: { clientId?: string; tenantId?: string; readOnly?: boolean; tools?: string; dataDir?: string }) => {
     try {
+      // Resolve + record the data dir FIRST, before importing ./index.js (which
+      // pulls in state.ts/auth.ts) so every entry point resolves the same dir.
+      await applyDataDir(options.dataDir);
       const clientId = options.clientId || process.env.SPE_CLIENT_ID;
       const tenantId = options.tenantId || process.env.SPE_TENANT_ID;
       // Read-only: CLI flag wins; otherwise a truthy SPE_READ_ONLY env value.
@@ -85,8 +110,12 @@ program
   .option("--client-id <id>", "Entra ID Application (Client) ID. Can also be set via SPE_CLIENT_ID env var.")
   .option("--tenant-id <id>", "Entra ID Tenant ID. Can also be set via SPE_TENANT_ID env var.")
   .option("--reset", "Clear any cached tokens for this tenant before authenticating (useful when switching tenants).")
-  .action(async (options: { clientId?: string; tenantId?: string; reset?: boolean }) => {
+  .option("--data-dir <path>", DATA_DIR_OPTION)
+  .action(async (options: { clientId?: string; tenantId?: string; reset?: boolean; dataDir?: string }) => {
     try {
+      // Resolve + record the data dir FIRST so auth caches tokens to the SAME
+      // directory `start` will later read from (else silent "not authenticated").
+      await applyDataDir(options.dataDir);
       const clientId = options.clientId || process.env.SPE_CLIENT_ID;
       const tenantId = options.tenantId || process.env.SPE_TENANT_ID;
 
@@ -120,8 +149,12 @@ program
 program
   .command("logout")
   .description("Clear cached authentication tokens")
-  .action(async () => {
+  .option("--data-dir <path>", DATA_DIR_OPTION)
+  .action(async (options: { dataDir?: string }) => {
     try {
+      // Resolve + record the data dir FIRST so logout clears tokens from the
+      // SAME directory the matching `auth`/`start` used.
+      await applyDataDir(options.dataDir);
       const { clearCachedToken } = await import("./auth.js");
       await clearCachedToken();
       console.log("Logged out. Cached tokens have been cleared.");

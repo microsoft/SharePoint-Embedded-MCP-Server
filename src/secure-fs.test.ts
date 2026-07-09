@@ -2,10 +2,19 @@
 // Licensed under the MIT license.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, statSync, existsSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  existsSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir, platform } from "node:os";
 import { join } from "node:path";
-import { ensureSecureDir, writeSecureFile } from "./secure-fs.js";
+import { ensureSecureDir, writeSecureFile, readSecureFile } from "./secure-fs.js";
 
 // POSIX permission bits under test, named for readability (see secure-fs.ts).
 //   0o700 = rwx------ (owner-only, directories)   0o600 = rw------- (owner-only, files)
@@ -72,5 +81,57 @@ describe("secure-fs (SEC-003 owner-only credential/state files)", () => {
 
     writeSecureFile(file, "new");
     expect(statSync(file).mode & PERMISSION_MASK).toBe(OWNER_RW);
+  });
+});
+
+describe("secure-fs — fail-closed hardening (symlink / TOCTOU / perms)", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "spe-mcp-securefs-h-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("readSecureFile returns null for a missing file and round-trips content (cross-platform)", () => {
+    const file = join(dir, "cache.json");
+    expect(readSecureFile(file)).toBeNull();
+    writeSecureFile(file, "hello");
+    expect(readSecureFile(file)).toBe("hello");
+  });
+
+  it.runIf(isPosix)("writeSecureFile refuses to follow a symlinked target (O_NOFOLLOW)", () => {
+    const real = join(dir, "outside.json");
+    writeFileSync(real, "original", { mode: 0o600 });
+    const link = join(dir, "link.json");
+    symlinkSync(real, link);
+    expect(() => writeSecureFile(link, "attacker")).toThrow();
+    // The real file must NOT have been overwritten through the symlink.
+    expect(readFileSync(real, "utf-8")).toBe("original");
+  });
+
+  it.runIf(isPosix)("readSecureFile refuses to follow a symlinked cache file", () => {
+    const real = join(dir, "secret.json");
+    writeFileSync(real, "secret", { mode: 0o600 });
+    const link = join(dir, "cache-link.json");
+    symlinkSync(real, link);
+    expect(() => readSecureFile(link)).toThrow();
+  });
+
+  it.runIf(isPosix)("ensureSecureDir refuses a symlinked directory", () => {
+    const realDir = join(dir, "real");
+    mkdirSync(realDir, { mode: 0o700 });
+    const linkDir = join(dir, "link");
+    symlinkSync(realDir, linkDir);
+    expect(() => ensureSecureDir(linkDir)).toThrow();
+  });
+
+  it.runIf(isPosix)("ensureSecureDir repairs a group/other-accessible directory to 0o700", () => {
+    const sub = join(dir, "loose");
+    mkdirSync(sub, { mode: 0o755 });
+    ensureSecureDir(sub); // owner can repair -> must not throw
+    expect(statSync(sub).mode & PERMISSION_MASK).toBe(0o700);
   });
 });
