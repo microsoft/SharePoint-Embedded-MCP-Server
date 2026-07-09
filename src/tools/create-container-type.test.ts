@@ -17,7 +17,8 @@ vi.mock("../graph-client.js", () => ({
   deleteContainerType: vi.fn(),
 }));
 
-vi.mock("../azure-cli.js", () => ({
+vi.mock("../azure-cli.js", async (importActual) => ({
+  ...(await importActual<typeof import("../azure-cli.js")>()),
   ensureSyntexProviderRegistered: vi.fn(),
 }));
 
@@ -105,6 +106,39 @@ describe("container_type_create — standard billing validation", () => {
         resourceGroup: "rg-1",
       }),
     );
+  });
+
+  it("rejects an unsupported region before creating the (non-deletable) standard CT", async () => {
+    const result = await createContainerTypeTool.handler({
+      displayName: "X",
+      billingClassification: "standard",
+      azureSubscriptionId: "sub-1",
+      resourceGroup: "rg-1",
+      region: "westus2",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/not available for Microsoft\.Syntex/i);
+    // Guard fires BEFORE creation so no non-deletable standard CT is stranded.
+    expect(graph.createContainerType).not.toHaveBeenCalled();
+  });
+
+  it("allows standard billing with region omitted (billing_setup can default it later)", async () => {
+    vi.mocked(graph.createContainerType).mockResolvedValue({
+      containerTypeId: "ct-1", owningAppId: "app-1", displayName: "X",
+      billingClassification: "standard",
+    });
+    vi.mocked(graph.registerContainerType).mockResolvedValue(undefined as never);
+
+    const result = await createContainerTypeTool.handler({
+      displayName: "X",
+      billingClassification: "standard",
+      azureSubscriptionId: "sub-1",
+      resourceGroup: "rg-1",
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(graph.createContainerType).toHaveBeenCalled();
   });
 
   it("leaves the trial path unchanged (no billing args required)", async () => {

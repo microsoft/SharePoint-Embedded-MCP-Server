@@ -18,6 +18,8 @@ import { describe, it, expect, vi } from "vitest";
 import {
   createSyntexAccount,
   ensureSyntexProviderRegistered,
+  isSyntexRegionSupported,
+  assertSyntexRegionSupported,
   type CreateSyntexAccountOptions,
 } from "./azure-cli.js";
 import { ConditionalAccessError } from "./az-errors.js";
@@ -29,6 +31,24 @@ const noopSleep = async (): Promise<void> => undefined;
 const CA_MESSAGE =
   "InteractionRequired: AADSTS50076: Due to a configuration change made by your administrator, " +
   "you must use multi-factor authentication. A claims challenge was returned by Conditional Access.";
+
+describe("Syntex region helpers (pre-flight validation)", () => {
+  it("isSyntexRegionSupported accepts supported regions and normalizes case/spaces", () => {
+    expect(isSyntexRegionSupported("eastus")).toBe(true);
+    expect(isSyntexRegionSupported("East US")).toBe(true);
+    expect(isSyntexRegionSupported(" westeurope ")).toBe(true);
+  });
+
+  it("isSyntexRegionSupported rejects unsupported regions (e.g. westus2)", () => {
+    expect(isSyntexRegionSupported("westus2")).toBe(false);
+    expect(isSyntexRegionSupported("nowhere")).toBe(false);
+  });
+
+  it("assertSyntexRegionSupported throws an actionable error for an unsupported region", () => {
+    expect(() => assertSyntexRegionSupported("westus2")).toThrow(/not available for Microsoft\.Syntex/i);
+    expect(() => assertSyntexRegionSupported("eastus")).not.toThrow();
+  });
+});
 
 describe("createSyntexAccount — region validation", () => {
   it("rejects a region that cannot host Microsoft.Syntex/accounts before any ARM PUT", async () => {

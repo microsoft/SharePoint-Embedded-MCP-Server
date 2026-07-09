@@ -35,7 +35,11 @@ vi.mock("../bootstrap.js", () => ({
   bootstrapTokenProvider: vi.fn(async () => "boot"),
   getSignedInIdentity: vi.fn(async () => ({ tenantId: "t-1", username: "dev@x.com" })),
 }));
-vi.mock("../azure-cli.js", () => ({
+vi.mock("../azure-cli.js", async (importActual) => ({
+  // Keep the REAL pure region helpers (isSyntexRegionSupported /
+  // assertSyntexRegionSupported) so the pre-flight region validation runs for
+  // real in tests; only the az-shelling functions are mocked.
+  ...(await importActual<typeof import("../azure-cli.js")>()),
   ensureSyntexProviderRegistered: vi.fn(async () => ({ namespace: "Microsoft.Syntex", registrationState: "Registered" })),
   createSyntexAccount: vi.fn(async () => "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Syntex/accounts/acc-1"),
   getSyntexAccounts: vi.fn(async () => []),
@@ -165,6 +169,23 @@ describe("project_provision", () => {
     const r = await provisionTool.handler({ appDisplayName: "NewApp", appSelection: "new", billingClassification: "standard", azureSubscriptionId: "sub-2", resourceGroup: "rg-2", region: "eastus" });
 
     expect(r.content[0].text).toContain("confirmBilling=true");
+    expect(graph.createApplication).not.toHaveBeenCalled();
+    expect(graph.createContainerType).not.toHaveBeenCalled();
+    expect(azureCli.createSyntexAccount).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unsupported standard billing region BEFORE creating anything (no orphaned CT)", async () => {
+    // Regression: 'westus2' previously passed pre-flight, created a standard CT,
+    // then failed at billing-account creation — and the CT could not be rolled
+    // back ("Cannot delete container type for non trial"), stranding an orphan.
+    // The region must be validated up front so nothing is created.
+    vi.mocked(graph.findApplicationByName).mockResolvedValue(null);
+
+    const r = await provisionTool.handler({ appDisplayName: "App", billingClassification: "standard", azureSubscriptionId: "sub-1", resourceGroup: "rg-1", region: "westus2", confirmBilling: true });
+
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toMatch(/not available for Microsoft\.Syntex/i);
+    // Nothing was created — no app, no container type, no billing account.
     expect(graph.createApplication).not.toHaveBeenCalled();
     expect(graph.createContainerType).not.toHaveBeenCalled();
     expect(azureCli.createSyntexAccount).not.toHaveBeenCalled();
