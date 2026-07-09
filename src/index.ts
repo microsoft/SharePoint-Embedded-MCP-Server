@@ -174,7 +174,13 @@ const TOOLS: McpTool[] = [
   fetchDocTool,
 ];
 
-// Strip handler for ListTools response (MCP SDK serialization)
+/**
+ * Map an internal tool's `annotations` onto the subset of MCP annotation *hints*
+ * the SDK serializes into the ListTools response (`readOnlyHint`,
+ * `destructiveHint`, `idempotentHint`). Only annotations that are explicitly set
+ * on the tool are forwarded; when the tool has none, `undefined` is returned so
+ * the `annotations` field is omitted from the wire response entirely.
+ */
 function toMcpAnnotations(tool: McpTool): Record<string, boolean> | undefined {
   const annotations: Record<string, boolean> = {};
   if (tool.annotations?.readOnly !== undefined) annotations.readOnlyHint = tool.annotations.readOnly;

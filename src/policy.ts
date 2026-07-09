@@ -8,6 +8,22 @@
  * Pure, side-effect-free helpers so the filter + reject behavior can be unit
  * tested without standing up the MCP server. index.ts wires these into the
  * ListTools filter and the CallTool dispatcher.
+ *
+ * Why restrict which tools are exposed? An MCP client — including an autonomous
+ * "autopilot" agent — can only see and call the tools the server advertises, so
+ * narrowing that surface is a safety / least-privilege control:
+ *
+ *  - Read-only mode (`--read-only` / `SPE_READ_ONLY`) hides and rejects every
+ *    mutating tool, so an unattended or autopilot run can inspect and report but
+ *    cannot create, delete, deploy, or otherwise make destructive changes.
+ *  - Profiles / allowlist (`--tools <profile|csv>` / `SPE_TOOLS`) advertise only
+ *    a curated subset. For example: `docsOnly` for a documentation-lookup
+ *    assistant, `readOnly` for a status dashboard, `content` for file
+ *    operations, or an explicit CSV such as `container_list,container_get` to
+ *    scope a client to a single task.
+ *
+ * The two layers compose: to be listed or called, a tool must be in the
+ * allowlist AND (when read-only mode is on) be annotated read-only.
  */
 
 import type { McpTool, McpToolResult } from "./types.js";
