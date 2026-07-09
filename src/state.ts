@@ -18,6 +18,7 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { ensureSecureDir, writeSecureFile } from "./secure-fs.js";
+import type { BillingClassification } from "./types.js";
 
 const STATE_DIR = join(homedir(), ".spe-mcp");
 const STATE_FILE = join(STATE_DIR, "state.json");
@@ -31,7 +32,7 @@ export interface ProvisioningState {
   appDisplayName?: string;
   containerTypeId?: string;
   containerTypeName?: string;
-  billingClassification?: string;
+  billingClassification?: BillingClassification;
   azureSubscriptionId?: string;
   resourceGroup?: string;
   /** ARM resource id of the Microsoft.Syntex/accounts (RaaS) billing account. */
