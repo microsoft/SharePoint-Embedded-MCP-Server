@@ -65,6 +65,10 @@ describe("project_app_create", () => {
   });
 
   it("reuses an existing app (idempotent) without creating", async () => {
+    // "Idempotent" here means: running the tool again with the same input yields
+    // the same result (the same owning app) WITHOUT creating a second/duplicate
+    // app or erroring. Below, an app already exists by that name, so the tool
+    // attaches to it (createApplication is never called).
     vi.mocked(bootstrap.getSignedInIdentity).mockResolvedValue({ tenantId: "t-1", username: "dev@x.com" });
     vi.mocked(graph.findApplicationByName).mockResolvedValue({ appId: "app-9", objectId: "obj-9", displayName: "Existing" });
 
@@ -76,6 +80,10 @@ describe("project_app_create", () => {
   });
 
   it("targets an explicit displayName even when state holds a different appId", async () => {
+    // Display names are NOT unique in Entra (two apps can share "Other App"),
+    // whereas the appId (client ID) is the unique key. An explicit displayName is
+    // a best-effort convenience lookup; once resolved, state persists the unique
+    // appId ("named-app") so later runs resume by appId rather than by name.
     stateStore.appId = "persisted-app";
     vi.mocked(bootstrap.getSignedInIdentity).mockResolvedValue({ tenantId: "t-1", username: "dev@x.com" });
     vi.mocked(graph.findApplicationByName).mockResolvedValue({ appId: "named-app", objectId: "obj-2", displayName: "Other App" });
@@ -96,7 +104,11 @@ describe("project_app_create", () => {
 
     const result = await createAppTool.handler({});
 
-    // Elicitation, not a silent resume.
+    // Elicitation happens in create-app's handler: when an app is remembered but
+    // the caller gave no displayName/appSelection, it returns needChoice(...)
+    // (see src/elicitation.ts) — an agent-guided "choose one" prompt — instead of
+    // silently resuming. The `appSelection=reuse` hint below is needChoice's
+    // rendered option, and no graph lookup/create runs until the user chooses.
     expect(result.content[0].text).toContain("Reuse");
     expect(result.content[0].text).toContain("appSelection=reuse");
     expect(graph.findApplicationByAppId).not.toHaveBeenCalled();
@@ -126,12 +138,36 @@ describe("project_app_create", () => {
     expect(result.content[0].text).toContain("az login");
     expect(graph.createApplication).not.toHaveBeenCalled();
   });
+
+  it("surfaces Azure CLI *install* guidance when az is not installed", async () => {
+    // When az is missing entirely, getSignedInIdentity throws the not-installed
+    // error (from bootstrap.ts) rather than returning null. The handler's catch
+    // must propagate that guidance so the user is told HOW to install az — not
+    // just told to `az login`. Assert the install URL reaches the client.
+    vi.mocked(bootstrap.getSignedInIdentity).mockRejectedValue(
+      new Error(
+        "Azure CLI ('az') is not installed. Install it from https://aka.ms/install-azure-cli, " +
+          "then run `az login --allow-no-subscriptions`.",
+      ),
+    );
+
+    const result = await createAppTool.handler({});
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("https://aka.ms/install-azure-cli");
+    expect(graph.createApplication).not.toHaveBeenCalled();
+  });
 });
 
 // ─── container_type_register ─────────────────────────────────────────────
 
 describe("container_type_register", () => {
   it("registers using state defaults", async () => {
+    // Precondition: in the real flow the containerTypeId is produced by
+    // container_type_create (tool `container_type_create`) and persisted to
+    // state. This unit test seeds it directly to keep the register tool isolated
+    // from the create tool — it verifies register reads its inputs from state,
+    // not the end-to-end create→register ordering (covered elsewhere).
     stateStore.containerTypeId = "ct-1";
     stateStore.appId = "app-1";
 
@@ -147,6 +183,9 @@ describe("container_type_register", () => {
     const result = await registerContainerTypeTool.handler({});
 
     expect(result.isError).toBe(true);
+    // The error must tell the user HOW to get an owning app, not just that one is
+    // missing — it points them at project_app_create (or passing an explicit appId).
+    expect(result.content[0].text).toContain("project_app_create");
     expect(graph.registerContainerType).not.toHaveBeenCalled();
   });
 });
