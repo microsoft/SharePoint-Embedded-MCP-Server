@@ -109,3 +109,33 @@ describe("getBootstrapToken", () => {
     await expect(getBootstrapToken()).rejects.toThrow(/no access token/i);
   });
 });
+
+describe("cross-platform az invocation", () => {
+  // `az` is a native binary on macOS/Linux but a `.cmd` shim on Windows that
+  // must be resolved through a shell. bootstrap.ts sets `shell: true` only on
+  // win32; this asserts the invocation adapts to the current platform so the
+  // command works on both Windows and Linux.
+  it("passes shell:true on Windows and falsy elsewhere", async () => {
+    mockExec({ stdout: '{"azure-cli":"2.60.0"}' });
+    await assertAzCli();
+
+    const opts = vi.mocked(execFile).mock.calls[0]?.[2] as { shell?: boolean };
+    if (process.platform === "win32") {
+      expect(opts.shell).toBe(true);
+    } else {
+      expect(opts.shell).toBeFalsy();
+    }
+  });
+
+  // Regardless of platform, args are passed as an array (never a concatenated
+  // shell string), so paths/values with spaces aren't word-split by the shell.
+  it("invokes az with an argv array, not a concatenated command string", async () => {
+    mockExec({ stdout: '{"azure-cli":"2.60.0"}' });
+    await assertAzCli();
+
+    const [cmd, args] = vi.mocked(execFile).mock.calls[0] as unknown as [string, string[]];
+    expect(cmd).toBe("az");
+    expect(Array.isArray(args)).toBe(true);
+    expect(args).toContain("version");
+  });
+});
