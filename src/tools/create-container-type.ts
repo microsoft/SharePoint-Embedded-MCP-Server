@@ -297,31 +297,34 @@ export const createContainerTypeTool = defineTool({
   schema: createContainerTypeSchema,
   validationErrorMessage: createContainerTypeValidationMessage,
   handler: async (args) => {
-    // Restart confirmation gate (r-appgate): confirm the remembered owning app /
-    // container type before creating a new one on a fresh session.
-    const gate = await resolveContextGate(args.contextChoice);
-    if (gate) return gate;
-
-    // Guided standard-billing sub/RG selection (PR #3 review): when the caller
-    // chose standard billing but is missing a subscription and/or resource group,
-    // run the Azure listings INLINE and prompt for a pick (native elicitation, or
-    // the agent-guided fallback) so the user doesn't have to break out to
-    // azure_subscriptions_list / azure_resource_groups_list mid-creation and
-    // re-invoke. Singletons auto-select. The resolved values thread through the
-    // existing region check + rollback in executeCreateContainerType unchanged.
-    let effectiveArgs = args;
-    let guidedNotes: string[] = [];
-    if (args.billingClassification === "standard" && (!args.azureSubscriptionId || !args.resourceGroup)) {
-      const target = await resolveStandardBillingTarget({
-        azureSubscriptionId: args.azureSubscriptionId,
-        resourceGroup: args.resourceGroup,
-      });
-      if (!target.resolved) return target.result;
-      effectiveArgs = { ...args, azureSubscriptionId: target.azureSubscriptionId, resourceGroup: target.resourceGroup };
-      guidedNotes = target.notes;
-    }
-
     try {
+      // Restart confirmation gate (r-appgate): confirm the remembered owning app /
+      // container type before creating a new one on a fresh session. Inside the
+      // try so a stamp-write failure on `contextChoice=confirm` (writeState /
+      // writeSecureFile) is classified by this tool's own error handling below,
+      // like its other errors, rather than the generic dispatch catch. (PR #3 review.)
+      const gate = await resolveContextGate(args.contextChoice);
+      if (gate) return gate;
+
+      // Guided standard-billing sub/RG selection (PR #3 review): when the caller
+      // chose standard billing but is missing a subscription and/or resource group,
+      // run the Azure listings INLINE and prompt for a pick (native elicitation, or
+      // the agent-guided fallback) so the user doesn't have to break out to
+      // azure_subscriptions_list / azure_resource_groups_list mid-creation and
+      // re-invoke. Singletons auto-select. The resolved values thread through the
+      // existing region check + rollback in executeCreateContainerType unchanged.
+      let effectiveArgs = args;
+      let guidedNotes: string[] = [];
+      if (args.billingClassification === "standard" && (!args.azureSubscriptionId || !args.resourceGroup)) {
+        const target = await resolveStandardBillingTarget({
+          azureSubscriptionId: args.azureSubscriptionId,
+          resourceGroup: args.resourceGroup,
+        });
+        if (!target.resolved) return target.result;
+        effectiveArgs = { ...args, azureSubscriptionId: target.azureSubscriptionId, resourceGroup: target.resourceGroup };
+        guidedNotes = target.notes;
+      }
+
       const result = await executeCreateContainerType(effectiveArgs);
       if (!result.success) {
         return fail("INVALID_ARGS", result.error ?? "Container type creation failed");

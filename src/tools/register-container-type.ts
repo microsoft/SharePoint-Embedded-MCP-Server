@@ -52,28 +52,32 @@ export const registerContainerTypeTool: McpTool = {
     },
   },
   handler: async (args) => {
-    // Restart confirmation gate (r-appgate): confirm the remembered owning app /
-    // container type before mutating tenant registration on a fresh session.
-    const gate = await resolveContextGate((args as RegisterArgs).contextChoice);
-    if (gate) return gate;
-
-    const state = readState();
-    const { containerTypeId = state.containerTypeId, appId = state.appId } = args as RegisterArgs;
-
-    if (!containerTypeId) {
-      return {
-        content: [{ type: "text" as const, text: "Error: containerTypeId is required (none in state)." }],
-        isError: true,
-      };
-    }
-    if (!appId) {
-      return {
-        content: [{ type: "text" as const, text: "Error: appId is required (no owning app in state). Run project_app_create first." }],
-        isError: true,
-      };
-    }
-
     try {
+      // Restart confirmation gate (r-appgate): confirm the remembered owning app /
+      // container type before mutating tenant registration on a fresh session.
+      // Inside the try so a stamp-write failure on `contextChoice=confirm`
+      // (writeState / writeSecureFile) is classified by this tool's own error
+      // handling below, like its other errors, rather than the generic dispatch
+      // catch. (PR #3 review.)
+      const gate = await resolveContextGate((args as RegisterArgs).contextChoice);
+      if (gate) return gate;
+
+      const state = readState();
+      const { containerTypeId = state.containerTypeId, appId = state.appId } = args as RegisterArgs;
+
+      if (!containerTypeId) {
+        return {
+          content: [{ type: "text" as const, text: "Error: containerTypeId is required (none in state)." }],
+          isError: true,
+        };
+      }
+      if (!appId) {
+        return {
+          content: [{ type: "text" as const, text: "Error: appId is required (no owning app in state). Run project_app_create first." }],
+          isError: true,
+        };
+      }
+
       await registerContainerType(containerTypeId, appId);
       writeState({ containerTypeId });
 

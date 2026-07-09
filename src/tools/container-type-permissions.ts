@@ -70,41 +70,48 @@ export const grantContainerTypeOwnerTool: McpTool = {
     },
   },
   handler: async (args) => {
-    // Restart confirmation gate (r-appgate) before mutating owners on a fresh session.
-    const gate = await resolveContextGate(args.contextChoice as string | undefined);
-    if (gate) return gate;
-
-    const defaultCt = authAndDefaultCt();
-    const containerTypeId = (args.containerTypeId as string) || defaultCt;
-    if (!containerTypeId) return err("no containerTypeId provided and none in provisioning state.");
-
-    let userId = args.userId as string | undefined;
-    let who = "";
-    if (!userId) {
-      let me: Awaited<ReturnType<typeof getSignedInUser>>;
-      try {
-        me = await getSignedInUser(bootstrapTokenProvider);
-      } catch (e) {
-        return err(`could not resolve the signed-in user — pass userId explicitly. ${reason(e)}`);
-      }
-      // Guest (B2B) users cannot be container-type owners — the Graph API rejects
-      // them. Detect it up front (from the /me `userType`) and return a clear,
-      // actionable message instead of defaulting the grant to a guest and
-      // surfacing a raw API error. NON-BLOCKING guidance: pass a member user's
-      // `userId` to proceed. Guest sign-in itself remains fully supported.
-      // (PR #3 review.)
-      if (me.userType === "Guest") {
-        return err(
-          `the signed-in user ${me.userPrincipalName ?? me.id} is a guest (B2B) account, and guest ` +
-            "users cannot be granted the container-type `owner` role. Re-run with `userId` set to a " +
-            "**member** user of the target tenant.",
-        );
-      }
-      userId = me.id;
-      who = ` (signed-in user ${me.userPrincipalName ?? me.id})`;
-    }
-
+    // Whether the grant targets the SIGNED-IN user (no explicit userId). Declared
+    // before the try so the catch can scope the guest-owner remap to this
+    // self-target path only. (PR #3 review.)
+    const targetIsSignedInUser = !(args.userId as string | undefined);
     try {
+      // Restart confirmation gate (r-appgate) before mutating owners on a fresh
+      // session. Inside the try so a stamp-write failure on `contextChoice=confirm`
+      // (writeState / writeSecureFile) is classified by this tool's own error
+      // handling below, like its other errors. (PR #3 review.)
+      const gate = await resolveContextGate(args.contextChoice as string | undefined);
+      if (gate) return gate;
+
+      const defaultCt = authAndDefaultCt();
+      const containerTypeId = (args.containerTypeId as string) || defaultCt;
+      if (!containerTypeId) return err("no containerTypeId provided and none in provisioning state.");
+
+      let userId = args.userId as string | undefined;
+      let who = "";
+      if (!userId) {
+        let me: Awaited<ReturnType<typeof getSignedInUser>>;
+        try {
+          me = await getSignedInUser(bootstrapTokenProvider);
+        } catch (e) {
+          return err(`could not resolve the signed-in user — pass userId explicitly. ${reason(e)}`);
+        }
+        // Guest (B2B) users cannot be container-type owners — the Graph API rejects
+        // them. Detect it up front (from the /me `userType`) and return a clear,
+        // actionable message instead of defaulting the grant to a guest and
+        // surfacing a raw API error. NON-BLOCKING guidance: pass a member user's
+        // `userId` to proceed. Guest sign-in itself remains fully supported.
+        // (PR #3 review.)
+        if (me.userType === "Guest") {
+          return err(
+            `the signed-in user ${me.userPrincipalName ?? me.id} is a guest (B2B) account, and guest ` +
+              "users cannot be granted the container-type `owner` role. Re-run with `userId` set to a " +
+              "**member** user of the target tenant.",
+          );
+        }
+        userId = me.id;
+        who = ` (signed-in user ${me.userPrincipalName ?? me.id})`;
+      }
+
       const perm = await grantContainerTypeOwner(containerTypeId, userId);
       return {
         content: [{
@@ -116,11 +123,13 @@ export const grantContainerTypeOwnerTool: McpTool = {
         }],
       };
     } catch (e) {
-      // The Graph API also rejects a guest owner when an explicit guest `userId`
-      // is supplied (we cannot know its userType without an extra lookup). Map
-      // that specific rejection to the same clear guidance; fall back to the raw
-      // reason for any other failure. (PR #3 review.)
-      if (isGuestOwnerRejection(e)) {
+      // The Graph API also rejects a guest owner when we defaulted to the signed-in
+      // user and that account turns out to be a guest (its userType can be absent
+      // from /me). Map that specific rejection to the same clear guidance — but ONLY
+      // on the self-target path. For an EXPLICIT `userId`, an unrelated failure that
+      // merely mentions "guest" must surface its raw reason, not misdirected guest
+      // guidance. (PR #3 review.)
+      if (targetIsSignedInUser && isGuestOwnerRejection(e)) {
         return err(
           "guest (B2B) users cannot be granted the container-type `owner` role. Grant it to a " +
             "**member** user of the target tenant (pass their `userId`).",
@@ -180,17 +189,20 @@ export const revokeContainerTypeOwnerTool: McpTool = {
     required: ["permissionId"],
   },
   handler: async (args) => {
-    // Restart confirmation gate (r-appgate) before mutating owners on a fresh session.
-    const gate = await resolveContextGate(args.contextChoice as string | undefined);
-    if (gate) return gate;
-
-    const defaultCt = authAndDefaultCt();
-    const containerTypeId = (args.containerTypeId as string) || defaultCt;
-    const permissionId = args.permissionId as string | undefined;
-    if (!containerTypeId) return err("no containerTypeId provided and none in provisioning state.");
-    if (!permissionId) return err("permissionId is required (see container_type_owners_list).");
-
     try {
+      // Restart confirmation gate (r-appgate) before mutating owners on a fresh
+      // session. Inside the try so a stamp-write failure on `contextChoice=confirm`
+      // (writeState / writeSecureFile) is classified by this tool's own error
+      // handling below, like its other errors. (PR #3 review.)
+      const gate = await resolveContextGate(args.contextChoice as string | undefined);
+      if (gate) return gate;
+
+      const defaultCt = authAndDefaultCt();
+      const containerTypeId = (args.containerTypeId as string) || defaultCt;
+      const permissionId = args.permissionId as string | undefined;
+      if (!containerTypeId) return err("no containerTypeId provided and none in provisioning state.");
+      if (!permissionId) return err("permissionId is required (see container_type_owners_list).");
+
       await revokeContainerTypePermission(containerTypeId, permissionId);
       return { content: [{ type: "text" as const, text: `Removed owner permission \`${permissionId}\` from container type \`${containerTypeId}\`.` }] };
     } catch (e) {
