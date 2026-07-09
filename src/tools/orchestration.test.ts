@@ -52,6 +52,7 @@ vi.mock("../state.js", () => ({
 import * as graph from "../graph-client.js";
 import * as azureCli from "../azure-cli.js";
 import { provisionTool } from "../tools/provision.js";
+import { getSessionId } from "../session.js";
 import { scaffoldTool } from "../tools/scaffold.js";
 import { hydrateConfigTool } from "../tools/hydrate-config.js";
 import { grantContentAccessTool, revokeContentAccessTool, isContentAccessGranted } from "../tools/content-access.js";
@@ -126,17 +127,47 @@ describe("project_provision", () => {
     expect(azureCli.createSyntexAccount).not.toHaveBeenCalled();
   });
 
-  it("skips the billing confirmation on an idempotent resume (billing already set up in state)", async () => {
+  it("skips the billing confirmation on a genuine same-target resume and creates NO new billing account", async () => {
+    // A true resume: same remembered app + same subscription/RG, and a Syntex
+    // account already exists for the reused container type.
+    stateStore.appId = "app-1";
+    stateStore.appDisplayName = "App";
+    stateStore.azureSubscriptionId = "sub-1";
+    stateStore.resourceGroup = "rg-1";
+    stateStore.containerTypeId = "ct-1";
     stateStore.syntexAccountResourceId = "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Syntex/accounts/acc-1";
-    vi.mocked(graph.findApplicationByName).mockResolvedValue({ appId: "app-1", objectId: "obj-1", displayName: "App" });
-    vi.mocked(graph.createContainerType).mockResolvedValue({ containerTypeId: "ct-1", owningAppId: "app-1", displayName: "App Container Type", billingClassification: "standard" });
-    vi.mocked(graph.createContainer).mockResolvedValue({ id: "c-1", displayName: "Default Container", containerTypeId: "ct-1", status: "active" });
+    stateStore.confirmedSessionId = getSessionId(); // context already confirmed → app gate does not fire
+    vi.mocked(graph.findApplicationByName).mockResolvedValueOnce({ appId: "app-1", objectId: "obj-1", displayName: "App" });
+    vi.mocked(graph.listContainerTypes).mockResolvedValueOnce([{ containerTypeId: "ct-1", owningAppId: "app-1", displayName: "App Container Type", billingClassification: "standard" }]);
+    vi.mocked(azureCli.getSyntexAccounts).mockResolvedValueOnce([
+      { id: "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Syntex/accounts/acc-1", properties: { identityId: "ct-1", provisioningState: "Succeeded" } },
+    ]);
+    vi.mocked(graph.createContainer).mockResolvedValueOnce({ id: "c-1", displayName: "Default Container", containerTypeId: "ct-1", status: "active" });
 
     const r = await provisionTool.handler({ appDisplayName: "App", billingClassification: "standard", azureSubscriptionId: "sub-1", resourceGroup: "rg-1", region: "eastus" });
 
-    // Already-configured billing must not re-prompt; provisioning proceeds.
+    // Already-configured, same-target billing must not re-prompt, and must NOT
+    // create a new chargeable account (it reuses the existing one).
     expect(r.content[0].text).not.toContain("Confirm standard (paid) billing");
+    expect(azureCli.createSyntexAccount).not.toHaveBeenCalled();
+    expect(graph.createContainerType).not.toHaveBeenCalled();
+  });
+
+  it("still requires confirmBilling when a stale Syntex id belongs to a DIFFERENT app/target (no silent charge)", async () => {
+    // Stale scalar from a previous, unrelated standard build must NOT wave a new
+    // chargeable account through — this is the financial-safety regression guard.
+    stateStore.syntexAccountResourceId = "/subscriptions/old-sub/resourceGroups/old-rg/providers/Microsoft.Syntex/accounts/acc-old";
+    stateStore.appDisplayName = "OldApp";
+    stateStore.azureSubscriptionId = "old-sub";
+    stateStore.resourceGroup = "old-rg";
+    vi.mocked(graph.findApplicationByName).mockResolvedValue(null);
+
+    const r = await provisionTool.handler({ appDisplayName: "NewApp", appSelection: "new", billingClassification: "standard", azureSubscriptionId: "sub-2", resourceGroup: "rg-2", region: "eastus" });
+
+    expect(r.content[0].text).toContain("confirmBilling=true");
     expect(graph.createApplication).not.toHaveBeenCalled();
+    expect(graph.createContainerType).not.toHaveBeenCalled();
+    expect(azureCli.createSyntexAccount).not.toHaveBeenCalled();
   });
 
   it("rolls back a just-created standard CT when the Syntex billing account fails", async () => {

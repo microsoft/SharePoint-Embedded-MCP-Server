@@ -240,17 +240,26 @@ export const provisionTool: McpTool = {
       // CHARGEABLE Microsoft.Syntex (RaaS) Azure account. Require an explicit
       // confirmation before ANY owning app / container type / billing account is
       // created, so a "build me an SPE app" request can never silently incur
-      // Azure cost. Skipped for trial, and for idempotent resumes where billing
-      // is already set up (state carries the Syntex account id). Makes no change.
-      if (billingClassification === "standard" && !confirmBilling && !state.syntexAccountResourceId) {
+      // Azure cost. Skipped for trial. The skip for an idempotent resume is
+      // scoped to the SAME billing target — reusing the remembered app AND the
+      // same subscription/resource group — so a stale Syntex id from a previous
+      // (different) app can't wave through a brand-new chargeable account. The
+      // check is fail-closed: only a literal `true` proceeds. Makes no change.
+      const resumingSameBillingTarget =
+        !!state.syntexAccountResourceId &&
+        appSelection !== "new" &&
+        (!explicitAppName || explicitAppName === state.appDisplayName) &&
+        azureSubscriptionId === state.azureSubscriptionId &&
+        resourceGroup === state.resourceGroup;
+      if (billingClassification === "standard" && confirmBilling !== true && !resumingSameBillingTarget) {
         return {
           content: [{
             type: "text" as const,
             text:
               "### Confirm standard (paid) billing\n\n" +
               "**Standard** billing will create a **chargeable** `Microsoft.Syntex/accounts` (RaaS) Azure " +
-              "billing account linked to your container type. This incurs Azure costs and **cannot be " +
-              "reverted to trial**.\n\n" +
+              "billing account, plus a new owning Entra app and container type. This incurs Azure costs " +
+              "and **cannot be reverted to trial**.\n\n" +
               `- **Subscription:** \`${azureSubscriptionId}\`\n` +
               `- **Resource group:** ${resourceGroup}\n` +
               `- **Region:** ${region}\n\n` +
