@@ -2,7 +2,7 @@
 // Licensed under the MIT license.
 
 /**
- * Restart confirmation gate for control-plane MUTATION tools (WI-12, r-appgate).
+ * Restart confirmation gate for control-plane MUTATION tools (PR #3 review: r-appgate).
  *
  * A freshly restarted process must not act on the remembered owning app /
  * container type until the user has confirmed that context under the current

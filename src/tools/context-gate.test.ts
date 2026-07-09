@@ -2,8 +2,8 @@
 // Licensed under the MIT license.
 
 /**
- * Unit tests for the restart confirmation gate (context-gate.ts) — WI-12 /
- * r-appgate. Verifies that control-plane mutation handlers are asked to confirm
+ * Unit tests for the restart confirmation gate (context-gate.ts) — PR #3
+ * review: r-appgate. Verifies that control-plane mutation handlers are asked to confirm
  * the remembered owning app / container type on a fresh (unconfirmed) session,
  * that confirmation clears the gate for the rest of the process, and that the
  * staleness warning fires when the owning app cannot enumerate all CTs.
