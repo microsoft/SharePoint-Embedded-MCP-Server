@@ -43,6 +43,10 @@ vi.mock("../azure-cli.js", async (importActual) => ({
   ensureSyntexProviderRegistered: vi.fn(async () => ({ namespace: "Microsoft.Syntex", registrationState: "Registered" })),
   createSyntexAccount: vi.fn(async () => "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Syntex/accounts/acc-1"),
   getSyntexAccounts: vi.fn(async () => []),
+  // Guided standard-billing sub/RG selection (PR #3 review) lists these inline;
+  // default to empty and let each test set the shape it needs.
+  listSubscriptions: vi.fn(async () => []),
+  listResourceGroups: vi.fn(async () => []),
 }));
 vi.mock("../auth.js", () => ({ setAuthConfig: vi.fn() }));
 
@@ -65,6 +69,11 @@ import { cleanupTool } from "../tools/cleanup.js";
 beforeEach(() => {
   vi.clearAllMocks();
   for (const k of Object.keys(stateStore)) delete stateStore[k];
+  // Reset the guided sub/RG listings to their empty defaults each test —
+  // vi.clearAllMocks() clears call history but NOT mockResolvedValue
+  // implementations, so without this a prior test's shape would leak forward.
+  vi.mocked(azureCli.listSubscriptions).mockResolvedValue([]);
+  vi.mocked(azureCli.listResourceGroups).mockResolvedValue([]);
 });
 
 // ── project_provision ─────────────────────────────────────────────────────────────
@@ -83,9 +92,40 @@ describe("project_provision", () => {
     expect(graph.createApplication).not.toHaveBeenCalled();
   });
 
-  it("asks for subscription/RG when standard billing lacks them", async () => {
+  it("guides subscription selection inline (fallback) when standard billing lacks a subscription", async () => {
+    // PR #3 review: instead of punting to azure_subscriptions_list + a manual
+    // re-invoke, the tool lists the subscriptions itself and (with >1) asks the
+    // user to pick. No native elicitation is wired in tests, so elicitChoice
+    // degrades to the agent-guided ask keyed on `azureSubscriptionId`.
+    vi.mocked(azureCli.listSubscriptions).mockResolvedValue([
+      { id: "sub-a", name: "Sub A", state: "Enabled" },
+      { id: "sub-b", name: "Sub B", state: "Enabled" },
+    ]);
+
     const r = await provisionTool.handler({ appDisplayName: "App", billingClassification: "standard" });
-    expect(r.content[0].text).toContain("azure_subscriptions_list");
+
+    // The tool ran the listing and surfaced a subscription choice (not the old
+    // "run azure_subscriptions_list yourself" punt), and created nothing yet.
+    expect(azureCli.listSubscriptions).toHaveBeenCalled();
+    expect(r.content[0].text).toContain("azureSubscriptionId=sub-a");
+    expect(r.content[0].text).toContain("azureSubscriptionId=sub-b");
+    expect(r.content[0].text).not.toContain("azure_subscriptions_list");
+    expect(graph.createApplication).not.toHaveBeenCalled();
+  });
+
+  it("guides resource-group selection inline (fallback) once a subscription is known", async () => {
+    // With the subscription supplied, the tool lists resource groups WITHIN it
+    // and asks the user to pick (agent-guided fallback keyed on `resourceGroup`).
+    vi.mocked(azureCli.listResourceGroups).mockResolvedValue([
+      { name: "rg-x", location: "eastus", id: "/subscriptions/sub-1/resourceGroups/rg-x" },
+      { name: "rg-y", location: "westus", id: "/subscriptions/sub-1/resourceGroups/rg-y" },
+    ]);
+
+    const r = await provisionTool.handler({ appDisplayName: "App", billingClassification: "standard", azureSubscriptionId: "sub-1" });
+
+    expect(azureCli.listResourceGroups).toHaveBeenCalledWith("sub-1");
+    expect(r.content[0].text).toContain("resourceGroup=rg-x");
+    expect(r.content[0].text).toContain("resourceGroup=rg-y");
     expect(graph.createApplication).not.toHaveBeenCalled();
   });
 

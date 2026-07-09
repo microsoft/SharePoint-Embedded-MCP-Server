@@ -43,6 +43,7 @@ import {
   type ClassifiableError,
 } from "../container-retry.js";
 import { elicitChoice, elicitText } from "../elicitation.js";
+import { resolveStandardBillingTarget } from "./standard-billing-target.js";
 import { isContextConfirmedThisSession, stampContextConfirmed } from "../session.js";
 import { readState, writeState } from "../state.js";
 import type { Guid, McpTool, OwnerScope } from "../types.js";
@@ -159,11 +160,16 @@ export const provisionTool: McpTool = {
     const {
       containerTypeName,
       containerName = "Default Container",
-      azureSubscriptionId = state.azureSubscriptionId,
-      resourceGroup = state.resourceGroup,
       region = "eastus",
       confirmBilling = false,
     } = args as ProvisionArgs;
+    // `let` because standard-billing guided selection can resolve these in-band:
+    // the user picks (or we auto-select) a subscription + resource group, and the
+    // chosen values then flow through the region check, the confirmBilling gate,
+    // and billing-account creation below. `?? state.…` matches the prior
+    // destructuring defaults exactly (both only substitute on undefined).
+    let azureSubscriptionId = (args as ProvisionArgs).azureSubscriptionId ?? state.azureSubscriptionId;
+    let resourceGroup = (args as ProvisionArgs).resourceGroup ?? state.resourceGroup;
     // `let` because native elicitation can resolve these in-band: a "different
     // app" prompt supplies a name, and the billing prompt supplies the model.
     // `?? "SPE Builder App"` matches the prior destructuring default exactly
@@ -256,19 +262,22 @@ export const provisionTool: McpTool = {
         billingClassification = choice.value as "trial" | "standard";
       }
 
-      // For standard billing, require subscription + resource group (elicit if missing).
+      // For standard billing, guide the user to a subscription + resource group
+      // INLINE instead of punting to azure_subscriptions_list /
+      // azure_resource_groups_list and a manual re-invoke (PR #3 review). The
+      // helper lists the subscriptions, auto-selects a lone one (else prompts via
+      // native elicitation, falling back to the agent-guided ask), then lists the
+      // resource groups WITHIN the chosen subscription and resolves it the same
+      // way. Runs BEFORE the region check and the confirmBilling financial-safety
+      // gate so those still fire with the resolved target. On the fallback path
+      // the helper returns the agent-guided ask, which the orchestrator re-invokes
+      // with the chosen arg (threaded on re-invoke — no loop).
       if (billingClassification === "standard" && (!azureSubscriptionId || !resourceGroup)) {
-        return {
-          content: [{
-            type: "text" as const,
-            text:
-              "Standard billing needs an Azure subscription and resource group.\n\n" +
-              "1. Run **azure_subscriptions_list** and pick one → pass `azureSubscriptionId`.\n" +
-              "2. Run **azure_resource_groups_list** for that subscription and pick one → pass `resourceGroup`.\n" +
-              "3. Re-run **project_provision** with `billingClassification=standard`, `azureSubscriptionId`, and `resourceGroup`." +
-              partialProgress(steps, "standard billing prerequisites (subscription + resource group)"),
-          }],
-        };
+        const target = await resolveStandardBillingTarget({ azureSubscriptionId, resourceGroup });
+        if (!target.resolved) return target.result;
+        azureSubscriptionId = target.azureSubscriptionId;
+        resourceGroup = target.resourceGroup;
+        for (const note of target.notes) recordStep(steps, note);
       }
 
       // Pre-flight: validate the Azure region BEFORE creating anything. A
