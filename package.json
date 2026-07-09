@@ -83,5 +83,5 @@
     },
     "esbuild": "^0.28.1"
   },
-  "mcpName": "io.github.microsoft/SharePoint-Embedded-MCP-Server"
+  "mcpName": "com.microsoft/sharepointembedded-mcp-server"
 }
