@@ -15,6 +15,11 @@
  */
 
 import { ensureSyntexProviderRegistered } from "../azure-cli.js";
+// These are Microsoft Graph API wrappers from graph-client (not other tools'
+// handlers). All four are used by this one tool: listContainerTypes enforces the
+// 1:1 owning-app→CT check, createContainerType creates it, deleteContainerType
+// rolls back on a failed standard-billing setup, and registerContainerType
+// performs the default auto-registration.
 import {
   createContainerType,
   deleteContainerType,
@@ -26,6 +31,11 @@ import { defineTool, z } from "../tooling/define-tool.js";
 import { fail, ok } from "../responses.js";
 import { clientSafeMessage } from "../errors.js";
 
+// Local-only argument shape for this tool's handler. Per repo convention,
+// shared Graph/MCP domain types live centrally in `src/types.ts`, while per-tool
+// argument interfaces are kept local to their tool file (see deploy-azure,
+// provision, register-container-type, etc.). This one is not reused elsewhere,
+// so it stays local rather than being centralized.
 interface CreateContainerTypeArgs {
   displayName: string;
   owningAppId?: string;
