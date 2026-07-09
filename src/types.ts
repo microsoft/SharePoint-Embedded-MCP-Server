@@ -5,6 +5,17 @@
  * Shared type definitions for the SPE MCP Server.
  */
 
+// ─── Primitives ──────────────────────────────────────────────────────────────
+
+/**
+ * A globally-unique identifier (UUID) rendered as a string, e.g. an Entra
+ * app/object id, a Microsoft Graph permission id, or an Azure subscription id.
+ * This is a readability alias only — it is structurally identical to `string`
+ * (no runtime validation), and simply documents that a value is expected to be
+ * a GUID rather than free-form text.
+ */
+export type Guid = string;
+
 // ─── MCP Tool ───────────────────────────────────────────────────────────────
 
 export interface McpToolResult {
