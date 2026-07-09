@@ -77,6 +77,21 @@ export interface ServerConfig {
   tools?: string;
 }
 
+// ─── Auth Config ─────────────────────────────────────────────────────────────
+
+/**
+ * Resolved authentication configuration for MSAL: the specific owning-app
+ * client and tenant the token cache and Graph acquisition are bound to. Distinct
+ * from {@link ServerConfig}, whose `clientId`/`tenantId` are optional startup
+ * inputs — by the time an {@link AuthConfig} exists, both are known.
+ */
+export interface AuthConfig {
+  clientId: string;
+  tenantId: string;
+  /** Override default Graph scopes */
+  scopes?: string[];
+}
+
 // ─── Graph API Types: Container Types ────────────────────────────────────────
 
 /**

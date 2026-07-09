@@ -32,7 +32,9 @@ import {
 } from "@azure/msal-node";
 import open from "open";
 import { AppError } from "./errors.js";
+import { createLogger } from "./logger.js";
 import { readState } from "./state.js";
+import type { AuthConfig } from "./types.js";
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -106,13 +108,6 @@ export function setInteractiveMode(): void {
 const DEVICE_CODE_TIMEOUT_MS = process.stderr.isTTY ? 120_000 : 600_000;
 
 // ─── Configuration ──────────────────────────────────────────────────────────
-
-export interface AuthConfig {
-  clientId: string;
-  tenantId: string;
-  /** Override default Graph scopes */
-  scopes?: string[];
-}
 
 let authConfig: AuthConfig | null = null;
 let pca: PublicClientApplication | null = null;
@@ -225,42 +220,36 @@ function getAuthority(): string {
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
-type LogSeverity = "debug" | "info" | "warn" | "error";
-
 // All auth diagnostics go to STDERR (never stdout): a stdio MCP server must keep
 // stdout reserved for the JSON-RPC stream. Each line carries an explicit
 // severity so a reader can tell expected, handled flow (debug/info) apart from
 // conditions that genuinely warrant attention (warn/error). In particular,
 // "silent acquisition failed — interaction required" is a NORMAL step of the
 // interactive sign-in waterfall, not an error, so it is logged at debug.
-function emitLog(level: LogSeverity, message: string, data?: unknown): void {
-  const timestamp = new Date().toISOString();
-  const prefix = `[${timestamp}] [Auth] [${level}]`;
-  if (data !== undefined) {
-    console.error(`${prefix} ${message}`, data);
-  } else {
-    console.error(`${prefix} ${message}`);
-  }
-}
+//
+// Backed by the shared stderr logger (src/logger.ts). `severity: true` keeps the
+// exact `[<iso>] [Auth] [<level>] <message>` format this module has always
+// emitted; the thin wrappers below preserve the local call-site names.
+const authLogger = createLogger("Auth", { severity: true });
 
 /** Default-severity (info) auth log line. */
 function log(message: string, data?: unknown): void {
-  emitLog("info", message, data);
+  authLogger.log(message, data);
 }
 
 /** Expected, handled flow — not actionable (e.g. silent auth needing interaction). */
 function logDebug(message: string, data?: unknown): void {
-  emitLog("debug", message, data);
+  authLogger.debug(message, data);
 }
 
 /** Handled but noteworthy (e.g. a guard rejecting a wrong-tenant token). */
 function logWarn(message: string, data?: unknown): void {
-  emitLog("warn", message, data);
+  authLogger.warn(message, data);
 }
 
 /** Genuine, unexpected failure. */
 function logError(message: string, data?: unknown): void {
-  emitLog("error", message, data);
+  authLogger.error(message, data);
 }
 
 // ─── File-Based Cache Plugin ────────────────────────────────────────────────
@@ -296,10 +285,6 @@ export function getCacheFilePath(config: AuthConfig | null = authConfig): string
   return LEGACY_CACHE_FILE;
 }
 
-function ensureCacheDir(): void {
-  ensureSecureDir(CACHE_DIR);
-}
-
 /**
  * MSAL cache plugin that persists the in-memory token cache to disk so refresh
  * tokens survive process restarts, enabling silent (no-prompt) re-authentication
@@ -331,7 +316,7 @@ const fileCachePlugin: ICachePlugin = {
     if (cacheContext.cacheHasChanged) {
       const cacheFile = getCacheFilePath();
       try {
-        ensureCacheDir();
+        ensureSecureDir(CACHE_DIR);
         const serialized = cacheContext.tokenCache.serialize();
         // SEC-003: token cache holds refresh tokens — owner-only (0o600).
         writeSecureFile(cacheFile, serialized);
