@@ -2,16 +2,13 @@
 // Licensed under the MIT license.
 
 /**
- * Unit tests for owning-app permission handling in graph-client.ts.
+ * Unit tests for owning-app permission handling in graph-client.ts
+ * (addSpePermissions / addSpaRedirectUris / findApplicationByAppId /
+ * updateContainerType).
  *
- * Covers the SPAC owning-app delegated-scope parity gaps:
- *   G1 — addSpePermissions MERGES into existing requiredResourceAccess instead
- *        of replacing it (preserves unrelated permissions; idempotent).
- *   G2 — the desired scope set includes FileStorageContainerTypeReg.Selected.
- *   G3 — findApplicationByAppId resolves apps by appId, and the attach/reuse
- *        path adds permissions best-effort (non-blocking on failure).
- *
- * The global fetch is mocked so these run fully offline.
+ * Each behavior under test is documented on its own describe/it block below, so
+ * this header stays a short pointer rather than a per-test index that rots as
+ * cases are added. The global fetch is mocked so these run fully offline.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -78,16 +75,23 @@ function errResponse(status: number, message: string): Response {
 }
 
 let fetchMock: ReturnType<typeof vi.fn>;
+// Capture the real global fetch so teardown can restore it. Assigning
+// `globalThis.fetch` directly (below) is a raw property mutation that
+// vi.restoreAllMocks() does NOT undo, so without this the mock would leak past
+// this file. Request shape (method/URL/body) is asserted on fetchMock.mock.calls
+// throughout the suite.
+const realFetch = globalThis.fetch;
 
 beforeEach(() => {
   fetchMock = vi.fn();
-  global.fetch = fetchMock as unknown as typeof fetch;
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
   // Silence (and allow assertions on) the [Graph] logger.
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
 afterEach(() => {
-  vi.restoreAllMocks();
+  vi.restoreAllMocks(); // restores the console.error spy
+  globalThis.fetch = realFetch; // restore the directly-mutated global fetch
 });
 
 /** Parse the requiredResourceAccess PATCH body from the Nth fetch call. */
@@ -285,6 +289,12 @@ describe("addSpePermissions — G2 scope parity", () => {
 });
 
 describe("addSpePermissions — G3 best-effort attach path", () => {
+  // bestEffort use case: when reusing an ALREADY-provisioned owning app, the
+  // signed-in user may not have rights to edit that app's API permissions.
+  // Syncing permissions is a nice-to-have on that path, not a gate — so
+  // bestEffort=true makes addSpePermissions swallow + log a Graph failure instead
+  // of aborting provisioning. On the create path bestEffort is omitted, so the
+  // same failures surface (see the "propagates … when bestEffort is not set" tests).
   it("swallows a PATCH failure and logs when bestEffort=true (attach/reuse path)", async () => {
     fetchMock
       .mockResolvedValueOnce(okResponse({ requiredResourceAccess: [] })) // GET ok
@@ -463,6 +473,10 @@ describe("addSpaRedirectUris — deployed-origin patch", () => {
   });
 
   it("swallows a PATCH failure when bestEffort=true (non-blocking deploy path)", async () => {
+    // bestEffort use case here: registering a deployed SPA redirect URI is a
+    // convenience during provisioning. If the caller can't PATCH the app (e.g.
+    // insufficient privileges on a reused app), that must not fail the deploy — so
+    // bestEffort=true swallows the Graph error and resolves undefined.
     fetchMock
       .mockResolvedValueOnce(okResponse({ spa: { redirectUris: [] } }))
       .mockResolvedValueOnce(errResponse(403, "Insufficient privileges"));
