@@ -48,6 +48,15 @@ const DEFAULT_SCOPES = [
   "https://graph.microsoft.com/FileStorageContainerTypeReg.Manage.All",
 ];
 
+/**
+ * Interpret an environment-variable string as a boolean opt-in flag. The
+ * values `1`, `true`, `yes`, and `on` (case-insensitive, surrounding
+ * whitespace ignored) are treated as true; everything else — including
+ * `undefined` and the empty string — is false.
+ *
+ * @param value raw environment variable value (may be undefined)
+ * @returns true when the value denotes an enabled/opt-in flag
+ */
 function envTruthy(value: string | undefined): boolean {
   return !!value && /^(1|true|yes|on)$/i.test(value.trim());
 }
@@ -163,6 +172,11 @@ function resetInMemoryAuthState(): void {
  * billing operations need a delegated token from an owning app that holds the
  * SPE Graph permissions — the Azure CLI bootstrap token cannot carry those
  * scopes. This message tells the agent/user exactly how to proceed.
+ *
+ * Once an owning app IS configured, the server acquires a delegated token AS
+ * that owning app (through the sign-in waterfall in this module) and uses it to
+ * call the SharePoint Embedded control-plane Graph APIs — creating and managing
+ * container types, containers, and billing/registration — on the user's behalf.
  */
 export const OWNING_APP_REQUIRED_MESSAGE =
   "No owning SharePoint Embedded app is configured yet. SharePoint Embedded " +
@@ -286,6 +300,20 @@ function ensureCacheDir(): void {
   ensureSecureDir(CACHE_DIR);
 }
 
+/**
+ * MSAL cache plugin that persists the in-memory token cache to disk so refresh
+ * tokens survive process restarts, enabling silent (no-prompt) re-authentication
+ * on the next run.
+ *
+ * - `beforeCacheAccess` hydrates MSAL from the tenant+client-partitioned cache
+ *   file (when one exists) before each token operation.
+ * - `afterCacheAccess` serializes the cache back to that file whenever MSAL
+ *   reports a change, writing it owner-only (0o600) because it holds refresh
+ *   tokens (SEC-003).
+ *
+ * Read/write failures are logged and swallowed: a missing or unreadable cache
+ * simply forces a fresh interactive sign-in rather than breaking the flow.
+ */
 const fileCachePlugin: ICachePlugin = {
   beforeCacheAccess: async (cacheContext) => {
     const cacheFile = getCacheFilePath();
