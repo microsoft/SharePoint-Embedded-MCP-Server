@@ -102,7 +102,7 @@ describe("project_provision", () => {
     vi.mocked(graph.createContainerType).mockResolvedValue({ containerTypeId: "ct-1", owningAppId: "app-1", displayName: "App Container Type", billingClassification: "standard" });
     vi.mocked(graph.createContainer).mockResolvedValue({ id: "c-1", displayName: "Default Container", containerTypeId: "ct-1", status: "active" });
 
-    const r = await provisionTool.handler({ appDisplayName: "App", billingClassification: "standard", azureSubscriptionId: "sub-1", resourceGroup: "rg-1", region: "eastus" });
+    const r = await provisionTool.handler({ appDisplayName: "App", billingClassification: "standard", azureSubscriptionId: "sub-1", resourceGroup: "rg-1", region: "eastus", confirmBilling: true });
 
     expect(azureCli.ensureSyntexProviderRegistered).toHaveBeenCalledWith("sub-1");
     expect(azureCli.createSyntexAccount).toHaveBeenCalledWith("sub-1", "rg-1", "eastus", "ct-1");
@@ -111,13 +111,41 @@ describe("project_provision", () => {
     expect(stateStore.syntexAccountResourceId).toBe("/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Syntex/accounts/acc-1");
   });
 
+  // Financial-safety gate (per PR #3 review): standard billing must not create the
+  // chargeable Microsoft.Syntex account without explicit confirmBilling=true.
+  it("requires confirmBilling before the chargeable standard path — preview only, nothing created", async () => {
+    vi.mocked(graph.findApplicationByName).mockResolvedValue(null);
+
+    const r = await provisionTool.handler({ appDisplayName: "App", billingClassification: "standard", azureSubscriptionId: "sub-1", resourceGroup: "rg-1", region: "eastus" });
+
+    expect(r.content[0].text).toContain("confirmBilling=true");
+    expect(r.content[0].text).toContain("sub-1");
+    // No owning app, container type, or billing account created without confirmation.
+    expect(graph.createApplication).not.toHaveBeenCalled();
+    expect(graph.createContainerType).not.toHaveBeenCalled();
+    expect(azureCli.createSyntexAccount).not.toHaveBeenCalled();
+  });
+
+  it("skips the billing confirmation on an idempotent resume (billing already set up in state)", async () => {
+    stateStore.syntexAccountResourceId = "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Syntex/accounts/acc-1";
+    vi.mocked(graph.findApplicationByName).mockResolvedValue({ appId: "app-1", objectId: "obj-1", displayName: "App" });
+    vi.mocked(graph.createContainerType).mockResolvedValue({ containerTypeId: "ct-1", owningAppId: "app-1", displayName: "App Container Type", billingClassification: "standard" });
+    vi.mocked(graph.createContainer).mockResolvedValue({ id: "c-1", displayName: "Default Container", containerTypeId: "ct-1", status: "active" });
+
+    const r = await provisionTool.handler({ appDisplayName: "App", billingClassification: "standard", azureSubscriptionId: "sub-1", resourceGroup: "rg-1", region: "eastus" });
+
+    // Already-configured billing must not re-prompt; provisioning proceeds.
+    expect(r.content[0].text).not.toContain("Confirm standard (paid) billing");
+    expect(graph.createApplication).not.toHaveBeenCalled();
+  });
+
   it("rolls back a just-created standard CT when the Syntex billing account fails", async () => {
     vi.mocked(graph.findApplicationByName).mockResolvedValue(null);
     vi.mocked(graph.createApplication).mockResolvedValue({ appId: "app-1", objectId: "obj-1", displayName: "App" });
     vi.mocked(graph.createContainerType).mockResolvedValue({ containerTypeId: "ct-1", owningAppId: "app-1", displayName: "App Container Type", billingClassification: "standard" });
     vi.mocked(azureCli.createSyntexAccount).mockRejectedValueOnce(new Error("ARM 409"));
 
-    const r = await provisionTool.handler({ appDisplayName: "App", billingClassification: "standard", azureSubscriptionId: "sub-1", resourceGroup: "rg-1", region: "eastus" });
+    const r = await provisionTool.handler({ appDisplayName: "App", billingClassification: "standard", azureSubscriptionId: "sub-1", resourceGroup: "rg-1", region: "eastus", confirmBilling: true });
 
     expect(graph.deleteContainerType).toHaveBeenCalledWith("ct-1");
     expect(r.isError).toBe(true);
