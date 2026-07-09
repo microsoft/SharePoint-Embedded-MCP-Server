@@ -12,6 +12,14 @@ import type {
   FileStorageContainer,
   Permission as GraphPermission,
 } from "@microsoft/microsoft-graph-types";
+// The SPE container-type CONTROL-PLANE contracts are Microsoft Graph **beta**
+// APIs, so their official types come from `@microsoft/microsoft-graph-types-beta`
+// — also a types-only `.d.ts` package pinned in devDependencies (zero runtime).
+import type {
+  FileStorageContainerTypeAppPermissionGrant,
+  FileStorageContainerTypeRegistration,
+  Permission as GraphBetaPermission,
+} from "@microsoft/microsoft-graph-types-beta";
 
 // ─── Primitives ──────────────────────────────────────────────────────────────
 
@@ -158,15 +166,30 @@ export interface ContainerType {
  * containers using a public client (PCA) — the v1.0 container endpoint rejects
  * container creation by public clients. Only the `owner` role and a user
  * identity are supported.
+ *
+ * Derived from the official beta `permission` resource ({@link GraphBetaPermission}):
+ * `id` is `Pick`ed as-is; `roles` is `NonNullable` because we always read/join it
+ * (e.g. `roles.join(...)`) whereas the official `permission.roles` is
+ * `NullableOption<string[]>`. `grantedToV2` keeps a narrowed local shape rather
+ * than the official `sharePointIdentitySet` — the official `identity` type omits
+ * `userPrincipalName`, which we render for container-type owners
+ * (per PR #3 review feedback).
  */
-export interface ContainerTypePermission {
-  id?: string;
-  roles: string[];
+export type ContainerTypePermission = Pick<GraphBetaPermission, "id"> & {
+  roles: NonNullable<GraphBetaPermission["roles"]>;
   grantedToV2?: {
     user?: { id?: string; displayName?: string; userPrincipalName?: string };
   };
-}
+};
 
+/**
+ * The minimal container-type registration shape whose `applicationPermissionGrants`
+ * collection we always populate. Mirrors the official beta
+ * {@link FileStorageContainerTypeRegistration}'s `applicationPermissionGrants`
+ * (typed there as `NullableOption<FileStorageContainerTypeAppPermissionGrant[]>`),
+ * narrowed to our required, non-null {@link ApplicationPermissionGrant}[] — whose
+ * element type is itself derived from the official grant type (per PR #3 review).
+ */
 export interface ContainerTypeRegistration {
   applicationPermissionGrants: ApplicationPermissionGrant[];
 }
@@ -177,20 +200,39 @@ export interface ContainerTypeRegistration {
  * single app's {@link ApplicationPermissionGrant}. The v1.0 schema exposes
  * `owningAppId` (the SPE app the type is owned by) and `billingClassification`;
  * fields vary by API version, so this is kept permissive.
+ *
+ * Derived from the official beta {@link FileStorageContainerTypeRegistration}:
+ * `id`/`owningAppId`/`registeredDateTime` are `Pick`ed as-is; `billingClassification`
+ * stays the local {@link BillingClassification} union (the official field also
+ * allows `unknownFutureValue`), and `applicationPermissionGrants` stays our
+ * non-null-element {@link ApplicationPermissionGrant}[] (per PR #3 review).
  */
-export interface ContainerTypeRegistrationRecord {
-  id?: string;
-  owningAppId?: string;
+export type ContainerTypeRegistrationRecord = Pick<
+  FileStorageContainerTypeRegistration,
+  "id" | "owningAppId" | "registeredDateTime"
+> & {
   billingClassification?: BillingClassification;
-  registeredDateTime?: string;
   applicationPermissionGrants?: ApplicationPermissionGrant[];
-}
+};
 
-export interface ApplicationPermissionGrant {
-  appId: string;
+/**
+ * A single application's permission grant on a container type registration.
+ * `appId` derives from the official beta
+ * {@link FileStorageContainerTypeAppPermissionGrant} (optional there); we always
+ * set it, so it is `Required`. The two permission arrays intentionally stay
+ * `string[]` rather than the official
+ * `NullableOption<FileStorageContainerTypeAppPermission[]>` enum: the server
+ * builds and sends them as `string[]` — including via
+ * `satisfies ApplicationPermissionGrant` on the registration PUT body — and reads
+ * them non-null (`.length`, `.join`), so all three are kept required and non-null
+ * (per PR #3 review).
+ */
+export type ApplicationPermissionGrant = Required<
+  Pick<FileStorageContainerTypeAppPermissionGrant, "appId">
+> & {
   delegatedPermissions: string[];
   applicationPermissions: string[];
-}
+};
 
 // ─── Graph API Types: Containers ─────────────────────────────────────────────
 
