@@ -24,6 +24,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { initializeAuth, setAuthConfig } from "./auth.js";
 import { assertAzCli, getSignedInIdentity } from "./bootstrap.js";
+import { byoAppStartupNote, azLoginNotSignedInMessage } from "./onboarding-messages.js";
 import { readState } from "./state.js";
 import { USER_AGENT } from "./user-agent.js";
 import { PACKAGE_VERSION } from "./version.js";
@@ -427,15 +428,21 @@ export async function startServer(config: ServerConfig) {
   console.error("[SPE MCP Server] Started and ready for connections");
 
   if (config.clientId) {
-    // Pre-provisioned-app mode: an owning app already exists with SPE scopes.
-    // Resolve tenant (discover from az when not supplied) and initialize MSAL.
+    // Bring-your-own-app mode: the caller has ALREADY pre-created an owning Entra
+    // application (its client id supplied via --client-id / SPE_CLIENT_ID) and
+    // wants the server to sign in AS that app. So we skip bootstrap app-creation
+    // entirely and go straight to MSAL. Resolve the tenant (discover from az when
+    // not supplied) and initialize auth.
     let tenantId = config.tenantId;
     if (!tenantId) {
       const identity = await getSignedInIdentity().catch(() => null);
       tenantId = identity?.tenantId ?? "organizations";
     }
     setAuthConfig({ clientId: config.clientId, tenantId });
-    log("Initializing authentication (pre-provisioned app)...");
+    // Make the bring-your-own-app scenario explicit at startup (PR #3 review):
+    // no owning app is provisioned — we authenticate as the pre-created app.
+    console.error(byoAppStartupNote(config.clientId, tenantId));
+    log("Initializing authentication (bring-your-own pre-created owning app)...");
     try {
       await initializeAuth();
       log("Authentication ready");
@@ -470,9 +477,9 @@ export async function startServer(config: ServerConfig) {
           `[SPE MCP Server] Bootstrap ready — signed in as ${identity.username} (tenant ${identity.tenantId})`,
         );
       } else {
-        console.error(
-          "[SPE MCP Server] Azure CLI installed but not signed in. Run `az login --allow-no-subscriptions`.",
-        );
+        // Not signed in: tell the user to sign in AND to restart the server
+        // afterward, since auth/session state is stamped at startup (PR #3 review).
+        console.error(azLoginNotSignedInMessage());
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);

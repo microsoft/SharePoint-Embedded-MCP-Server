@@ -23,8 +23,6 @@
  * if several apps share that name it resolves the first match. Net effect:
  * re-running is idempotent (no duplicate app is created) and, after the first
  * run, precise because it keys on the unique appId.
- *
- * Ports the full-setup skill `02-app.ps1`.
  */
 
 import { bootstrapTokenProvider, getSignedInIdentity } from "../bootstrap.js";
@@ -38,6 +36,7 @@ import {
 import { LOCAL_SPA_REDIRECT_URI } from "../constants.js";
 import { setAuthConfig } from "../auth.js";
 import { guestSignInAdvisory } from "../guest-advisory.js";
+import { adminConsentSection } from "../onboarding-messages.js";
 import { clientSafeMessage } from "../errors.js";
 import { elicitChoice, elicitText } from "../elicitation.js";
 import { isContextConfirmedThisSession, stampContextConfirmed } from "../session.js";
@@ -249,6 +248,15 @@ export const createAppTool: McpTool = {
         "> The server is now **configured to sign in as this app** for SharePoint Embedded " +
         "operations — **no restart needed**. The first SPE call opens a browser for a one-time " +
         "consent (or unset `SPE_NON_INTERACTIVE`); after that, container types and containers can be created." +
+        // Copy-paste tenant-wide admin-consent link (PR #3 review). The app's SPE
+        // permissions still need an admin to consent: a Global Admin can grant
+        // tenant-wide with this link, and a non-admin can forward it to their
+        // admin. Appended on BOTH create and reuse (a reused app may have just had
+        // permissions (re)requested best-effort, so consent may still be pending).
+        // NON-BLOCKING/informational — no browser is opened and provisioning is
+        // never gated on consent; the URL carries only the tenant id + public
+        // client id (never a secret).
+        adminConsentSection(app.appId, identity.tenantId) +
         // NON-BLOCKING heads-up appended for a B2B guest identity (guests often
         // lack permission to create Entra apps / own container types). Empty for
         // a member; never blocks the operation. (PR #3 review.)
