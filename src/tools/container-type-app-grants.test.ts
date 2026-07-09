@@ -46,12 +46,17 @@ beforeEach(() => {
 });
 
 describe("container_type_app_grant_add", () => {
-  it("defaults the container type + appId to state and grants `full`/`full`", async () => {
+  it("defaults the container type + appId to state and grants `full` delegated / `none` app-only (opt-in)", async () => {
     const r = await addContainerTypeAppGrantTool.handler({});
     expect(setAuthConfig).toHaveBeenCalledWith({ clientId: "app-1", tenantId: "t-1" });
-    expect(graph.grantContainerTypeAppPermission).toHaveBeenCalledWith("ct-1", "app-1", ["full"], ["full"]);
+    expect(graph.grantContainerTypeAppPermission).toHaveBeenCalledWith("ct-1", "app-1", ["full"], ["none"]);
     expect(r.isError).toBeFalsy();
     expect(r.content[0].text).toContain("app-1");
+  });
+
+  it("opt-in: app-only permissions require an explicit `full` (least-privilege default otherwise)", async () => {
+    await addContainerTypeAppGrantTool.handler({ appId: "app-2", applicationPermissions: ["full"] });
+    expect(graph.grantContainerTypeAppPermission).toHaveBeenCalledWith("ct-1", "app-2", ["full"], ["full"]);
   });
 
   it("authorizes an explicit secondary app with custom permissions", async () => {
@@ -71,7 +76,7 @@ describe("container_type_app_grant_add", () => {
 
   it("accepts a comma-separated permissions string", async () => {
     await addContainerTypeAppGrantTool.handler({ appId: "app-2", delegatedPermissions: "read, write" });
-    expect(graph.grantContainerTypeAppPermission).toHaveBeenCalledWith("ct-1", "app-2", ["read", "write"], ["full"]);
+    expect(graph.grantContainerTypeAppPermission).toHaveBeenCalledWith("ct-1", "app-2", ["read", "write"], ["none"]);
   });
 
   it("errors when no container type is known", async () => {

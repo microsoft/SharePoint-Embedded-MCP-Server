@@ -43,6 +43,19 @@ import type { AuthConfig } from "./types.js";
 // FileStorageContainer.Selected — selected-container delegated access
 // FileStorageContainerType.Manage.All — create/manage container types (app role, owning tenant)
 // FileStorageContainerTypeReg.Manage.All — register container types
+//
+// Least-privilege note (PR #3 review): least privilege is enforced where it
+// actually grants standing authority — at the app's requiredResourceAccess
+// (registration Layer 2, intent-driven by ownerScope) and at the container-type
+// app-permission grant (Layer 3, app-only defaults to none). The interactive
+// sign-in scope set below is deliberately left as the bounded "manage-all"
+// superset rather than narrowed per ownerScope: it always keeps
+// FileStorageContainerType.Manage.All (delegated-only, required to create and
+// enumerate container types, and the signal the staleness flag reads), and
+// requesting a scope here only lets the user consent to it — it confers no
+// authority the app's grants don't already back. Narrowing it per-intent would
+// add token/consent churn (getScopes reads authConfig?.scopes ?? DEFAULT_SCOPES)
+// for no real privilege reduction. Never request beyond this manage-all set.
 const DEFAULT_SCOPES = [
   "https://graph.microsoft.com/FileStorageContainer.Manage.All",
   "https://graph.microsoft.com/FileStorageContainer.Selected",

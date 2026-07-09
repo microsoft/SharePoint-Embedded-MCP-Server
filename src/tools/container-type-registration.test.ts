@@ -47,7 +47,7 @@ describe("container_type_registration_get", () => {
       id: "ct-1",
       owningAppId: "app-1",
       billingClassification: "trial",
-      applicationPermissionGrants: [{ appId: "app-1", delegatedPermissions: ["full"], applicationPermissions: ["full"] }],
+      applicationPermissionGrants: [{ appId: "app-1", delegatedPermissions: ["full"], applicationPermissions: ["none"] }],
     });
     const r = await getContainerTypeRegistrationTool.handler({});
     expect(graph.getContainerTypeRegistration).toHaveBeenCalledWith("ct-1");

@@ -18,7 +18,7 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { ensureSecureDir, writeSecureFile } from "./secure-fs.js";
-import type { BillingClassification } from "./types.js";
+import type { BillingClassification, OwnerScope } from "./types.js";
 
 const STATE_DIR = join(homedir(), ".spe-mcp");
 const STATE_FILE = join(STATE_DIR, "state.json");
@@ -63,6 +63,13 @@ export interface ProvisioningState {
    * warning; only an explicit `false` triggers it).
    */
   owningAppManagesAllContainerTypes?: boolean;
+  /**
+   * The owning app's captured container-type authority intent (PR #3 review).
+   * Drives the least-privilege Graph scope set requested at app-create /
+   * provision time. Persisted so a resumed session reuses the same intent
+   * without re-eliciting. Defaults to "selected" (least privilege) when unset.
+   */
+  ownerScope?: OwnerScope;
 }
 
 export function readState(): ProvisioningState {

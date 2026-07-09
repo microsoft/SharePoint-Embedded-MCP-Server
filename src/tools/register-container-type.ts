@@ -82,7 +82,7 @@ export const registerContainerTypeTool: McpTool = {
         "| Property | Value |\n|----------|-------|\n" +
         `| **Container Type ID** | \`${containerTypeId}\` |\n` +
         `| **Owning App** | \`${appId}\` |\n` +
-        `| **Permissions** | delegated: full · application: full |\n\n` +
+        `| **Permissions** | delegated: full · application: none (opt-in) |\n\n` +
         "> Registration can take 10–30s to propagate. Container creation retries automatically.";
 
       return { content: [{ type: "text" as const, text: output }] };

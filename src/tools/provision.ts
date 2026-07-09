@@ -45,11 +45,12 @@ import {
 import { needChoice } from "../elicitation.js";
 import { isContextConfirmedThisSession, stampContextConfirmed } from "../session.js";
 import { readState, writeState } from "../state.js";
-import type { Guid, McpTool } from "../types.js";
+import type { Guid, McpTool, OwnerScope } from "../types.js";
 
 interface ProvisionArgs {
   appDisplayName?: string;
   appSelection?: "reuse" | "new";
+  ownerScope?: OwnerScope;
   containerTypeName?: string;
   containerName?: string;
   billingClassification?: "trial" | "standard";
@@ -122,6 +123,16 @@ export const provisionTool: McpTool = {
         description:
           "When a previously-used owning app is remembered, set 'reuse' to use it again or 'new' to " +
           "create/target a different one. If omitted and an app is remembered, the tool asks first.",
+      },
+      ownerScope: {
+        type: "string",
+        enum: ["manage-all", "selected"],
+        description:
+          "Least-privilege intent for the owning app's SPE permissions (PR #3 review). " +
+          "'selected' requests only the scopes needed to manage this app's own container type (standard " +
+          "ISV/LOB). 'manage-all' also requests the broad *.Manage.All scopes to administer ALL container " +
+          "types in the tenant (admin/console app). If omitted on an unconfirmed session, the tool asks. " +
+          "Persisted and reused on later runs.",
       },
       containerTypeName: { type: "string", description: "Container type name. Default: '<app> Container Type'." },
       containerName: { type: "string", description: "First container name. Default: 'Default Container'." },
@@ -292,6 +303,40 @@ export const provisionTool: McpTool = {
         };
       }
 
+      // Least-privilege intent gate (PR #3 review): choose whether the owning app
+      // administers ALL container types in the tenant (broad *.Manage.All scopes,
+      // an admin/console app) or only its own container type (least privilege,
+      // standard ISV/LOB). Placed AFTER the billing gates so the app + billing are
+      // settled first. Fires only when no intent is known (neither the arg nor
+      // persisted state) AND the session is unconfirmed — so a freshly restarted
+      // process asks at most once; the agent re-invokes with ownerScope and
+      // provisioning persists it below, so this is resumable and never loops.
+      const resolvedOwnerScope: OwnerScope | undefined =
+        args.ownerScope === "manage-all" || args.ownerScope === "selected"
+          ? args.ownerScope
+          : state.ownerScope;
+      if (resolvedOwnerScope === undefined && !isContextConfirmedThisSession(state)) {
+        return needChoice(
+          "Should this owning app manage ALL container types (an admin/console app), or just this one app's container type (standard ISV/LOB)?",
+          [
+            {
+              label: "Manage all container types",
+              value: "manage-all",
+              description: "admin/console app — requests the broad *.Manage.All scopes for every container type",
+            },
+            {
+              label: "This app only (least privilege)",
+              value: "selected",
+              description: "standard ISV/LOB — only the scopes needed for this app's own container type",
+            },
+          ],
+          "ownerScope",
+        );
+      }
+      // Least privilege by default once the session is confirmed but no intent was
+      // recorded (e.g., an older resumed setup provisioned before this prompt).
+      const ownerScope: OwnerScope = resolvedOwnerScope ?? "selected";
+
       // 1. Owning app (bootstrap token), idempotent.
       const getToken = bootstrapTokenProvider;
       // Resolution order: an EXPLICIT appDisplayName targets that named app
@@ -308,16 +353,26 @@ export const provisionTool: McpTool = {
         app = await createApplication(appDisplayName, getToken);
         recordStep(steps, `Created owning app **${app.displayName}** (\`${app.appId}\`)`);
         // Create path: permissions are required, so errors propagate.
-        await addSpePermissions(app.objectId, getToken);
+        await addSpePermissions(app.objectId, getToken, { ownerScope });
       } else {
         recordStep(steps, `Reused owning app **${app.displayName}** (\`${app.appId}\`)`);
         // Attach/reuse path: adding permissions is best-effort and non-blocking.
-        await addSpePermissions(app.objectId, getToken, { bestEffort: true });
+        await addSpePermissions(app.objectId, getToken, { bestEffort: true, ownerScope });
       }
       // Mark this session confirmed (r-appgate) as the app is settled, and hand
       // off to the owning-app token for SPE operations. Confirming here keeps the
       // always-ask above from re-firing on later calls in the same process.
-      stampContextConfirmed({ tenantId: identity.tenantId, appId: app.appId, appObjectId: app.objectId, appDisplayName: app.displayName });
+      // Record the least-privilege intent too (PR #3 review): manage-all implies
+      // this owning app manages all container types; selected does not. The
+      // listContainerTypes call later self-corrects this flag from the live grant.
+      stampContextConfirmed({
+        tenantId: identity.tenantId,
+        appId: app.appId,
+        appObjectId: app.objectId,
+        appDisplayName: app.displayName,
+        ownerScope,
+        owningAppManagesAllContainerTypes: ownerScope === "manage-all",
+      });
       setAuthConfig({ clientId: app.appId, tenantId: identity.tenantId });
 
       // 2. Standard billing prerequisite: register the Syntex provider.

@@ -41,7 +41,7 @@ import { clientSafeMessage } from "../errors.js";
 import { needChoice } from "../elicitation.js";
 import { isContextConfirmedThisSession, stampContextConfirmed } from "../session.js";
 import { readState } from "../state.js";
-import type { McpTool } from "../types.js";
+import type { McpTool, OwnerScope } from "../types.js";
 
 export const createAppTool: McpTool = {
   name: "project_app_create",
@@ -67,6 +67,16 @@ export const createAppTool: McpTool = {
           "When a previously-used owning app is remembered, set 'reuse' to use it again or 'new' to " +
           "create/target a different one. If omitted and an app is remembered, the tool asks first " +
           "instead of silently reusing the last one.",
+      },
+      ownerScope: {
+        type: "string",
+        enum: ["manage-all", "selected"],
+        description:
+          "Least-privilege intent for the owning app's SPE permissions (PR #3 review). " +
+          "'selected' (default) requests only the scopes needed to manage this app's own container " +
+          "type — the standard ISV/LOB scenario. 'manage-all' additionally requests the broad " +
+          "*.Manage.All scopes to administer ALL container types in the tenant (an admin/console app). " +
+          "Persisted and reused on later runs.",
       },
     },
   },
@@ -130,6 +140,17 @@ export const createAppTool: McpTool = {
         );
       }
 
+      // Least-privilege intent (PR #3 review): resolve the owning app's SPE scope
+      // set from the explicit arg, else the persisted choice, else the
+      // least-privilege default "selected". Unlike appSelection, create-app does
+      // NOT block on an elicitation here — a silent least-privilege default never
+      // over-privileges, and callers who want tenant-wide admin pass
+      // ownerScope="manage-all" (project_provision does prompt for this).
+      const ownerScope: OwnerScope =
+        args.ownerScope === "manage-all" || args.ownerScope === "selected"
+          ? args.ownerScope
+          : persisted.ownerScope ?? "selected";
+
       // Resolution order:
       //  - An EXPLICIT displayName targets that named app (created if missing),
       //    so a caller can address a specific app even when state holds another.
@@ -150,7 +171,7 @@ export const createAppTool: McpTool = {
       if (app) {
         reused = true;
         // Attach/reuse path: adding permissions is best-effort and non-blocking.
-        await addSpePermissions(app.objectId, getToken, { bestEffort: true });
+        await addSpePermissions(app.objectId, getToken, { bestEffort: true, ownerScope });
         // self-repair the SPA redirect URI on a pre-existing owning
         // app. Apps created before have no `spa` platform, so the
         // generated browser app's MSAL.js auth-code + PKCE sign-in fails with
@@ -166,7 +187,7 @@ export const createAppTool: McpTool = {
       } else {
         app = await createApplication(displayName, getToken);
         // Create path: permissions are required, so errors propagate.
-        await addSpePermissions(app.objectId, getToken);
+        await addSpePermissions(app.objectId, getToken, { ownerScope });
       }
 
       // Persist and point MSAL at the new owning app for subsequent SPE calls.
@@ -178,8 +199,18 @@ export const createAppTool: McpTool = {
         appId: app.appId,
         appObjectId: app.objectId,
         appDisplayName: app.displayName,
+        ownerScope,
+        owningAppManagesAllContainerTypes: ownerScope === "manage-all",
       });
       setAuthConfig({ clientId: app.appId, tenantId: identity.tenantId });
+
+      // Reflect the granted least-privilege set (PR #3 review): "selected" apps
+      // request only their own container type's scopes; "manage-all" also gets the
+      // broad *.Manage.All administration scopes.
+      const permsSummary =
+        ownerScope === "manage-all"
+          ? "FileStorageContainer.Manage.All, FileStorageContainer.Selected, ContainerType.Manage.All, ContainerTypeReg.Manage.All, ContainerTypeReg.Selected"
+          : "FileStorageContainer.Selected, ContainerType.Manage.All, ContainerTypeReg.Selected";
 
       const output =
         `## Owning App ${reused ? "Found" : "Created"}\n\n` +
@@ -189,7 +220,8 @@ export const createAppTool: McpTool = {
         `| **Object ID** | \`${app.objectId}\` |\n` +
         `| **Tenant** | \`${identity.tenantId}\` |\n` +
         `| **Client type** | Public client (no secret) |\n` +
-        `| **SPE permissions** | FileStorageContainer.Manage.All, FileStorageContainer.Selected, ContainerType.Manage.All, ContainerTypeReg.Manage.All, ContainerTypeReg.Selected |\n\n` +
+        `| **Owner scope** | ${ownerScope} |\n` +
+        `| **SPE permissions** | ${permsSummary} |\n\n` +
         "> The server is now **configured to sign in as this app** for SharePoint Embedded " +
         "operations — **no restart needed**. The first SPE call opens a browser for a one-time " +
         "consent (or unset `SPE_NON_INTERACTIVE`); after that, container types and containers can be created.";
