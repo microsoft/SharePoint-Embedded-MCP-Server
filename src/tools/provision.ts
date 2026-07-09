@@ -247,6 +247,19 @@ export const provisionTool: McpTool = {
         }
       }
 
+      // Stamp the session confirmed as soon as the OWNING APP is settled — BEFORE
+      // the billing-model / sub-RG elicitations below can return an agent-guided
+      // ask and be re-invoked. Without this, if the agent drops `appSelection`
+      // while answering a LATER billing prompt, the always-ask app gate above
+      // would re-fire (it keys on an unconfirmed session), because confirmation
+      // was previously only stamped after app resolution — well after billing.
+      // Only the confirmation FLAG is written here (no app identity; the app is
+      // resolved further below, still behind the confirmBilling financial-safety
+      // gate). The full stamp with the resolved app fields runs after creation.
+      // This does NOT bypass confirmBilling, which is independent of session
+      // confirmation. (PR #3 review.)
+      stampContextConfirmed();
+
       // Elicit billing model if not provided and not already standard in state.
       // Native elicitation prompts the user and continues in-band; the fallback
       // returns the agent-guided text ask (re-invoked with billingClassification).
@@ -341,15 +354,18 @@ export const provisionTool: McpTool = {
       // administers ALL container types in the tenant (broad *.Manage.All scopes,
       // an admin/console app) or only its own container type (least privilege,
       // standard ISV/LOB). Placed AFTER the billing gates so the app + billing are
-      // settled first. Fires only when no intent is known (neither the arg nor
-      // persisted state) AND the session is unconfirmed — so a freshly restarted
-      // process asks at most once; the agent re-invokes with ownerScope and
-      // provisioning persists it below, so this is resumable and never loops.
+      // settled first. Fires whenever no intent is known — neither the arg nor
+      // persisted state has one. It intentionally does NOT also require an
+      // unconfirmed session: the app-confirmation stamp now happens earlier (as
+      // soon as the owning app is settled, above), so gating this on confirmation
+      // too would silently suppress the ownerScope ask on the same run. Resolving
+      // by arg / persisted state alone still prevents a loop — the agent
+      // re-invokes with ownerScope and provisioning persists it below.
       let resolvedOwnerScope: OwnerScope | undefined =
         args.ownerScope === "manage-all" || args.ownerScope === "selected"
           ? args.ownerScope
           : state.ownerScope;
-      if (resolvedOwnerScope === undefined && !isContextConfirmedThisSession(state)) {
+      if (resolvedOwnerScope === undefined) {
         // Prefer NATIVE MCP elicitation (PR #3 review): a capable client prompts
         // the user and we continue in-band with their pick; without support,
         // elicitChoice falls back to the agent-guided text ask (re-invoked with

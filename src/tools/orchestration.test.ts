@@ -320,6 +320,40 @@ describe("project_provision", () => {
     expect(r.content[0].text).toContain("Reused owning app");
     expect(r.content[0].text).toContain("SPE Provisioned");
   });
+
+  it("does NOT reopen the app choice on a later billing round-trip that omits appSelection (PR #3 review)", async () => {
+    // Regression guard for the confirm-stamp ordering fix. A remembered app on an
+    // unconfirmed session: the first call SETTLES the owning app (explicit
+    // appSelection) and then stops at the billing prompt. Because confirmation is
+    // now stamped as soon as the app is settled — BEFORE the billing elicitation —
+    // a follow-up call that answers billing but DROPS appSelection must not re-fire
+    // the always-ask app gate (previously it did, because confirmation was only
+    // stamped after app resolution, which the billing round-trip never reached).
+    stateStore.appId = "remembered-app";
+    stateStore.appDisplayName = "Remembered App";
+
+    // Call 1: app settled via appSelection=reuse, but billing is missing → the
+    // tool asks for the billing model and returns (app not yet resolved).
+    const r1 = await provisionTool.handler({ appSelection: "reuse" });
+    expect(r1.content[0].text).toContain("billing model");
+    expect(graph.findApplicationByAppId).not.toHaveBeenCalled();
+    // The session is stamped confirmed even though the app was not yet resolved.
+    expect(stateStore.confirmedSessionId).toBe(getSessionId());
+
+    // Call 2: answer billing, but OMIT appSelection (the agent dropped it).
+    vi.mocked(graph.findApplicationByAppId).mockResolvedValue({ appId: "remembered-app", objectId: "obj-r", displayName: "Remembered App" });
+    vi.mocked(graph.createContainerType).mockResolvedValue({ containerTypeId: "ct-1", owningAppId: "remembered-app", displayName: "Remembered App Container Type" });
+    vi.mocked(graph.createContainer).mockResolvedValue({ id: "c-1", displayName: "Default Container", containerTypeId: "ct-1", status: "active" });
+
+    const r2 = await provisionTool.handler({ billingClassification: "trial" });
+
+    // The app gate must NOT re-open — no reuse/switch ask — and the remembered app
+    // is resumed by its persisted id.
+    expect(r2.content[0].text).not.toContain("appSelection=reuse");
+    expect(r2.content[0].text).not.toContain("Reuse it, or use a different app");
+    expect(graph.findApplicationByAppId).toHaveBeenCalledWith("remembered-app", expect.any(Function));
+    expect(r2.content[0].text).toContain("Reused owning app");
+  });
 });
 
 // ── ownerScope least-privilege intent (PR #3 review) ────────────────────────────────

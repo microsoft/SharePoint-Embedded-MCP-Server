@@ -32,7 +32,7 @@
  * arg; the resolved arg is threaded on re-invoke, so there is no loop.
  */
 
-import { listResourceGroups, listSubscriptions } from "../azure-cli.js";
+import { listResourceGroups, listSubscriptions, resourceGroupExists } from "../azure-cli.js";
 import { elicitChoice, elicitText } from "../elicitation.js";
 import type { McpToolResult } from "../types.js";
 
@@ -131,10 +131,31 @@ export async function resolveStandardBillingTarget(input: {
         { title: "Resource group name" },
       );
       if (named.resolved) {
-        resourceGroup = named.value;
+        const candidate = named.value.trim();
+        // Verify the user-entered name exists BEFORE proceeding. The server cannot
+        // create a resource group, and an unverified typo would otherwise only
+        // surface much later at `createSyntexAccount` — AFTER the container type is
+        // created. Probe cost-free: on a definitive "missing" return actionable
+        // guidance (fail before any billing/CT resource exists); an indeterminate
+        // probe (az missing / auth / transient) degrades to proceeding with the
+        // name, preserving the prior behavior. (PR #3 review.)
+        const exists = await resourceGroupExists(candidate, azureSubscriptionId);
+        if (exists === false) {
+          return {
+            resolved: false,
+            result: textResult(
+              `Resource group \`${candidate}\` does not exist in subscription \`${azureSubscriptionId}\`, and ` +
+                "the server cannot create it. Create it first, e.g. `az group create --name " +
+                `${candidate} --location <region>\`, then re-run with \`resourceGroup\` set to its name.`,
+            ),
+          };
+        }
+        resourceGroup = candidate;
         notes.push(
-          `Using resource group "${resourceGroup}" — ensure it exists in the subscription ` +
-            "(create it with `az group create` if needed).",
+          exists === true
+            ? `Using resource group "${resourceGroup}" (verified in subscription \`${azureSubscriptionId}\`).`
+            : `Using resource group "${resourceGroup}" — could not verify it exists; ensure it does ` +
+                "(create it with `az group create` if needed), or standard billing will fail later.",
         );
       } else {
         return {

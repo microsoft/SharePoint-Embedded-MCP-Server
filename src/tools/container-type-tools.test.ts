@@ -81,12 +81,40 @@ describe("container_type_grant_owner", () => {
     expect(graph.grantContainerTypeOwner).not.toHaveBeenCalled();
   });
 
-  it("maps a Graph guest-owner rejection to clear guidance (explicit guest userId)", async () => {
+  it("surfaces the RAW reason for an explicit userId grant failure that mentions guest (not misdirected guidance)", async () => {
+    // PR #3 review: the guest-owner remap must apply ONLY to the self-target
+    // (signed-in user) path. For an EXPLICIT `userId`, a failure whose text merely
+    // mentions "guest" must surface its raw reason — the guest guidance would be
+    // misdirected here (the caller chose that user deliberately).
     vi.mocked(graph.grantContainerTypeOwner).mockRejectedValueOnce(
       new Error("Guest users cannot be added as owners of a container type."),
     );
 
     const r = await grantContainerTypeOwnerTool.handler({ userId: "guest-2" });
+
+    expect(r.isError).toBe(true);
+    // Raw reason, prefixed by the tool's own classifier.
+    expect(r.content[0].text).toContain("granting owner");
+    expect(r.content[0].text).toContain("added as owners");
+    // NOT the remapped self-target guidance.
+    expect(r.content[0].text).not.toContain("guest (B2B) users cannot be granted");
+  });
+
+  it("maps a guest-owner rejection to guidance on the SELF-TARGET path (no explicit userId)", async () => {
+    // Self-target: /me resolves to a Member (so the proactive guest check passes),
+    // but the grant itself is rejected by Graph for a guest reason (userType can be
+    // absent from /me). The remap applies because we defaulted to the signed-in
+    // user. (PR #3 review.)
+    vi.mocked(graph.getSignedInUser).mockResolvedValueOnce({
+      id: "user-1",
+      userPrincipalName: "admin@x.com",
+      userType: "Member",
+    });
+    vi.mocked(graph.grantContainerTypeOwner).mockRejectedValueOnce(
+      new Error("Guest users cannot be added as owners of a container type."),
+    );
+
+    const r = await grantContainerTypeOwnerTool.handler({});
 
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain("guest (B2B) users cannot be granted");

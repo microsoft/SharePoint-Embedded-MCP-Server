@@ -53,6 +53,9 @@ vi.mock("../azure-cli.js", async (importActual) => ({
   getSyntexAccounts: vi.fn(async () => []),
   listSubscriptions: vi.fn(async () => []),
   listResourceGroups: vi.fn(async () => []),
+  // Default to "verified" so existing RG-path tests are unaffected; overridden
+  // per-test for the 0-RG entered-name existence check (PR #3 review).
+  resourceGroupExists: vi.fn(async () => true),
 }));
 vi.mock("../auth.js", () => ({ setAuthConfig: vi.fn() }));
 
@@ -218,6 +221,37 @@ describe("project_provision — guided standard-billing selection (native elicit
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toMatch(/not available for Microsoft\.Syntex/i);
     // Region guard fires before creation, so nothing is stranded.
+    expect(graph.createApplication).not.toHaveBeenCalled();
+    expect(graph.createContainerType).not.toHaveBeenCalled();
+    expect(azureCli.createSyntexAccount).not.toHaveBeenCalled();
+  });
+
+  it("fails cost-free when a user-entered resource group does not exist — nothing created (PR #3 review)", async () => {
+    // One subscription (auto-selected) with ZERO resource groups drives the
+    // elicitText "enter a new RG name" path; the entered name is then probed.
+    vi.mocked(azureCli.listSubscriptions).mockResolvedValue([
+      { id: "solo-sub", name: "Solo Sub", state: "Enabled" },
+    ]);
+    vi.mocked(azureCli.listResourceGroups).mockResolvedValue([]);
+    // The agent supplies a name in-band...
+    elicitTextMock.mockResolvedValueOnce({ resolved: true, value: "typo-rg" });
+    // ...but it does not exist in the subscription.
+    vi.mocked(azureCli.resourceGroupExists).mockResolvedValue(false);
+
+    const r = await provisionTool.handler({
+      appDisplayName: "App",
+      billingClassification: "standard",
+      region: "eastus",
+      confirmBilling: true,
+    });
+
+    // The entered name was probed against the auto-selected subscription.
+    expect(azureCli.resourceGroupExists).toHaveBeenCalledWith("typo-rg", "solo-sub");
+    // Actionable, cost-free guidance is returned instead of proceeding.
+    expect(r.content[0].text).toContain("does not exist");
+    expect(r.content[0].text).toContain("az group create");
+    // Fails BEFORE the region check, the confirmBilling gate, and any creation —
+    // so no container type is stranded and no billing account is created.
     expect(graph.createApplication).not.toHaveBeenCalled();
     expect(graph.createContainerType).not.toHaveBeenCalled();
     expect(azureCli.createSyntexAccount).not.toHaveBeenCalled();

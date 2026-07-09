@@ -144,6 +144,46 @@ export async function listResourceGroups(subscriptionId: string): Promise<AzureR
   return azJson<AzureResourceGroup[]>(["group", "list", "--subscription", subscriptionId]);
 }
 
+/**
+ * Best-effort existence probe for a resource group, so a user-entered name can be
+ * verified BEFORE any container-type / billing resource is created (fail
+ * cost-free). Non-throwing by design.
+ *
+ * Returns:
+ *  - `true`      — the resource group exists in the subscription.
+ *  - `false`     — Azure definitively reports it does not exist.
+ *  - `undefined` — indeterminate (az not installed, not signed in, Conditional
+ *                  Access step-up, timeout, or any other error). Callers should
+ *                  degrade gracefully and proceed with the name rather than block
+ *                  on a probe that could not run.
+ * (PR #3 review.)
+ */
+export async function resourceGroupExists(
+  name: string,
+  subscriptionId: string,
+): Promise<boolean | undefined> {
+  try {
+    await execFileAsync(
+      "az",
+      ["group", "show", "--name", name, "--subscription", subscriptionId, "--output", "json"],
+      { timeout: AZ_TIMEOUT_MS, shell: azNeedsShell() },
+    );
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    // az missing / not signed in / recognized-command failure — indeterminate.
+    // Checked FIRST because `isNotInstalled` also matches a bare "not found".
+    if (isNotInstalled(message)) return undefined;
+    // Definitive negative from ARM: `ResourceGroupNotFound` /
+    // "Resource group 'X' could not be found."
+    if (/resourcegroupnotfound|could not be found|does not exist/i.test(message)) {
+      return false;
+    }
+    // Anything else (auth, throttling, transient) is inconclusive → proceed.
+    return undefined;
+  }
+}
+
 export interface ProviderRegistration {
   namespace: string;
   registrationState: string;

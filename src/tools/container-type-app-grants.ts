@@ -87,20 +87,23 @@ export const addContainerTypeAppGrantTool: McpTool = {
     },
   },
   handler: async (args) => {
-    // Restart confirmation gate (r-appgate) before mutating grants on a fresh session.
-    const gate = await resolveContextGate(args.contextChoice as string | undefined);
-    if (gate) return gate;
-
-    const state = authContainerTypeState();
-    const containerTypeId = (args.containerTypeId as string) || state.containerTypeId;
-    const appId = (args.appId as string) || state.appId;
-    if (!containerTypeId) return err("no containerTypeId provided and none in provisioning state.");
-    if (!appId) return err("no appId provided and no owning app in provisioning state. Run project_app_create first or pass appId.");
-
-    const delegated = toPermissions(args.delegatedPermissions, ["full"]);
-    const application = toPermissions(args.applicationPermissions, ["none"]);
-
     try {
+      // Restart confirmation gate (r-appgate) before mutating grants on a fresh
+      // session. Inside the try so a stamp-write failure on `contextChoice=confirm`
+      // (writeState / writeSecureFile) is classified by this tool's own error
+      // handling below, like its other errors. (PR #3 review.)
+      const gate = await resolveContextGate(args.contextChoice as string | undefined);
+      if (gate) return gate;
+
+      const state = authContainerTypeState();
+      const containerTypeId = (args.containerTypeId as string) || state.containerTypeId;
+      const appId = (args.appId as string) || state.appId;
+      if (!containerTypeId) return err("no containerTypeId provided and none in provisioning state.");
+      if (!appId) return err("no appId provided and no owning app in provisioning state. Run project_app_create first or pass appId.");
+
+      const delegated = toPermissions(args.delegatedPermissions, ["full"]);
+      const application = toPermissions(args.applicationPermissions, ["none"]);
+
       const grant = await grantContainerTypeAppPermission(containerTypeId, appId, delegated, application);
       const del = grant.delegatedPermissions ?? delegated;
       const app = grant.applicationPermissions ?? application;
@@ -173,17 +176,20 @@ export const removeContainerTypeAppGrantTool: McpTool = {
     required: ["appId"],
   },
   handler: async (args) => {
-    // Restart confirmation gate (r-appgate) before mutating grants on a fresh session.
-    const gate = await resolveContextGate(args.contextChoice as string | undefined);
-    if (gate) return gate;
-
-    const state = authContainerTypeState();
-    const containerTypeId = (args.containerTypeId as string) || state.containerTypeId;
-    const appId = args.appId as string | undefined;
-    if (!containerTypeId) return err("no containerTypeId provided and none in provisioning state.");
-    if (!appId) return err("appId is required (see container_type_app_grants_list).");
-
     try {
+      // Restart confirmation gate (r-appgate) before mutating grants on a fresh
+      // session. Inside the try so a stamp-write failure on `contextChoice=confirm`
+      // (writeState / writeSecureFile) is classified by this tool's own error
+      // handling below, like its other errors. (PR #3 review.)
+      const gate = await resolveContextGate(args.contextChoice as string | undefined);
+      if (gate) return gate;
+
+      const state = authContainerTypeState();
+      const containerTypeId = (args.containerTypeId as string) || state.containerTypeId;
+      const appId = args.appId as string | undefined;
+      if (!containerTypeId) return err("no containerTypeId provided and none in provisioning state.");
+      if (!appId) return err("appId is required (see container_type_app_grants_list).");
+
       await revokeContainerTypeAppPermission(containerTypeId, appId);
       return { content: [{ type: "text" as const, text: `Removed app \`${appId}\`'s permission grant from container type registration \`${containerTypeId}\`.` }] };
     } catch (e) {
