@@ -21,6 +21,7 @@ import {
   updateContainerType,
   registerContainerType,
   listContainerTypes,
+  getSignedInUser,
   desiredGraphResourceAccess,
   LOCAL_SPA_REDIRECT_URI,
 } from "./graph-client.js";
@@ -730,3 +731,24 @@ describe("addSpaRedirectUris — deployed-origin patch", () => {
     await expect(addSpaRedirectUris("obj-spa", [DEPLOYED], getToken)).rejects.toThrow(/Access denied/);
   });
 });
+
+describe("getSignedInUser — /me select includes userType (guest handling, PR #3 review)", () => {
+  it("requests userType and surfaces it so callers can detect a guest (B2B) user", async () => {
+    fetchMock.mockResolvedValueOnce(
+      okResponse({ id: "user-1", displayName: "Alice", userPrincipalName: "alice@contoso.com", userType: "Guest" }),
+    );
+
+    const me = await getSignedInUser(getToken);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][1].method).toBe("GET");
+    // The $select must carry userType (added for the guest-owner check) alongside
+    // the pre-existing fields.
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain("/me");
+    expect(url).toContain("$select=id,displayName,userPrincipalName,userType");
+    expect(me.userType).toBe("Guest");
+    expect(me.id).toBe("user-1");
+  });
+});
+

@@ -59,6 +59,7 @@ vi.mock("../state.js", () => ({
 
 import * as graph from "../graph-client.js";
 import * as azureCli from "../azure-cli.js";
+import * as bootstrap from "../bootstrap.js";
 import { provisionTool } from "../tools/provision.js";
 import { getSessionId } from "../session.js";
 import { scaffoldTool } from "../tools/scaffold.js";
@@ -149,6 +150,42 @@ describe("project_provision", () => {
     expect(r.content[0].text).toContain("SPE Provisioned");
     expect(r.content[0].text).toContain("app-1");
     expect(stateStore.containerId).toBe("c-1");
+  });
+
+  it("appends a NON-BLOCKING guest heads-up when signed in as a B2B guest — provisioning is NOT blocked (PR #3 review)", async () => {
+    vi.mocked(bootstrap.getSignedInIdentity).mockResolvedValueOnce({
+      tenantId: "t-1",
+      username: "alice_corp.com#EXT#@resourcetenant.onmicrosoft.com",
+    });
+    vi.mocked(graph.findApplicationByName).mockResolvedValue(null);
+    vi.mocked(graph.createApplication).mockResolvedValue({ appId: "app-1", objectId: "obj-1", displayName: "App" });
+    vi.mocked(graph.createContainerType).mockResolvedValue({ containerTypeId: "ct-1", owningAppId: "app-1", displayName: "App Container Type" });
+    vi.mocked(graph.createContainer).mockResolvedValue({ id: "c-1", displayName: "Default Container", containerTypeId: "ct-1", status: "inactive" });
+
+    const r = await provisionTool.handler({ appDisplayName: "App", billingClassification: "trial" });
+
+    // Not blocked: the full chain still runs and provisioning completes.
+    expect(r.isError).toBeFalsy();
+    expect(graph.createApplication).toHaveBeenCalled();
+    expect(graph.createContainer).toHaveBeenCalledWith("ct-1", "Default Container");
+    expect(r.content[0].text).toContain("SPE Provisioned");
+    // The informational note is present.
+    expect(r.content[0].text).toContain("guest (B2B)");
+    expect(r.content[0].text).toContain("Heads-up");
+  });
+
+  it("does NOT append the guest note for a member identity", async () => {
+    vi.mocked(graph.findApplicationByName).mockResolvedValue(null);
+    vi.mocked(graph.createApplication).mockResolvedValue({ appId: "app-1", objectId: "obj-1", displayName: "App" });
+    vi.mocked(graph.createContainerType).mockResolvedValue({ containerTypeId: "ct-1", owningAppId: "app-1", displayName: "App Container Type" });
+    vi.mocked(graph.createContainer).mockResolvedValue({ id: "c-1", displayName: "Default Container", containerTypeId: "ct-1", status: "inactive" });
+
+    // Default bootstrap mock signs in as the member `dev@x.com`.
+    const r = await provisionTool.handler({ appDisplayName: "App", billingClassification: "trial" });
+
+    expect(r.content[0].text).toContain("SPE Provisioned");
+    expect(r.content[0].text).not.toContain("guest (B2B)");
+    expect(r.content[0].text).not.toContain("Heads-up");
   });
 
   it("runs the standard chain: app -> CT(standard) -> RP -> Syntex account -> register -> container", async () => {

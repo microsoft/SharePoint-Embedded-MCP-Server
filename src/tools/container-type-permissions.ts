@@ -40,6 +40,19 @@ function authAndDefaultCt(): string | undefined {
   return authContainerTypeState().containerTypeId;
 }
 
+/**
+ * Does a Graph error look like the "a guest (B2B) user cannot be a container-type
+ * owner" rejection? Heuristic on the error text — used to turn the raw API
+ * failure into clear, actionable guidance when an explicit guest `userId` was
+ * supplied (its `userType` is unknown without an extra lookup). Conservative:
+ * only matches when the message mentions a guest / external (`#EXT#`) user, which
+ * in the grant-owner context is the owner restriction. (PR #3 review.)
+ */
+function isGuestOwnerRejection(e: unknown): boolean {
+  const m = reason(e).toLowerCase();
+  return m.includes("guest") || m.includes("#ext#");
+}
+
 export const grantContainerTypeOwnerTool: McpTool = {
   name: "container_type_grant_owner",
   annotations: { plane: "control" },
@@ -68,13 +81,27 @@ export const grantContainerTypeOwnerTool: McpTool = {
     let userId = args.userId as string | undefined;
     let who = "";
     if (!userId) {
+      let me: Awaited<ReturnType<typeof getSignedInUser>>;
       try {
-        const me = await getSignedInUser(bootstrapTokenProvider);
-        userId = me.id;
-        who = ` (signed-in user ${me.userPrincipalName ?? me.id})`;
+        me = await getSignedInUser(bootstrapTokenProvider);
       } catch (e) {
         return err(`could not resolve the signed-in user — pass userId explicitly. ${reason(e)}`);
       }
+      // Guest (B2B) users cannot be container-type owners — the Graph API rejects
+      // them. Detect it up front (from the /me `userType`) and return a clear,
+      // actionable message instead of defaulting the grant to a guest and
+      // surfacing a raw API error. NON-BLOCKING guidance: pass a member user's
+      // `userId` to proceed. Guest sign-in itself remains fully supported.
+      // (PR #3 review.)
+      if (me.userType === "Guest") {
+        return err(
+          `the signed-in user ${me.userPrincipalName ?? me.id} is a guest (B2B) account, and guest ` +
+            "users cannot be granted the container-type `owner` role. Re-run with `userId` set to a " +
+            "**member** user of the target tenant.",
+        );
+      }
+      userId = me.id;
+      who = ` (signed-in user ${me.userPrincipalName ?? me.id})`;
     }
 
     try {
@@ -89,6 +116,16 @@ export const grantContainerTypeOwnerTool: McpTool = {
         }],
       };
     } catch (e) {
+      // The Graph API also rejects a guest owner when an explicit guest `userId`
+      // is supplied (we cannot know its userType without an extra lookup). Map
+      // that specific rejection to the same clear guidance; fall back to the raw
+      // reason for any other failure. (PR #3 review.)
+      if (isGuestOwnerRejection(e)) {
+        return err(
+          "guest (B2B) users cannot be granted the container-type `owner` role. Grant it to a " +
+            "**member** user of the target tenant (pass their `userId`).",
+        );
+      }
       return err(`granting owner: ${reason(e)}`);
     }
   },
