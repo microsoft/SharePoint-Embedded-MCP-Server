@@ -25,12 +25,19 @@ import type {
   CustomProperties,
   Drive,
   DriveItem,
+  GraphCollection,
   Guid,
   PreviewResult,
   SearchResponse,
   SharingLink,
   UploadSession,
 } from "./types.js";
+
+import type {
+  Application,
+  RequiredResourceAccess as GraphRequiredResourceAccess,
+  ResourceAccess as GraphResourceAccess,
+} from "@microsoft/microsoft-graph-types";
 
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 // SPE container-type `permissions` (the `owner` role that lets a public client /
@@ -251,10 +258,9 @@ type GraphResourceAccessType = "Scope" | "Role";
  * stable GUID of a delegated scope or app role on the target resource (for us,
  * the Microsoft Graph service principal); `type` distinguishes the two.
  */
-interface ResourceAccess {
-  id: Guid;
+type ResourceAccess = Required<Pick<GraphResourceAccess, "id">> & {
   type: GraphResourceAccessType;
-}
+};
 
 /**
  * A Microsoft Graph `requiredResourceAccess` block: the set of {@link
@@ -262,10 +268,9 @@ interface ResourceAccess {
  * API's app id (`resourceAppId` — the Microsoft Graph service principal
  * `00000003-0000-0000-c000-000000000000` for the scopes we add).
  */
-interface RequiredResourceAccess {
-  resourceAppId: Guid;
+type RequiredResourceAccess = Required<Pick<GraphRequiredResourceAccess, "resourceAppId">> & {
   resourceAccess: ResourceAccess[];
-}
+};
 
 // Desired delegated (type "Scope") Microsoft Graph permissions for the owning
 // app. TODO: least-privilege scope set pending PM decision — the
@@ -348,10 +353,10 @@ function mergeRedirectUris(existing: string[], toAdd: string[]): string[] {
 
 export interface OwningApp {
   /** Application (client) id. */
-  appId: Guid;
+  appId: NonNullable<Application["appId"]>;
   /** Directory object id. */
-  objectId: Guid;
-  displayName: string;
+  objectId: NonNullable<Application["id"]>;
+  displayName: NonNullable<Application["displayName"]>;
 }
 
 /**
@@ -363,11 +368,10 @@ export interface OwningApp {
  */
 interface RawApplication {
   /** Directory object id (Graph `id`), surfaced as {@link OwningApp.objectId}. */
-  id: Guid;
+  id: NonNullable<Application["id"]>;
   /** Application (client) id, surfaced as {@link OwningApp.appId}. */
-  appId: Guid;
-  displayName: string;
-  isFallbackPublicClient?: boolean;
+  appId: NonNullable<Application["appId"]>;
+  displayName: NonNullable<Application["displayName"]>;
 }
 
 function toOwningApp(raw: RawApplication): OwningApp {
@@ -380,7 +384,7 @@ export async function findApplicationByName(
   getToken: () => Promise<string>,
 ): Promise<OwningApp | null> {
   const filter = `displayName eq '${displayName.replace(/'/g, "''")}'`;
-  const result = await graphRequest<{ value: RawApplication[] }>(
+  const result = await graphRequest<GraphCollection<RawApplication>>(
     "GET",
     `/applications?$filter=${encodeURIComponent(filter)}`,
     undefined,
@@ -402,7 +406,7 @@ export async function findApplicationByAppId(
   getToken: () => Promise<string>,
 ): Promise<OwningApp | null> {
   const filter = `appId eq '${appId.replace(/'/g, "''")}'`;
-  const result = await graphRequest<{ value: RawApplication[] }>(
+  const result = await graphRequest<GraphCollection<RawApplication>>(
     "GET",
     `/applications?$filter=${encodeURIComponent(filter)}`,
     undefined,
@@ -880,12 +884,8 @@ export async function revokeContainerTypePermission(
 }
 // ─── Containers ─────────────────────────────────────────────────────────────
 
-interface ListContainersResponse {
-  value: Container[];
-}
-
 export async function listContainers(containerTypeId: string): Promise<Container[]> {
-  const result = await graphRequest<ListContainersResponse>(
+  const result = await graphRequest<GraphCollection<Container>>(
     "GET",
     `/storage/fileStorage/containers?$filter=containerTypeId eq ${containerTypeId}`,
   );
@@ -932,7 +932,7 @@ export async function listDeletedContainers(containerTypeId?: string): Promise<C
   const path = containerTypeId
     ? `/storage/fileStorage/deletedContainers?$filter=containerTypeId eq ${containerTypeId}`
     : "/storage/fileStorage/deletedContainers";
-  const result = await graphRequest<ListContainersResponse>("GET", path);
+  const result = await graphRequest<GraphCollection<Container>>("GET", path);
   return result.value ?? [];
 }
 
@@ -1009,7 +1009,7 @@ export async function unlockContainer(containerId: string): Promise<void> {
 export async function listContainerPermissions(
   containerId: string,
 ): Promise<ContainerPermission[]> {
-  const result = await graphRequest<{ value: ContainerPermission[] }>(
+  const result = await graphRequest<GraphCollection<ContainerPermission>>(
     "GET",
     `/storage/fileStorage/containers/${containerId}/permissions`,
   );
@@ -1073,7 +1073,7 @@ export async function listDriveChildren(
   const path = folderId
     ? `/drives/${driveId}/items/${folderId}/children`
     : `/drives/${driveId}/root/children`;
-  const result = await graphRequest<{ value: DriveItem[] }>("GET", path);
+  const result = await graphRequest<GraphCollection<DriveItem>>("GET", path);
   return result.value ?? [];
 }
 
@@ -1150,7 +1150,7 @@ export async function listDriveItemPermissions(
   driveId: string,
   itemId: string,
 ): Promise<SharingLink[]> {
-  const result = await graphRequest<{ value: SharingLink[] }>(
+  const result = await graphRequest<GraphCollection<SharingLink>>(
     "GET",
     `/drives/${driveId}/items/${itemId}/permissions`,
   );

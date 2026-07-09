@@ -7,7 +7,11 @@
 
 // Types-only import (zero runtime cost). `@microsoft/microsoft-graph-types` is
 // a pure `.d.ts` package pinned in devDependencies — nothing here emits JS.
-import type { FileStorageContainer } from "@microsoft/microsoft-graph-types";
+import type {
+  DriveItem as GraphDriveItem,
+  FileStorageContainer,
+  Permission as GraphPermission,
+} from "@microsoft/microsoft-graph-types";
 
 // ─── Primitives ──────────────────────────────────────────────────────────────
 
@@ -26,6 +30,19 @@ export interface McpToolResult {
   content: Array<{ type: string; text: string }>;
   isError?: boolean;
   structuredContent?: unknown;
+}
+
+// ─── Graph OData envelopes ────────────────────────────────────────────────────
+
+/**
+ * A Microsoft Graph OData collection envelope: the `value` array of results plus
+ * the optional `@odata.nextLink` continuation URL. Replaces the ad-hoc
+ * `{ value: T[] }` inline shapes previously spread across the Graph client
+ * (PR #3 review `r-graph-types`).
+ */
+export interface GraphCollection<T> {
+  value: T[];
+  "@odata.nextLink"?: string;
 }
 
 export interface McpToolAnnotations {
@@ -206,13 +223,24 @@ export type Container = Required<
 > &
   Pick<FileStorageContainer, "createdDateTime" | "description" | "lockState">;
 
-export interface ContainerPermission {
-  id?: string;
-  roles: string[];
+/**
+ * A permission on an SPE container — a Microsoft Graph `permission` resource.
+ * `id`/`roles` derive from the official Graph `Permission` type; `roles` is
+ * `NonNullable` because we always read it (e.g. `roles.join(...)`).
+ *
+ * `grantedToV2` is kept as a narrowed local shape rather than the official
+ * `sharePointIdentitySet`: the official `identity` type does not surface
+ * `userPrincipalName`, which we render for container members
+ * (PR #3 review `r-graph-types`).
+ */
+export type ContainerPermission = Pick<GraphPermission, "id"> & {
+  roles: NonNullable<GraphPermission["roles"]>;
+  // r-graph-types: official `Identity` omits `userPrincipalName`; retain a
+  // narrowed local shape for just the member fields we actually read/render.
   grantedToV2?: {
     user?: { userPrincipalName: string; displayName?: string };
   };
-}
+};
 
 // ─── Graph API Types: Drive / Content ────────────────────────────────────────
 
@@ -225,30 +253,30 @@ export interface Drive {
   };
 }
 
-export interface DriveItem {
-  id: string;
-  name: string;
-  size?: number;
-  webUrl?: string;
-  lastModifiedDateTime?: string;
-  "@microsoft.graph.downloadUrl"?: string;
-  folder?: Record<string, unknown>;
-  file?: Record<string, unknown>;
-}
+/**
+ * A file or folder in a container's drive — a Microsoft Graph `driveItem`.
+ * Derived from the official `DriveItem`, keeping only the subset of fields we
+ * consume. `id`/`name` stay non-null (our code always reads them); the remaining
+ * fields keep the official optional/nullable shape and are only ever read
+ * null-tolerantly (PR #3 review `r-graph-types`).
+ */
+export type DriveItem = Required<Pick<GraphDriveItem, "id">> & {
+  name: NonNullable<GraphDriveItem["name"]>;
+} & Pick<GraphDriveItem, "size" | "webUrl" | "lastModifiedDateTime" | "folder" | "file">;
 
 export interface UploadSession {
   uploadUrl: string;
   expirationDateTime: string;
 }
 
-export interface SharingLink {
-  id: string;
-  link?: {
-    type: string;
-    scope: string;
-    webUrl: string;
-  };
-}
+/**
+ * A sharing link on a drive item. NOTE: in Microsoft Graph this is a
+ * `permission` resource that *carries* a `link` (the official `sharingLink`
+ * sub-object); our reads use the permission `id` plus `link.{type,scope,webUrl}`,
+ * so we derive from the official `Permission` type — the nested `link` is then
+ * the official `sharingLink` automatically (PR #3 review `r-graph-types`).
+ */
+export type SharingLink = Required<Pick<GraphPermission, "id">> & Pick<GraphPermission, "link">;
 
 export interface PreviewResult {
   getUrl: string;
