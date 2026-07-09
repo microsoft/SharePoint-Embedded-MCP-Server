@@ -16,6 +16,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
 import { LOCAL_SPA_REDIRECT_URI } from "../constants.js";
 
 const getSignedInIdentityMock = vi.fn();
@@ -307,5 +308,62 @@ describe("project_app_create — NON-BLOCKING guest sign-in note (PR #3 review)"
     expect(r.content[0].text).toContain("Owning App Created");
     expect(r.content[0].text).not.toContain("guest (B2B)");
     expect(r.content[0].text).not.toContain("Heads-up");
+  });
+});
+
+describe("project_app_create — admin-consent link (PR #3 review)", () => {
+  it("appends the tenant-wide admin-consent URL with the signed-in tenant id and NEW app's client id (create path)", async () => {
+    getSignedInIdentityMock.mockResolvedValue({ tenantId: "tenant-1", username: "dev@contoso.com" });
+    createApplicationMock.mockResolvedValue({ appId: "new-app", objectId: "obj-new", displayName: "SPE Builder App" });
+
+    const r = await createAppTool.handler({});
+
+    expect(r.isError).toBeUndefined();
+    const text = r.content[0].text;
+    // The exact copy-paste tenant-wide admin-consent URL: real tenant id + new app's client id.
+    expect(text).toContain(
+      "https://login.microsoftonline.com/tenant-1/adminconsent?client_id=new-app",
+    );
+    expect(text).toContain("Grant admin consent");
+    // Admin-vs-nonadmin explanation is present.
+    expect(text).toContain("Global Administrator");
+    expect(text).toMatch(/NOT an admin/);
+    // Non-blocking / informational.
+    expect(text).toMatch(/not blocked on consent/i);
+  });
+
+  it("appends the admin-consent URL on the REUSE path too (consent may still be pending)", async () => {
+    getSignedInIdentityMock.mockResolvedValue({ tenantId: "tenant-1", username: "dev@contoso.com" });
+    findApplicationByNameMock.mockResolvedValue(EXISTING_APP);
+
+    const r = await createAppTool.handler({});
+
+    expect(r.content[0].text).toContain("Owning App Found");
+    expect(r.content[0].text).toContain(
+      `https://login.microsoftonline.com/tenant-1/adminconsent?client_id=${EXISTING_APP.appId}`,
+    );
+  });
+
+  it("never embeds a secret/token in the admin-consent URL (only tenant id + public client id)", async () => {
+    getSignedInIdentityMock.mockResolvedValue({ tenantId: "tenant-1", username: "dev@contoso.com" });
+    createApplicationMock.mockResolvedValue({ appId: "new-app", objectId: "obj-new", displayName: "SPE Builder App" });
+
+    const r = await createAppTool.handler({});
+    const text = r.content[0].text;
+
+    // The URL's only query parameter is client_id — no secret/token smuggled in.
+    const match = text.match(/https:\/\/login\.microsoftonline\.com\/[^\s`]+/);
+    expect(match).not.toBeNull();
+    const url = match![0];
+    expect(url.split("?")[1]).toBe("client_id=new-app");
+    expect(text).not.toContain("client_secret");
+  });
+});
+
+describe("create-app.ts source hygiene (PR #3 review)", () => {
+  it("no longer references the vague full-setup skill script (removed, no internal URL invented)", () => {
+    const src = readFileSync(new URL("./create-app.ts", import.meta.url), "utf8");
+    expect(src).not.toContain("Ports the full-setup skill");
+    expect(src).not.toContain("02-app.ps1");
   });
 });
