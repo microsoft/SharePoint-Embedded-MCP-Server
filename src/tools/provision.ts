@@ -335,12 +335,16 @@ export const provisionTool: McpTool = {
       // persisted state) AND the session is unconfirmed — so a freshly restarted
       // process asks at most once; the agent re-invokes with ownerScope and
       // provisioning persists it below, so this is resumable and never loops.
-      const resolvedOwnerScope: OwnerScope | undefined =
+      let resolvedOwnerScope: OwnerScope | undefined =
         args.ownerScope === "manage-all" || args.ownerScope === "selected"
           ? args.ownerScope
           : state.ownerScope;
       if (resolvedOwnerScope === undefined && !isContextConfirmedThisSession(state)) {
-        return needChoice(
+        // Prefer NATIVE MCP elicitation (PR #3 review): a capable client prompts
+        // the user and we continue in-band with their pick; without support,
+        // elicitChoice falls back to the agent-guided text ask (re-invoked with
+        // ownerScope). Resumable, never loops.
+        const choice = await elicitChoice(
           "Should this owning app manage ALL container types (an admin/console app), or just this one app's container type (standard ISV/LOB)?",
           [
             {
@@ -356,6 +360,8 @@ export const provisionTool: McpTool = {
           ],
           "ownerScope",
         );
+        if (!choice.resolved) return choice.result;
+        resolvedOwnerScope = choice.value as OwnerScope;
       }
       // Least privilege by default once the session is confirmed but no intent was
       // recorded (e.g., an older resumed setup provisioned before this prompt).
