@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { AccountInfo, PublicClientApplication } from "@azure/msal-node";
 import {
   __testing,
+  formatLoginSuccessMessage,
   getAccessToken,
   getCacheFilePath,
   getCachedAccount,
@@ -24,6 +25,8 @@ import {
   isOwningAppConfigured,
   isWrongTenantToken,
   OWNING_APP_REQUIRED_MESSAGE,
+  renderAuthErrorHtml,
+  renderAuthSuccessHtml,
   selectAccountForTenant,
   setAuthConfig,
 } from "./auth.js";
@@ -336,5 +339,62 @@ describe("owning-app precondition guidance (UX)", () => {
       code: "OWNING_APP_REQUIRED",
     });
     await expect(getAccessToken()).rejects.toBeInstanceOf(AppError);
+  });
+});
+
+// ─── WI-14: login result messaging & next-step guidance ─────────────────────
+describe("login result messaging (WI-14)", () => {
+  const base = {
+    clientId: CLIENT_ID,
+    tenantId: TENANT_A,
+    scopes: ["FileStorageContainer.Selected", "User.Read"],
+  };
+
+  it("success summary states the app, account, tenant, scopes and a real next tool", () => {
+    const msg = formatLoginSuccessMessage({ ...base, account: "alice@contoso.com" });
+    // Assert on stable structure/substrings, not the full brittle string.
+    expect(msg).toMatch(/logged into your owning spe app successfully/i);
+    expect(msg).toContain(CLIENT_ID);
+    expect(msg).toContain(TENANT_A);
+    expect(msg).toContain("alice@contoso.com");
+    expect(msg).toContain("FileStorageContainer.Selected");
+    expect(msg).toContain("User.Read");
+    // Points the user at a REAL MCP tool rather than a vague instruction.
+    expect(msg).toMatch(/status_get|project_provision/);
+  });
+
+  it("success summary omits the account line when the account is not yet known", () => {
+    const msg = formatLoginSuccessMessage(base);
+    expect(msg).not.toMatch(/Account:/);
+    // Still reports what it does know.
+    expect(msg).toContain(CLIENT_ID);
+    expect(msg).toContain(TENANT_A);
+  });
+
+  it("browser success page includes app, tenant, scopes and a concrete next step", () => {
+    const html = renderAuthSuccessHtml(base);
+    expect(html).toMatch(/logged into your owning spe app successfully/i);
+    expect(html).toContain(CLIENT_ID);
+    expect(html).toContain(TENANT_A);
+    expect(html).toContain("FileStorageContainer.Selected");
+    expect(html).toMatch(/status_get|project_provision/);
+  });
+
+  it("browser success page HTML-escapes interpolated values", () => {
+    const html = renderAuthSuccessHtml({ ...base, scopes: ['a<b>&"c'] });
+    expect(html).toContain("a&lt;b&gt;&amp;&quot;c");
+    expect(html).not.toContain('a<b>&"c');
+  });
+
+  it("browser error page gives actionable next steps, not a bare 'try again'", () => {
+    const html = renderAuthErrorHtml();
+    // The reviewer questioned whether a blind retry is the right guidance.
+    expect(html.toLowerCase()).not.toContain("try again");
+    // Actionable causes/fixes instead.
+    expect(html).toMatch(/consent/i);
+    expect(html).toMatch(/tenant/i);
+    expect(html).toMatch(/redirect/i);
+    // And a concrete terminal fallback.
+    expect(html).toContain("spe-mcp auth");
   });
 });
