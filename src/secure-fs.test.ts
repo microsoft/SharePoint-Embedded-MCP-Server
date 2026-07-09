@@ -19,7 +19,7 @@ const PERMISSION_MASK = 0o777;
 // are skipped (ACL governs instead); the cross-platform tests below still run.
 const isPosix = platform() !== "win32";
 
-describe("secure-fs (SEC-003)", () => {
+describe("secure-fs (SEC-003 owner-only credential/state files)", () => {
   let dir: string;
 
   beforeEach(() => {

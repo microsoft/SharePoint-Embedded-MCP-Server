@@ -48,11 +48,11 @@ program
   )
   .option(
     "--read-only",
-    "Read-only mode (SAFE-003): advertise and allow only read/list/get/search tools; reject every mutating call. Can also be set via SPE_READ_ONLY (truthy).",
+    "Read-only mode: advertise and allow only read/list/get/search tools; reject every mutating call. Can also be set via SPE_READ_ONLY (truthy).",
   )
   .option(
     "--tools <profileOrCsv>",
-    "Restrict exposed tools (SAFE-004): a built-in profile (readOnly, docsOnly, provisioning, content, admin) or a comma-separated list of tool names. Can also be set via SPE_TOOLS.",
+    "Restrict exposed tools: a built-in profile (readOnly, docsOnly, provisioning, content, admin) or a comma-separated list of tool names. Can also be set via SPE_TOOLS.",
   )
   .action(async (options: { clientId?: string; tenantId?: string; readOnly?: boolean; tools?: string }) => {
     try {

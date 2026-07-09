@@ -179,11 +179,15 @@ The server accepts configuration via CLI flags or environment variables:
 |----------|---------|-------------|
 | `--client-id` | `SPE_CLIENT_ID` | Entra ID Application (Client) ID |
 | `--tenant-id` | `SPE_TENANT_ID` | Entra ID Tenant ID |
-| `--read-only` | `SPE_READ_ONLY` | Advertise/allow only read/list/get/search tools; reject mutating calls (SAFE-003) |
-| `--tools` | `SPE_TOOLS` | Restrict exposed tools to a profile (`readOnly`, `docsOnly`, `provisioning`, `content`, `admin`) or a comma-separated tool list (SAFE-004) |
+| `--read-only` | `SPE_READ_ONLY` | Advertise/allow only read/list/get/search tools; reject mutating calls |
+| `--tools` | `SPE_TOOLS` | Restrict exposed tools to a profile (`readOnly`, `docsOnly`, `provisioning`, `content`, `admin`) or a comma-separated tool list |
 
 > The CLI flag wins when both a flag and its env var are set. Run
 > `spe-mcp start --help` to see the authoritative option list and descriptions.
+>
+> The `--read-only` and `--tools` behaviors are part of the server's documented
+> security model — see [docs/SECURITY-CONTROLS.md](docs/SECURITY-CONTROLS.md)
+> for the full legend of security-control codes used in the source.
 
 For troubleshooting, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
@@ -272,8 +276,8 @@ Every command has built-in help — run `spe-mcp <command> --help` (e.g.
 |------|-------------|
 | `--client-id <id>` | Owning Entra app Client ID. Omit to run in bootstrap mode (Azure CLI control plane). |
 | `--tenant-id <id>` | Entra ID Tenant ID. Discovered from the Azure CLI when omitted. |
-| `--read-only` | Read-only mode (SAFE-003): only read/list/get/search tools are exposed and callable. |
-| `--tools <profileOrCsv>` | Tool allowlist (SAFE-004): a profile (`readOnly`, `docsOnly`, `provisioning`, `content`, `admin`) or a comma-separated list of tool names. |
+| `--read-only` | Read-only mode: only read/list/get/search tools are exposed and callable. |
+| `--tools <profileOrCsv>` | Tool allowlist: a profile (`readOnly`, `docsOnly`, `provisioning`, `content`, `admin`) or a comma-separated list of tool names. |
 
 ## Authentication
 

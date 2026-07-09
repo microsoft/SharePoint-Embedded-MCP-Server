@@ -221,8 +221,9 @@ function toListToolEntry(tool: McpTool) {
 }
 
 /**
- * Active tool policy (SAFE-003 read-only / SAFE-004 allowlist). `null` means no
- * restriction (every tool advertised and callable). Set once in startServer().
+ * Active tool policy (SAFE-003 read-only mode / SAFE-004 tool allowlist). `null`
+ * means no restriction (every tool advertised and callable). Set once in
+ * startServer(). See docs/SECURITY-CONTROLS.md for the control-code legend.
  */
 let activePolicy: ResolvedToolPolicy | null = null;
 
@@ -275,7 +276,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     log(`Executing ${name}`, { tool: name, argKeys: Object.keys(safeArgs), args: redact(safeArgs) });
 
-    // SAFE-003/SAFE-004: enforce read-only mode and the tool allowlist BEFORE
+    // SAFE-003 (read-only mode) / SAFE-004 (tool allowlist): enforce these BEFORE
     // validating arguments or invoking the handler, so a denied call never
     // touches Graph/Azure.
     const denied = checkToolCallAllowed(tool, activePolicy);
@@ -362,9 +363,10 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 export async function startServer(config: ServerConfig) {
   log("Starting SharePoint Embedded MCP Server...");
 
-  // SAFE-003 / SAFE-004: build the tool policy once from config (read-only mode
-  // and/or an allowlist profile or CSV). When neither is set, `activePolicy`
-  // stays null and every tool is advertised and callable.
+  // SAFE-003 (read-only mode) / SAFE-004 (tool allowlist): build the tool policy
+  // once from config (read-only mode and/or an allowlist profile or CSV). When
+  // neither is set, `activePolicy` stays null and every tool is advertised and
+  // callable.
   activePolicy = buildToolPolicy(TOOLS, config.readOnly ?? false, config.tools);
   if (activePolicy.readOnly || activePolicy.allow) {
     const parts: string[] = [];
