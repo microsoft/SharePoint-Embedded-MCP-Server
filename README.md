@@ -285,11 +285,30 @@ The server uses [MSAL](https://learn.microsoft.com/en-us/entra/identity-platform
 
 1. **Silent** — uses a cached token from `~/.spe-mcp/token-cache.<tenantId>.<clientId>.json`
 2. **Interactive browser** — opens a browser for PKCE sign-in. This runs **in-process by default, even when the server is launched over stdio** by an MCP client — so the first SharePoint Embedded call opens a browser for a one-time consent and caches the token live (no terminal, no restart).
-3. **Device code** — prints a URL + code to stderr; used only as a fallback when a terminal (TTY) is attached to see the code.
+3. **Device code** — prints a URL + code to stderr; used only as a fallback when a terminal (TTY) is attached to see the code. The device code is valid for ~15 minutes (the Azure AD lifetime); the server waits up to that long for you to complete sign-in and **never cancels a code that is still valid**.
 
 For most developers nothing extra is needed: create the owning app with the `project_app_create` tool, then the first SPE call prompts a browser consent automatically.
 
 **Automation / headless:** in CI (`CI=true`) or a Linux host with no display, interactive sign-in is disabled by default, and SPE operations return an actionable error. Pre-cache a token by running `spe-mcp auth --client-id <appId> --tenant-id <tenantId>` once in a terminal. Override the defaults with `SPE_INTERACTIVE=1` (force browser sign-in) or `SPE_NON_INTERACTIVE=1` (force off).
+
+### Headless & orchestrator / sub-agent sign-in
+
+Interactive sign-in is **enabled by default for local use** (the server can open a browser on your machine) and **disabled by default in obvious automation/headless environments** — CI (`CI=true`) or Linux with no `DISPLAY`/`WAYLAND_DISPLAY` — so a tool call never silently blocks on a browser that can't open. The defaults are only defaults; explicit overrides always win:
+
+| Variable | Effect |
+| --- | --- |
+| `SPE_INTERACTIVE=1` | Force interactive sign-in **on** (browser + device-code fallback), even when the environment looks headless. |
+| `SPE_NON_INTERACTIVE=1` | Force interactive sign-in **off**; SPE calls fail fast with an actionable error instead of prompting. |
+
+**Why interactive is supported (and on by default) locally.** A developer building an SPE app benefits from a one-time browser consent: it caches a token live on the first SPE call — no separate terminal step, no restart. Automation gets the opposite default (off) because there is no human to complete a browser flow.
+
+**Orchestrator / sub-agent / agent-team scenarios.** When the MCP server runs over stdio and is driven by a *calling* agent (an orchestrator spawning sub-agents), the sub-agent's terminal is usually **not visible** to the caller. The device-code prompt is printed to **stderr**, which the calling agent typically cannot see — so a device-code wait would block invisibly. To avoid that, the server only offers device code when its stderr prompt is on a real **TTY**; otherwise it **fails fast** with actionable guidance rather than hanging. Recommended pattern for headless/agent setups:
+
+1. **Pre-authenticate before starting the server.** For the bootstrap / control-plane token, run `az login` (`--allow-no-subscriptions` for M365-only tenants). For the owning-app token, sign in once interactively in a **visible** terminal: `spe-mcp auth --client-id <appId> --tenant-id <tenantId>`.
+2. **Restart the server after signing in** so it re-primes auth from the freshly cached token (startup auth is stamped for the session), then let the agent drive tool calls.
+
+This keeps sub-agents non-blocking: they either use a pre-cached token silently or return a clear "sign in first" error instead of stalling on an invisible prompt.
+
 
 ### Token Storage
 

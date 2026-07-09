@@ -13,8 +13,13 @@
  *   - setAuthConfig() tenant change dropping stale in-memory state.
  */
 
-import { afterEach, describe, expect, it } from "vitest";
-import type { AccountInfo, PublicClientApplication } from "@azure/msal-node";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type {
+  AccountInfo,
+  AuthenticationResult,
+  DeviceCodeRequest,
+  PublicClientApplication,
+} from "@azure/msal-node";
 import {
   __testing,
   formatLoginSuccessMessage,
@@ -396,5 +401,106 @@ describe("login result messaging (WI-14)", () => {
     expect(html).toMatch(/redirect/i);
     // And a concrete terminal fallback.
     expect(html).toContain("spe-mcp auth");
+  });
+});
+
+// ─── Device-code sign-in timeout (PR #3 review) ─────────────────────────────
+// The Azure AD device code is valid ~15 minutes; MSAL polls the token endpoint
+// until the user signs in or the code expires. A client-side cancel MUST NOT
+// fire before that horizon — the previous fixed 10-min headless / 2-min TTY
+// timeouts were SHORTER than the real code lifetime and would cancel a
+// still-valid sign-in.
+describe("device-code sign-in timeout", () => {
+  const { DEVICE_CODE_LIFETIME_SECONDS, DEVICE_CODE_TIMEOUT_MS, deviceCodeCancelDelayMs } =
+    __testing;
+
+  it("bounds the cancel horizon at the ~15-min AAD device-code lifetime (never the old 600s/120s)", () => {
+    // ~15 min = 900 s — the official AAD device-code lifetime.
+    expect(DEVICE_CODE_LIFETIME_SECONDS).toBe(900);
+    expect(DEVICE_CODE_TIMEOUT_MS).toBe(DEVICE_CODE_LIFETIME_SECONDS * 1000);
+    // The horizon is at least the full code lifetime — the regression was a
+    // shorter, premature bound.
+    expect(DEVICE_CODE_TIMEOUT_MS).toBeGreaterThanOrEqual(DEVICE_CODE_LIFETIME_SECONDS * 1000);
+    // Explicitly NOT the old premature values (2 min TTY / 10 min headless).
+    expect(DEVICE_CODE_TIMEOUT_MS).not.toBe(600_000);
+    expect(DEVICE_CODE_TIMEOUT_MS).not.toBe(120_000);
+  });
+
+  it("derives the cancel delay from the STS-reported expiresIn (seconds → ms)", () => {
+    // expiresIn drives it: the real per-request lifetime flows straight through.
+    expect(deviceCodeCancelDelayMs(900)).toBe(900_000);
+    expect(deviceCodeCancelDelayMs(1200)).toBe(1_200_000);
+    // …and it is never shorter than a valid expiresIn implies.
+    expect(deviceCodeCancelDelayMs(900)).toBeGreaterThanOrEqual(
+      DEVICE_CODE_LIFETIME_SECONDS * 1000,
+    );
+  });
+
+  it("falls back to the ~15-min default when expiresIn is unknown or invalid", () => {
+    // The timer is armed before the callback fires, so the default must equal the
+    // full code lifetime (not a shorter value).
+    expect(deviceCodeCancelDelayMs()).toBe(DEVICE_CODE_TIMEOUT_MS);
+    expect(deviceCodeCancelDelayMs(undefined)).toBe(DEVICE_CODE_TIMEOUT_MS);
+    expect(deviceCodeCancelDelayMs(0)).toBe(DEVICE_CODE_TIMEOUT_MS);
+    expect(deviceCodeCancelDelayMs(-5)).toBe(DEVICE_CODE_TIMEOUT_MS);
+    expect(deviceCodeCancelDelayMs(Number.NaN)).toBe(DEVICE_CODE_TIMEOUT_MS);
+  });
+
+  it("does not cancel a still-valid device code before it expires (expiresIn-driven, fake timers)", async () => {
+    vi.useFakeTimers();
+    // Silence the device-code prompt the flow prints to stderr.
+    const consoleErr = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const EXPIRES_IN = 900; // seconds — what the STS returns
+      let captured: DeviceCodeRequest | undefined;
+      let resolvePca!: (r: AuthenticationResult) => void;
+      const pcaPending = new Promise<AuthenticationResult>((res) => {
+        resolvePca = res;
+      });
+
+      const fake = {
+        acquireTokenByDeviceCode: (req: DeviceCodeRequest): Promise<AuthenticationResult> => {
+          captured = req;
+          // STS responds → callback fires with the real code lifetime.
+          req.deviceCodeCallback({
+            userCode: "ABCD-EFGH",
+            deviceCode: "device-code-value",
+            verificationUri: "https://microsoft.com/devicelogin",
+            expiresIn: EXPIRES_IN,
+            interval: 5,
+            message: "To sign in, use a web browser to open the page…",
+          });
+          // Mirror MSAL: keep polling (stay pending) until the test settles us.
+          return pcaPending;
+        },
+      } as unknown as PublicClientApplication;
+      __testing.setPca(fake);
+
+      const flow = __testing.acquireTokenByDeviceCode();
+      // Let the async fn reach its await and the callback re-arm the timer.
+      await Promise.resolve();
+
+      // Native MSAL polling timeout is bound to the full code lifetime, not 600s.
+      expect(captured?.timeout).toBe(DEVICE_CODE_LIFETIME_SECONDS);
+
+      // Past the OLD 600s premature-cancel point, the code is still NOT cancelled.
+      vi.advanceTimersByTime(601_000);
+      expect(captured?.cancel).toBe(false);
+
+      // Just shy of the real expiry — still valid.
+      vi.advanceTimersByTime((EXPIRES_IN - 1) * 1000 - 601_000);
+      expect(captured?.cancel).toBe(false);
+
+      // At the code lifetime the safety-net cancel finally fires.
+      vi.advanceTimersByTime(2_000);
+      expect(captured?.cancel).toBe(true);
+
+      // Let the flow settle so no promise is left dangling.
+      resolvePca({ accessToken: "token" } as AuthenticationResult);
+      await expect(flow).resolves.toMatchObject({ accessToken: "token" });
+    } finally {
+      consoleErr.mockRestore();
+      vi.useRealTimers();
+    }
   });
 });
