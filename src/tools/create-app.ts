@@ -12,7 +12,17 @@
  *
  * After creating the app, we point MSAL auth at the new app's client ID so the
  * subsequent SPE tools acquire a delegated owning-app token (device code /
- * browser) automatically. Idempotent: reuses an existing app by display name.
+ * browser) automatically.
+ *
+ * Idempotency model: the stable key is the **appId** (client ID), not the
+ * display name. Entra display names are NOT unique — multiple apps can share
+ * one — so once an owning app has been provisioned we remember its appId and
+ * resume by appId (findApplicationByAppId) on every subsequent run. A
+ * display-name lookup is only a best-effort convenience for the very first run
+ * (nothing remembered yet) or when the caller explicitly targets a named app;
+ * if several apps share that name it resolves the first match. Net effect:
+ * re-running is idempotent (no duplicate app is created) and, after the first
+ * run, precise because it keys on the unique appId.
  *
  * Ports the full-setup skill `02-app.ps1`.
  */
@@ -39,8 +49,9 @@ export const createAppTool: McpTool = {
     "Create the owning Entra application for a SharePoint Embedded setup (a public-client app " +
     "with the required SPE delegated permissions). Uses your signed-in Azure CLI session — no " +
     "first-party app or pre-authorization needed. This is the first provisioning step; the " +
-    "container type and containers are created afterward as this app. Idempotent: reuses an " +
-    "existing app with the same display name.",
+    "container type and containers are created afterward as this app. Idempotent: re-running " +
+    "does not create a duplicate — once provisioned it resumes by the app's unique client ID " +
+    "(appId), not by display name (Entra display names are not unique).",
   inputSchema: {
     type: "object" as const,
     properties: {
@@ -116,8 +127,11 @@ export const createAppTool: McpTool = {
       // Resolution order:
       //  - An EXPLICIT displayName targets that named app (created if missing),
       //    so a caller can address a specific app even when state holds another.
+      //    NOTE: display names are NOT unique in Entra, so a name lookup resolves
+      //    the first match; the unique key is the appId, which is why the reuse
+      //    path below (and every run after the first) keys on the persisted appId.
       //  - "reuse" (or a first run with nothing remembered) resumes by the
-      //    persisted appId (stable identity); "new" forces name/default
+      //    persisted appId (stable, unique identity); "new" forces name/default
       //    resolution instead of the remembered id.
       //  - Otherwise fall back to a default-name lookup.
       const resumeByAppId = !explicitName && appSelection !== "new" && !!persisted.appId;
@@ -180,8 +194,3 @@ export const createAppTool: McpTool = {
     }
   },
 };
-
-/** Resolve the owning app ID from explicit arg or persisted state. */
-export function resolveOwningAppId(explicit?: string): string | undefined {
-  return explicit || readState().appId;
-}
