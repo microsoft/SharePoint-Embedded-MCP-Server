@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.microsoft/SharePoint-Embedded-MCP-Server",
+  "name": "com.microsoft/sharepointembedded-mcp-server",
   "description": "MCP server for SharePoint Embedded management",
   "version": "0.1.0-alpha.1",
   "repository": {
