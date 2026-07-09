@@ -211,13 +211,42 @@ function getAuthority(): string {
 
 // ─── Logging ────────────────────────────────────────────────────────────────
 
-function log(message: string, data?: unknown): void {
+type LogSeverity = "debug" | "info" | "warn" | "error";
+
+// All auth diagnostics go to STDERR (never stdout): a stdio MCP server must keep
+// stdout reserved for the JSON-RPC stream. Each line carries an explicit
+// severity so a reader can tell expected, handled flow (debug/info) apart from
+// conditions that genuinely warrant attention (warn/error). In particular,
+// "silent acquisition failed — interaction required" is a NORMAL step of the
+// interactive sign-in waterfall, not an error, so it is logged at debug.
+function emitLog(level: LogSeverity, message: string, data?: unknown): void {
   const timestamp = new Date().toISOString();
+  const prefix = `[${timestamp}] [Auth] [${level}]`;
   if (data !== undefined) {
-    console.error(`[${timestamp}] [Auth] ${message}`, data);
+    console.error(`${prefix} ${message}`, data);
   } else {
-    console.error(`[${timestamp}] [Auth] ${message}`);
+    console.error(`${prefix} ${message}`);
   }
+}
+
+/** Default-severity (info) auth log line. */
+function log(message: string, data?: unknown): void {
+  emitLog("info", message, data);
+}
+
+/** Expected, handled flow — not actionable (e.g. silent auth needing interaction). */
+function logDebug(message: string, data?: unknown): void {
+  emitLog("debug", message, data);
+}
+
+/** Handled but noteworthy (e.g. a guard rejecting a wrong-tenant token). */
+function logWarn(message: string, data?: unknown): void {
+  emitLog("warn", message, data);
+}
+
+/** Genuine, unexpected failure. */
+function logError(message: string, data?: unknown): void {
+  emitLog("error", message, data);
 }
 
 // ─── File-Based Cache Plugin ────────────────────────────────────────────────
@@ -410,7 +439,7 @@ export function isWrongTenantToken(
 
 async function acquireTokenSilent(account: AccountInfo): Promise<AuthenticationResult | null> {
   try {
-    log("Attempting silent token acquisition...");
+    logDebug("Attempting silent token acquisition...");
     const silentRequest: SilentFlowRequest = {
       scopes: getScopes(),
       account,
@@ -424,30 +453,37 @@ async function acquireTokenSilent(account: AccountInfo): Promise<AuthenticationR
     const configuredTenant = authConfig?.tenantId;
     if (isWrongTenantToken(result, configuredTenant)) {
       const issuedTenant = result.tenantId || result.account?.tenantId;
-      log(
+      // Handled security guard: we successfully got a token but reject it. Worth
+      // a warn (not error) so it stands out, but it is not a failure of the flow.
+      logWarn(
         `Silent token tenant ${issuedTenant} does not match configured tenant ` +
           `${configuredTenant} — rejecting to avoid a wrong-tenant token`,
       );
       return null;
     }
 
-    log("Silent token acquisition succeeded");
+    logDebug("Silent token acquisition succeeded");
     return result;
   } catch (error) {
     if (error instanceof InteractionRequiredAuthError) {
+      // EXPECTED, handled outcome — not an error. The token could not be renewed
+      // silently, so the caller falls through to interactive sign-in. Logged at
+      // debug so it does not read as a failure. (Review comment r3515134473.)
       const accountHomeTenant = homeTenantOf(account);
       const configuredTenant = authConfig?.tenantId;
       if (configuredTenant && accountHomeTenant && accountHomeTenant !== configuredTenant) {
-        log(
+        logDebug(
           `Silent acquisition failed — interaction required (account home tenant ` +
             `${accountHomeTenant} does not match configured tenant ${configuredTenant})`,
         );
       } else {
-        log("Silent acquisition failed — interaction required");
+        logDebug("Silent acquisition failed — interaction required");
       }
       return null;
     }
-    log("Silent acquisition failed:", error);
+    // A non-interaction-required failure IS a genuine, unexpected error
+    // (network, MSAL/config fault): surface it at error level and rethrow.
+    logError("Silent acquisition failed with an unexpected error:", error);
     throw error instanceof Error ? error : new Error(String(error));
   }
 }
@@ -489,21 +525,115 @@ async function acquireTokenByDeviceCode(): Promise<AuthenticationResult> {
   }
 }
 
+// ─── Sign-in Result Messaging ───────────────────────────────────────────────
+// Concise, accurate success/error text shared by the terminal (`spe-mcp auth`)
+// and the post-redirect browser page. We state only what the code actually
+// knows — owning app (client) ID, configured tenant, granted scopes, and (when
+// available) the signed-in account — and point at a REAL next MCP tool rather
+// than over-claiming. (Review comment r3515151182.)
+
+const NEXT_STEP_HINT =
+  "run `status_get` to confirm the server sees your owning app, then " +
+  "`project_provision` to set up a container type + container " +
+  "(or `container_type_list` to inspect what already exists)";
+
+export interface LoginSuccessInfo {
+  clientId: string;
+  tenantId: string;
+  scopes: string[];
+  /**
+   * Signed-in account (UPN/email). Omitted for the browser page, where the
+   * account is not yet known at the time the template is rendered.
+   */
+  account?: string;
+}
+
+/** Plain-text sign-in success summary for the terminal / agent transcript. */
+export function formatLoginSuccessMessage(info: LoginSuccessInfo): string {
+  const lines = [
+    "Logged into your owning SPE app successfully.",
+    `  • App (client) ID: ${info.clientId}`,
+  ];
+  if (info.account) {
+    lines.push(`  • Account: ${info.account}`);
+  }
+  lines.push(`  • Tenant: ${info.tenantId}`);
+  lines.push(`  • Scopes: ${info.scopes.join(", ")}`);
+  lines.push(`Next: ${NEXT_STEP_HINT}.`);
+  return lines.join("\n");
+}
+
+/** Minimal HTML escaping for values interpolated into the browser templates. */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** Browser page shown after a SUCCESSFUL interactive redirect. */
+export function renderAuthSuccessHtml(info: LoginSuccessInfo): string {
+  const scopes = info.scopes.map(escapeHtml).join(", ");
+  return [
+    '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Signed in</title></head>',
+    '<body style="font-family: system-ui, sans-serif; max-width: 34rem; margin: 3rem auto; line-height: 1.5;">',
+    "<h1>Logged into your owning SPE app successfully</h1>",
+    "<p>You can close this window and return to your terminal or MCP client.</p>",
+    "<ul>",
+    `<li><strong>App (client) ID:</strong> ${escapeHtml(info.clientId)}</li>`,
+    `<li><strong>Tenant:</strong> ${escapeHtml(info.tenantId)}</li>`,
+    `<li><strong>Scopes:</strong> ${scopes}</li>`,
+    "</ul>",
+    "<p><strong>Next:</strong> run <code>status_get</code> to confirm access, then " +
+      "<code>project_provision</code> to set up SPE resources " +
+      "(or <code>container_type_list</code> to inspect what already exists).</p>",
+    "</body></html>",
+  ].join("");
+}
+
+/**
+ * Browser page shown when the interactive redirect FAILED. Gives actionable
+ * causes/fixes instead of a bare "try again" — a blind retry rarely helps when
+ * interactive sign-in itself failed (declined consent, wrong tenant, or a
+ * misconfigured app/redirect URI).
+ */
+export function renderAuthErrorHtml(): string {
+  return [
+    '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Sign-in didn\'t complete</title></head>',
+    '<body style="font-family: system-ui, sans-serif; max-width: 34rem; margin: 3rem auto; line-height: 1.5;">',
+    "<h1>Sign-in didn't complete</h1>",
+    "<p>You can close this window — your terminal / MCP client has the full error.</p>",
+    "<p>Common causes and how to fix them:</p>",
+    "<ul>",
+    "<li>Consent was declined or cancelled — start sign-in again and approve the requested SPE permissions.</li>",
+    "<li>Signed in with the wrong account or tenant — choose an account in the tenant this app is registered in.</li>",
+    "<li>App registration or redirect URI misconfigured — confirm the app allows the local redirect used for interactive sign-in.</li>",
+    "</ul>",
+    "<p>If browser sign-in keeps failing, run " +
+      "<code>spe-mcp auth --client-id &lt;appId&gt; --tenant-id &lt;tenantId&gt;</code> in a terminal.</p>",
+    "</body></html>",
+  ].join("");
+}
+
 // ─── Auth Flow: Interactive Browser ─────────────────────────────────────────
 
 async function acquireTokenInteractive(): Promise<AuthenticationResult> {
   log("Starting interactive browser flow...");
   try {
+    const cfg = getConfig();
     const result = await ensurePcaInitialized().acquireTokenInteractive({
       scopes: getScopes(),
       openBrowser: async (url) => {
         log(`Opening browser for auth: ${url}`);
         await open(url);
       },
-      successTemplate:
-        "<h1>Authentication successful!</h1><p>You can close this window and return to your terminal.</p>",
-      errorTemplate:
-        "<h1>Authentication failed</h1><p>Please close this window and try again.</p>",
+      successTemplate: renderAuthSuccessHtml({
+        clientId: cfg.clientId,
+        tenantId: cfg.tenantId,
+        scopes: getScopes(),
+      }),
+      errorTemplate: renderAuthErrorHtml(),
     });
     if (!result) {
       throw new Error("Interactive flow returned no result");
@@ -707,12 +837,28 @@ export async function authenticateInteractively(): Promise<void> {
   if (account) {
     const result = await acquireTokenSilent(account);
     if (result) {
-      console.log(`Already authenticated as ${account.username}`);
+      console.log(
+        "Already signed in — no browser needed.\n" +
+          formatLoginSuccessMessage({
+            clientId: config.clientId,
+            tenantId: config.tenantId,
+            scopes: getScopes(),
+            account: account.username,
+          }),
+      );
       return;
     }
   }
 
-  await acquireTokenInteractiveWithFallbacks();
+  const result = await acquireTokenInteractiveWithFallbacks();
+  console.log(
+    formatLoginSuccessMessage({
+      clientId: config.clientId,
+      tenantId: config.tenantId,
+      scopes: getScopes(),
+      account: result.account?.username,
+    }),
+  );
 }
 
 /**
