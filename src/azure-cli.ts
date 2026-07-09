@@ -306,6 +306,34 @@ const SYNTEX_SUPPORTED_REGIONS = new Set<string>([
   "southafricawest",
 ]);
 
+/** Normalize a region string the way ARM compares locations (lower-case, no spaces). */
+function normalizeRegion(region: string): string {
+  return region.trim().toLowerCase().replace(/\s+/g, "");
+}
+
+/** True if `region` can host a Microsoft.Syntex/accounts (SPE standard billing) account. */
+export function isSyntexRegionSupported(region: string): boolean {
+  return SYNTEX_SUPPORTED_REGIONS.has(normalizeRegion(region));
+}
+
+/**
+ * Throw an actionable error if `region` cannot host a Microsoft.Syntex account.
+ * Callers on the standard-billing path MUST run this BEFORE creating the
+ * container type: a standard container type cannot be deleted (Graph 422
+ * "Cannot delete container type for non trial"), so an invalid region caught
+ * only at billing-account creation time leaves an un-rollback-able orphan CT.
+ * Validating up front keeps the failure cost-free and reversible.
+ */
+export function assertSyntexRegionSupported(region: string): void {
+  if (!isSyntexRegionSupported(region)) {
+    throw new Error(
+      `Azure region '${region}' is not available for Microsoft.Syntex/accounts ` +
+        "(SharePoint Embedded standard billing). Choose a supported region, e.g. " +
+        `eastus, westus, westeurope, uksouth. Full list: ${[...SYNTEX_SUPPORTED_REGIONS].join(", ")}.`,
+    );
+  }
+}
+
 interface SyntexAccountProperties {
   friendlyName?: string;
   service?: string;
@@ -487,14 +515,11 @@ export async function createSyntexAccount(
 
   // Fail fast with an actionable message if the region can't host a Syntex
   // account, instead of surfacing a raw ARM `LocationNotAvailableForResourceType`.
-  const normalizedRegion = region.trim().toLowerCase().replace(/\s+/g, "");
-  if (!SYNTEX_SUPPORTED_REGIONS.has(normalizedRegion)) {
-    throw new Error(
-      `Azure region '${region}' is not available for Microsoft.Syntex/accounts ` +
-        "(SharePoint Embedded standard billing). Choose a supported region, e.g. " +
-        `eastus, westus, westeurope, uksouth. Full list: ${[...SYNTEX_SUPPORTED_REGIONS].join(", ")}.`,
-    );
-  }
+  // NOTE: callers on the provisioning path validate this BEFORE creating the
+  // container type (see assertSyntexRegionSupported) so a bad region never
+  // orphans a non-deletable standard CT; this is the last-line guard.
+  assertSyntexRegionSupported(region);
+  const normalizedRegion = normalizeRegion(region);
 
   try {
     const accountName = newAccountName();

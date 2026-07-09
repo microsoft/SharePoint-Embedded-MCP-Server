@@ -32,7 +32,8 @@ vi.mock("../bootstrap.js", () => ({
   bootstrapTokenProvider: vi.fn(async () => "boot"),
   getSignedInIdentity: vi.fn(async () => ({ tenantId: "t-1", username: "dev@x.com" })),
 }));
-vi.mock("../azure-cli.js", () => ({
+vi.mock("../azure-cli.js", async (importActual) => ({
+  ...(await importActual<typeof import("../azure-cli.js")>()),
   ensureSyntexProviderRegistered: vi.fn(async () => ({ namespace: "Microsoft.Syntex", registrationState: "Registered" })),
   createSyntexAccount: vi.fn(async () => "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Syntex/accounts/acc-1"),
   getSyntexAccounts: vi.fn(async () => []),

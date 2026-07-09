@@ -19,7 +19,7 @@
  */
 
 import { bootstrapTokenProvider, getSignedInIdentity } from "../bootstrap.js";
-import { createSyntexAccount, ensureSyntexProviderRegistered, getSyntexAccounts } from "../azure-cli.js";
+import { createSyntexAccount, ensureSyntexProviderRegistered, getSyntexAccounts, assertSyntexRegionSupported } from "../azure-cli.js";
 import {
   activateContainer,
   addSpePermissions,
@@ -234,6 +234,29 @@ export const provisionTool: McpTool = {
               partialProgress(steps, "standard billing prerequisites (subscription + resource group)"),
           }],
         };
+      }
+
+      // Pre-flight: validate the Azure region BEFORE creating anything. A
+      // standard container type CANNOT be deleted (Graph 422 "Cannot delete
+      // container type for non trial"), so if we only discovered an unsupported
+      // region at billing-account creation time — after the CT already exists —
+      // the rollback would fail and leave an orphaned CT (observed with
+      // 'westus2'). Failing here keeps an invalid region cost-free and
+      // reversible. (per PR #3 review — provisioning safety)
+      if (billingClassification === "standard") {
+        try {
+          assertSyntexRegionSupported(region);
+        } catch (regionError) {
+          return {
+            content: [{
+              type: "text" as const,
+              text:
+                `${regionError instanceof Error ? regionError.message : String(regionError)}` +
+                partialProgress(steps, "standard billing region validation"),
+            }],
+            isError: true,
+          };
+        }
       }
 
       // Financial-safety gate (per PR #3 review): standard billing creates a

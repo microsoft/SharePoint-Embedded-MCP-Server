@@ -14,7 +14,7 @@
  *   - After creation, must register the CT before creating containers
  */
 
-import { ensureSyntexProviderRegistered } from "../azure-cli.js";
+import { ensureSyntexProviderRegistered, isSyntexRegionSupported } from "../azure-cli.js";
 // These are Microsoft Graph API wrappers from graph-client (not other tools'
 // handlers). All four are used by this one tool: listContainerTypes enforces the
 // 1:1 owning-app→CT check, createContainerType creates it, deleteContainerType
@@ -102,6 +102,22 @@ async function executeCreateContainerType(args: CreateContainerTypeArgs) {
         "2. Run **azure_resource_groups_list** for that subscription and pick one → pass `resourceGroup`.\n" +
         "3. Re-run **container_type_create** with `billingClassification=standard`, `azureSubscriptionId`, and `resourceGroup`.\n\n" +
         "(For a free container type, use `billingClassification=trial` instead.)",
+    };
+  }
+
+  // Pre-flight: if a region was specified for standard billing, validate it
+  // BEFORE creating the container type. A standard CT cannot be deleted (Graph
+  // 422 "Cannot delete container type for non trial"), so catching a bad region
+  // only later (at billing-account creation) would strand an orphan CT. Region
+  // is optional here (billing_setup can default it), so only check when given.
+  // (per PR #3 review — provisioning safety)
+  if (billingClassification === "standard" && region && !isSyntexRegionSupported(region)) {
+    return {
+      success: false,
+      error:
+        `Azure region '${region}' is not available for Microsoft.Syntex/accounts (SharePoint Embedded ` +
+        "standard billing). Choose a supported region (e.g. eastus, westus, westeurope, uksouth) and " +
+        "re-run **container_type_create**, or omit `region` to use the default.",
     };
   }
 

@@ -17,7 +17,8 @@ vi.mock("../graph-client.js", () => ({
   deleteContainerType: vi.fn(),
 }));
 
-vi.mock("../azure-cli.js", () => ({
+vi.mock("../azure-cli.js", async (importActual) => ({
+  ...(await importActual<typeof import("../azure-cli.js")>()),
   ensureSyntexProviderRegistered: vi.fn(),
 }));
 
