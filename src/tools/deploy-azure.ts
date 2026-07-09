@@ -18,7 +18,7 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { bootstrapTokenProvider } from "../bootstrap.js";
+import { azureCliTokenProvider } from "../azure-cli-token.js";
 import { addSpaRedirectUris } from "../graph-client.js";
 import { readState } from "../state.js";
 import type { McpTool } from "../types.js";
@@ -110,7 +110,7 @@ async function addDeployedOriginToOwningApp(endpoint: string | null): Promise<st
   const result = await addSpaRedirectUris(
     state.appObjectId,
     [origin],
-    bootstrapTokenProvider,
+    azureCliTokenProvider,
     { bestEffort: true },
   );
 

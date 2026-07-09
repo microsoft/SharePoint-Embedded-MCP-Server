@@ -14,7 +14,7 @@
  * cannot delete resources unprompted. Ports the full-setup skill `06-cleanup.ps1`.
  */
 
-import { bootstrapTokenProvider } from "../bootstrap.js";
+import { azureCliTokenProvider } from "../azure-cli-token.js";
 import { setAuthConfig } from "../auth.js";
 import { AppError } from "../errors.js";
 import {
@@ -136,7 +136,7 @@ export const cleanupTool: McpTool = {
     // user can resume after purging containers.
     let blockedByContainers = false;
 
-    // Container-type deletion uses the owning-app token. In bootstrap mode,
+    // Container-type deletion uses the owning-app token. In Azure CLI token mode,
     // restore auth config from persisted state so getAccessToken() is usable.
     if (state.appId && state.tenantId) {
       setAuthConfig({ clientId: state.appId, tenantId: state.tenantId });
@@ -223,7 +223,7 @@ export const cleanupTool: McpTool = {
 
     if (state.appObjectId) {
       try {
-        await deleteApplication(state.appObjectId, bootstrapTokenProvider);
+        await deleteApplication(state.appObjectId, azureCliTokenProvider);
         results.push(`✅ Deleted owning app \`${state.appId}\``);
       } catch (error) {
         results.push(`⚠️ App delete failed: ${error instanceof Error ? error.message : String(error)}`);

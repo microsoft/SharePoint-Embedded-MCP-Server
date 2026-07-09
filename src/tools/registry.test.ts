@@ -38,7 +38,7 @@ import { statusTool } from "../tools/status.js";
 import { createAppTool } from "../tools/create-app.js";
 import { registerContainerTypeTool } from "../tools/register-container-type.js";
 import { getContainerTypeTool, updateContainerTypeTool, deleteContainerTypeTool } from "../tools/container-type-crud.js";
-import { grantContainerTypeOwnerTool, listContainerTypeOwnersTool, revokeContainerTypeOwnerTool } from "../tools/container-type-permissions.js";
+import { ownerGrantContainerTypeTool, listContainerTypeOwnersTool, ownerDeleteContainerTypeTool } from "../tools/container-type-permissions.js";
 import { addContainerTypeAppGrantTool, listContainerTypeAppGrantsTool, removeContainerTypeAppGrantTool } from "../tools/container-type-app-grants.js";
 import { getContainerTypeRegistrationTool, listContainerTypeRegistrationsTool, deleteContainerTypeRegistrationTool } from "../tools/container-type-registration.js";
 import { createContainerTool } from "../tools/create-container.js";
@@ -65,9 +65,9 @@ const ALL_TOOLS: McpTool[] = [
   getContainerTypeTool,
   updateContainerTypeTool,
   deleteContainerTypeTool,
-  grantContainerTypeOwnerTool,
+  ownerGrantContainerTypeTool,
   listContainerTypeOwnersTool,
-  revokeContainerTypeOwnerTool,
+  ownerDeleteContainerTypeTool,
   addContainerTypeAppGrantTool,
   listContainerTypeAppGrantsTool,
   removeContainerTypeAppGrantTool,
@@ -153,9 +153,9 @@ describe("Tool Registry", () => {
       "container_type_get",
       "container_type_update",
       "container_type_delete",
-      "container_type_grant_owner",
+      "container_type_owner_grant",
       "container_type_owners_list",
-      "container_type_revoke_owner",
+      "container_type_owner_delete",
       "container_type_app_grant_add",
       "container_type_app_grants_list",
       "container_type_app_grant_remove",
@@ -192,6 +192,15 @@ describe("Tool Registry", () => {
     ];
     const actual = ALL_TOOLS.map(t => t.name).sort();
     expect(actual).toEqual(expected.sort());
+  });
+
+  it("registers resource_verb owner tool names and not legacy owner names", () => {
+    const names = ALL_TOOLS.map(t => t.name);
+
+    expect(names).toContain("container_type_owner_grant");
+    expect(names).toContain("container_type_owner_delete");
+    expect(names).not.toContain("container_type_" + "grant_owner");
+    expect(names).not.toContain("container_type_" + "revoke_owner");
   });
 });
 

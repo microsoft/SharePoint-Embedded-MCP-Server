@@ -4,7 +4,10 @@
 /**
  * Tool: container_type_create
  *
- * Creates a new SharePoint Embedded container type via Microsoft Graph.
+ * Creates, registers, and (for standard billing) prepares billing for a new
+ * SharePoint Embedded container type via Microsoft Graph. PR #3 review kept the
+ * `container_type_create` name and clarified that this tool covers more than the
+ * initial create API call.
  *
  * Key gotchas (from live testing — see Skills/full-setup/gotchas.md):
  *   - Use `displayName` field (Graph API), not `name`
@@ -285,8 +288,9 @@ function createContainerTypeValidationMessage(error: z.ZodError): string {
 export const createContainerTypeTool = defineTool({
   name: "container_type_create",
   description:
-    "Create a new SharePoint Embedded container type. A container type defines the relationship between your application and a set of containers. " +
-    "Each owning application can have exactly one container type (1:1 relationship). " +
+    "Create a new SharePoint Embedded container type, register it with the owning app, and for standard billing set up the billing prerequisite. " +
+    "A container type defines the relationship between your application and a set of containers. " +
+    "Each owning application can have exactly one container type (1:1 relationship). PR #3 review clarified this tool scope; the MCP tool name stays container_type_create. " +
     "By default, the container type is automatically registered with full permissions for the owning app. " +
     "Trial container types are limited to 3 per tenant and expire after 30 days.",
   annotations: {

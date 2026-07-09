@@ -5,14 +5,14 @@
  * Tool: status_get
  *
  * Reports the SPE Builder server's current state: the signed-in Azure CLI
- * (bootstrap) identity and provisioning readiness. This is the developer's
- * "where am I?" check and the first consumer of the bootstrap auth plane.
+ * (Azure CLI token) identity and provisioning readiness. This is the developer's
+ * "where am I?" check and the first consumer of the Azure CLI token auth plane.
  *
  * Phase 0: reports az identity + readiness. Phase 1+ enriches this with the
  * provisioned owning app, container type, registration, and containers.
  */
 
-import { assertAzCli, getSignedInIdentity } from "../bootstrap.js";
+import { assertAzCli, getSignedInIdentity } from "../azure-cli-token.js";
 import { readState } from "../state.js";
 import type { McpTool } from "../types.js";
 

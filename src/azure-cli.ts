@@ -16,7 +16,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getSignedInIdentity } from "./bootstrap.js";
+import { getSignedInIdentity } from "./azure-cli-token.js";
 import {
   isConditionalAccessOrClaimsError,
   asConditionalAccessError,

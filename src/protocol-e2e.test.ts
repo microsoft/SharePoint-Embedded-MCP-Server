@@ -74,7 +74,7 @@ describe("MCP protocol-level e2e (spawned dist/cli.js start)", () => {
     }
     env.USERPROFILE = isolatedHome;
     env.HOME = isolatedHome;
-    // Force bootstrap mode (no pre-provisioned app); keeps auth non-blocking.
+    // Force Azure CLI token mode (no pre-provisioned app); keeps auth non-blocking.
     delete env.SPE_CLIENT_ID;
     delete env.SPE_TENANT_ID;
     delete env.SPE_READ_ONLY;

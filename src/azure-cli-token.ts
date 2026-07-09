@@ -2,11 +2,11 @@
 // Licensed under the MIT license.
 
 /**
- * Bootstrap (control-plane) authentication via the Azure CLI.
+ * Azure CLI control-plane token authentication via the Azure CLI.
  *
  * This is the FIRST token in the SPE Builder two-token model. The developer is
  * already signed into `az`, whose first-party CLI app carries
- * `Application.ReadWrite.All` + Graph basics. We use that token to bootstrap —
+ * `Application.ReadWrite.All` + Graph basics. We use that Azure CLI control-plane token to
  * create the owning Entra app, read `/me`, etc. — WITHOUT requiring any
  * Microsoft-owned first-party app or pre-authorization.
  *
@@ -26,7 +26,7 @@ const GRAPH_RESOURCE = "https://graph.microsoft.com";
 const AZ_TIMEOUT_MS = 20_000;
 
 function log(message: string, data?: unknown): void {
-  const line = `[${new Date().toISOString()}] [Bootstrap] ${message}`;
+  const line = `[${new Date().toISOString()}] [Azure CLI Token] ${message}`;
   if (data !== undefined) {
     console.error(line, typeof data === "string" ? data : JSON.stringify(data));
   } else {
@@ -82,7 +82,7 @@ export interface SignedInIdentity {
   username: string;
 }
 
-export interface BootstrapToken {
+export interface AzureCliToken {
   accessToken: string;
   expiresOn: Date | null;
   tenantId: string;
@@ -151,12 +151,12 @@ async function resolveTenantIdBestEffort(): Promise<string | undefined> {
 }
 
 /**
- * Acquire a bootstrap access token for the given resource (default: Microsoft
- * Graph) from the Azure CLI. Throws friendly errors for not-installed /
+ * Acquire an Azure CLI control-plane access token for the given resource
+ * (default: Microsoft Graph). Throws friendly errors for not-installed /
  * not-signed-in.
  */
-export async function getBootstrapToken(resource: string = GRAPH_RESOURCE): Promise<BootstrapToken> {
-  log(`Acquiring bootstrap token for ${resource}`);
+export async function getAzureCliToken(resource: string = GRAPH_RESOURCE): Promise<AzureCliToken> {
+  log(`Acquiring Azure CLI token for ${resource}`);
   try {
     const { stdout } = await execFileAsync(
       "az",
@@ -194,15 +194,15 @@ export async function getBootstrapToken(resource: string = GRAPH_RESOURCE): Prom
     if (isNotLoggedInError(message)) {
       throw new Error(NOT_LOGGED_IN_MSG);
     }
-    throw new Error(`Azure CLI bootstrap token acquisition failed: ${message}`, { cause: error });
+    throw new Error(`Azure CLI control-plane token acquisition failed: ${message}`, { cause: error });
   }
 }
 
 /**
- * Token-provider form of {@link getBootstrapToken} for passing to graph-client
+ * Token-provider form of {@link getAzureCliToken} for passing to graph-client
  * functions that accept a `getToken` callback (e.g. owning-app creation).
  */
-export async function bootstrapTokenProvider(): Promise<string> {
-  const { accessToken } = await getBootstrapToken();
+export async function azureCliTokenProvider(): Promise<string> {
+  const { accessToken } = await getAzureCliToken();
   return accessToken;
 }

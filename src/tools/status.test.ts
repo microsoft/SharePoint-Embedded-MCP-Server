@@ -2,12 +2,12 @@
 // Licensed under the MIT license.
 
 /**
- * Unit tests for the status_get tool. Bootstrap and state are mocked.
+ * Unit tests for the status_get tool. Azure CLI token and state are mocked.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../bootstrap.js", () => ({
+vi.mock("../azure-cli-token.js", () => ({
   assertAzCli: vi.fn(),
   getSignedInIdentity: vi.fn(),
 }));
@@ -15,7 +15,7 @@ vi.mock("../bootstrap.js", () => ({
 // ~/.spe-mcp/state.json on the dev machine.
 vi.mock("../state.js", () => ({ readState: vi.fn(() => ({})) }));
 
-import * as bootstrap from "../bootstrap.js";
+import * as azureCliToken from "../azure-cli-token.js";
 import { statusTool } from "../tools/status.js";
 
 beforeEach(() => {
@@ -29,8 +29,8 @@ describe("status_get", () => {
   });
 
   it("reports signed-in identity when az is ready", async () => {
-    vi.mocked(bootstrap.assertAzCli).mockResolvedValue(undefined);
-    vi.mocked(bootstrap.getSignedInIdentity).mockResolvedValue({
+    vi.mocked(azureCliToken.assertAzCli).mockResolvedValue(undefined);
+    vi.mocked(azureCliToken.getSignedInIdentity).mockResolvedValue({
       tenantId: "tenant-123",
       username: "dev@contoso.com",
     });
@@ -46,8 +46,8 @@ describe("status_get", () => {
   });
 
   it("confirms readiness once an owning app is provisioned", async () => {
-    vi.mocked(bootstrap.assertAzCli).mockResolvedValue(undefined);
-    vi.mocked(bootstrap.getSignedInIdentity).mockResolvedValue({
+    vi.mocked(azureCliToken.assertAzCli).mockResolvedValue(undefined);
+    vi.mocked(azureCliToken.getSignedInIdentity).mockResolvedValue({
       tenantId: "tenant-123",
       username: "dev@contoso.com",
     });
@@ -66,8 +66,8 @@ describe("status_get", () => {
   });
 
   it("prompts for login when az is installed but not signed in", async () => {
-    vi.mocked(bootstrap.assertAzCli).mockResolvedValue(undefined);
-    vi.mocked(bootstrap.getSignedInIdentity).mockResolvedValue(null);
+    vi.mocked(azureCliToken.assertAzCli).mockResolvedValue(undefined);
+    vi.mocked(azureCliToken.getSignedInIdentity).mockResolvedValue(null);
 
     const result = await statusTool.handler({});
 
@@ -77,7 +77,7 @@ describe("status_get", () => {
   });
 
   it("errors with guidance when az is not installed", async () => {
-    vi.mocked(bootstrap.assertAzCli).mockRejectedValue(
+    vi.mocked(azureCliToken.assertAzCli).mockRejectedValue(
       new Error("Azure CLI ('az') is not installed. Install it from https://aka.ms/install-azure-cli"),
     );
 

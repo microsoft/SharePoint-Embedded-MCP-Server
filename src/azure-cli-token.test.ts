@@ -2,7 +2,7 @@
 // Licensed under the MIT license.
 
 /**
- * Unit tests for the Azure CLI bootstrap module.
+ * Unit tests for the Azure CLI token module.
  * `node:child_process.execFile` is mocked so these run offline.
  */
 
@@ -11,7 +11,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("node:child_process", () => ({ execFile: vi.fn() }));
 
 import { execFile } from "node:child_process";
-import { assertAzCli, getSignedInIdentity, getBootstrapToken } from "./bootstrap.js";
+import { assertAzCli, getSignedInIdentity, getAzureCliToken } from "./azure-cli-token.js";
 
 type ExecCb = (err: Error | null, stdout: string, stderr: string) => void;
 
@@ -63,7 +63,7 @@ describe("getSignedInIdentity", () => {
   });
 });
 
-describe("getBootstrapToken", () => {
+describe("getAzureCliToken", () => {
   it("returns an access token for Graph", async () => {
     mockExec({
       stdout: JSON.stringify({
@@ -72,7 +72,7 @@ describe("getBootstrapToken", () => {
         tenantId: "tenant-123",
       }),
     });
-    const token = await getBootstrapToken();
+    const token = await getAzureCliToken();
     expect(token.accessToken).toBe("tok-abc");
     expect(token.tenantId).toBe("tenant-123");
     expect(token.expiresOn).toBeInstanceOf(Date);
@@ -80,7 +80,7 @@ describe("getBootstrapToken", () => {
 
   it("throws a friendly not-signed-in error", async () => {
     mockExec({ error: new Error("Please run 'az login' to setup account.") });
-    await expect(getBootstrapToken()).rejects.toThrow(/not signed in/i);
+    await expect(getAzureCliToken()).rejects.toThrow(/not signed in/i);
   });
 
   it("throws an actionable Conditional Access step-up error (not the plain not-signed-in path)", async () => {
@@ -91,7 +91,7 @@ describe("getBootstrapToken", () => {
           "multi-factor authentication to access the resource. Trace ID: ...",
       ),
     });
-    const err = await getBootstrapToken().catch((e: unknown) => e as Error);
+    const err = await getAzureCliToken().catch((e: unknown) => e as Error);
     expect(err.message).toMatch(/Conditional Access requires step-up authentication/i);
     expect(err.message).toContain("az login --scope https://management.core.windows.net//.default --tenant");
     // tenant cannot be resolved under the simulated CA failure, so a placeholder is used.
@@ -101,18 +101,18 @@ describe("getBootstrapToken", () => {
 
   it("throws not-installed error on ENOENT", async () => {
     mockExec({ error: new Error("spawn az ENOENT") });
-    await expect(getBootstrapToken()).rejects.toThrow(/not installed/i);
+    await expect(getAzureCliToken()).rejects.toThrow(/not installed/i);
   });
 
   it("throws when az returns no token", async () => {
     mockExec({ stdout: JSON.stringify({ expiresOn: "x" }) });
-    await expect(getBootstrapToken()).rejects.toThrow(/no access token/i);
+    await expect(getAzureCliToken()).rejects.toThrow(/no access token/i);
   });
 });
 
 describe("cross-platform az invocation", () => {
   // `az` is a native binary on macOS/Linux but a `.cmd` shim on Windows that
-  // must be resolved through a shell. bootstrap.ts sets `shell: true` only on
+  // must be resolved through a shell. azure-cli-token.ts sets `shell: true` only on
   // win32; this asserts the invocation adapts to the current platform so the
   // command works on both Windows and Linux.
   it("passes shell:true on Windows and falsy elsewhere", async () => {

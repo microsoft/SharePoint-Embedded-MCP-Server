@@ -218,7 +218,7 @@ function resetInMemoryAuthState(): void {
  * Actionable message shown when a control-plane SPE operation is attempted
  * before an owning Entra app is configured. SPE container-type / container /
  * billing operations need a delegated token from an owning app that holds the
- * SPE Graph permissions — the Azure CLI bootstrap token cannot carry those
+ * SPE Graph permissions — the Azure CLI control-plane token cannot carry those
  * scopes. This message tells the agent/user exactly how to proceed.
  *
  * Once an owning app IS configured, the server acquires a delegated token AS
@@ -231,7 +231,7 @@ export const OWNING_APP_REQUIRED_MESSAGE =
   "operations need an owning Entra app with the SPE Graph permissions. Run the " +
   "`project_app_create` tool to create (or reuse) one — the server then signs in " +
   "as that app automatically, no restart needed. Alternatively, start the server " +
-  "with `--client-id <appId> --tenant-id <tenantId>` for an existing owning app.";
+  "with `--owning-app-client-id <appId> --tenant-id <tenantId>` for an existing owning app.";
 
 /**
  * Whether a previously-provisioned or explicitly-configured owning SPE app
@@ -690,7 +690,7 @@ export function renderAuthErrorHtml(): string {
     "<li>App registration or redirect URI misconfigured — confirm the app allows the local redirect used for interactive sign-in.</li>",
     "</ul>",
     "<p>If browser sign-in keeps failing, run " +
-      "<code>spe-mcp auth --client-id &lt;appId&gt; --tenant-id &lt;tenantId&gt;</code> in a terminal.</p>",
+      "<code>spe-mcp auth --owning-app-client-id &lt;appId&gt; --tenant-id &lt;tenantId&gt;</code> in a terminal.</p>",
     "</body></html>",
   ].join("");
 }
@@ -769,7 +769,7 @@ async function acquireTokenInteractiveWithFallbacks(): Promise<AuthenticationRes
       {
         safeMessage:
           "No cached credentials and interactive sign-in is disabled (SPE_NON_INTERACTIVE). " +
-          "Run `spe-mcp auth --client-id <appId> --tenant-id <tenantId>` in a terminal to " +
+          "Run `spe-mcp auth --owning-app-client-id <appId> --tenant-id <tenantId>` in a terminal to " +
           "pre-cache a token, then retry.",
         suggestion: "Pre-cache a token with `spe-mcp auth`, or unset SPE_NON_INTERACTIVE.",
       },
@@ -780,7 +780,7 @@ async function acquireTokenInteractiveWithFallbacks(): Promise<AuthenticationRes
     safeMessage:
       "Sign-in did not complete. A browser should have opened for you to consent to the SPE " +
       "app — complete it and retry. If no browser opened (headless/remote), run " +
-      "`spe-mcp auth --client-id <appId> --tenant-id <tenantId>` in a terminal, then retry.",
+      "`spe-mcp auth --owning-app-client-id <appId> --tenant-id <tenantId>` in a terminal, then retry.",
     suggestion: "Complete the browser consent and retry.",
   });
 }

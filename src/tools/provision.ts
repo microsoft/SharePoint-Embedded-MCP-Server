@@ -8,7 +8,7 @@
  *   owning app → container type → (standard billing) → registration → container.
  *
  * Composes the lower-level operations with the two-token handoff handled
- * internally (az bootstrap token creates the app; the owning-app token does the
+ * internally (Azure CLI control-plane token creates the app; the owning-app token does the
  * SPE operations). Idempotent and resumable via ~/.spe-mcp/state.json.
  *
  * Billing: when `billingClassification` is "standard", a subscription +
@@ -18,7 +18,7 @@
  * elicitation) rather than guessing.
  */
 
-import { bootstrapTokenProvider, getSignedInIdentity } from "../bootstrap.js";
+import { azureCliTokenProvider, getSignedInIdentity } from "../azure-cli-token.js";
 import { createSyntexAccount, ensureSyntexProviderRegistered, getSyntexAccounts, assertSyntexRegionSupported } from "../azure-cli.js";
 import {
   activateContainer,
@@ -68,7 +68,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Structured stderr log (matches the per-module convention used in bootstrap.ts
+ * Structured stderr log (matches the per-module convention used in azureCliToken.ts
  * / graph-client.ts). Provisioning is a multi-minute orchestration; without a
  * live signal the buffered `steps` array only surfaces at the very end, so the
  * server log looks frozen mid-run. Logging each completed step here (rather than
@@ -193,7 +193,7 @@ export const provisionTool: McpTool = {
     const steps: string[] = [];
 
     try {
-      // 0. Confirm signed-in identity (bootstrap/control plane).
+      // 0. Confirm signed-in identity (Azure CLI control plane).
       const identity = await getSignedInIdentity();
       if (!identity) {
         return {
@@ -393,8 +393,8 @@ export const provisionTool: McpTool = {
       // recorded (e.g., an older resumed setup provisioned before this prompt).
       const ownerScope: OwnerScope = resolvedOwnerScope ?? "selected";
 
-      // 1. Owning app (bootstrap token), idempotent.
-      const getToken = bootstrapTokenProvider;
+      // 1. Owning app (Azure CLI token), idempotent.
+      const getToken = azureCliTokenProvider;
       // Resolution order: an EXPLICIT appDisplayName targets that named app
       // (created if missing). Otherwise "reuse" (or a first run with nothing
       // remembered) resumes by the persisted appId (stable identity), while
@@ -523,7 +523,7 @@ export const provisionTool: McpTool = {
 
       // 4a. Grant the signed-in user the `owner` role on the container type
       // (Graph beta). Owners can create containers using a public client (PCA),
-      // so the deployed sample app's user — not just this bootstrap path — can
+      // so the deployed sample app's user — not just this Azure CLI token path — can
       // create containers. Best-effort: the container type's creator is already
       // an auto-owner, so a failure here is non-fatal.
       try {

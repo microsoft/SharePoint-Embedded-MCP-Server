@@ -31,8 +31,8 @@ vi.mock("../graph-client.js", () => ({
   getSignedInUser: vi.fn(async () => ({ id: "user-1", userPrincipalName: "admin@x.com" })),
   grantContainerTypeOwner: vi.fn(async () => ({ id: "perm-1", roles: ["owner"] })),
 }));
-vi.mock("../bootstrap.js", () => ({
-  bootstrapTokenProvider: vi.fn(async () => "boot"),
+vi.mock("../azure-cli-token.js", () => ({
+  azureCliTokenProvider: vi.fn(async () => "boot"),
   getSignedInIdentity: vi.fn(async () => ({ tenantId: "t-1", username: "dev@x.com" })),
 }));
 vi.mock("../azure-cli.js", async (importActual) => ({
@@ -59,7 +59,7 @@ vi.mock("../state.js", () => ({
 
 import * as graph from "../graph-client.js";
 import * as azureCli from "../azure-cli.js";
-import * as bootstrap from "../bootstrap.js";
+import * as azureCliToken from "../azure-cli-token.js";
 import { provisionTool } from "../tools/provision.js";
 import { getSessionId } from "../session.js";
 import { scaffoldTool } from "../tools/scaffold.js";
@@ -153,7 +153,7 @@ describe("project_provision", () => {
   });
 
   it("appends a NON-BLOCKING guest heads-up when signed in as a B2B guest — provisioning is NOT blocked (PR #3 review)", async () => {
-    vi.mocked(bootstrap.getSignedInIdentity).mockResolvedValueOnce({
+    vi.mocked(azureCliToken.getSignedInIdentity).mockResolvedValueOnce({
       tenantId: "t-1",
       username: "alice_corp.com#EXT#@resourcetenant.onmicrosoft.com",
     });
@@ -180,7 +180,7 @@ describe("project_provision", () => {
     vi.mocked(graph.createContainerType).mockResolvedValue({ containerTypeId: "ct-1", owningAppId: "app-1", displayName: "App Container Type" });
     vi.mocked(graph.createContainer).mockResolvedValue({ id: "c-1", displayName: "Default Container", containerTypeId: "ct-1", status: "inactive" });
 
-    // Default bootstrap mock signs in as the member `dev@x.com`.
+    // Default Azure CLI token mock signs in as the member `dev@x.com`.
     const r = await provisionTool.handler({ appDisplayName: "App", billingClassification: "trial" });
 
     expect(r.content[0].text).toContain("SPE Provisioned");

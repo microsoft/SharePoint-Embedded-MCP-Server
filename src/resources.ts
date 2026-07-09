@@ -73,9 +73,9 @@ const STATIC_RESOURCES: StaticResource[] = [
     mimeType: "text/markdown",
     text: `# SPE MCP auth and consent model
 
-## Bootstrap mode
+## Azure CLI token mode
 
-By default the server uses the developer's Azure CLI session for bootstrap/control-plane work. Sign in once before starting an MCP client:
+By default the server uses the developer's Azure CLI session for Azure CLI control-plane work. Sign in once before starting an MCP client:
 
 \`\`\`bash
 az login --allow-no-subscriptions

@@ -30,7 +30,7 @@ vi.mock("../state.js", () => ({
   }),
   clearState: vi.fn(),
 }));
-// Graph / bootstrap / auth are mocked so the tool modules import offline; none of
+// Graph / Azure CLI token / auth are mocked so the tool modules import offline; none of
 // their functions are reached because the gate throws first.
 vi.mock("../graph-client.js", () => ({
   registerContainerType: vi.fn(),
@@ -45,8 +45,8 @@ vi.mock("../graph-client.js", () => ({
   listContainerTypePermissions: vi.fn(async () => []),
   revokeContainerTypePermission: vi.fn(),
 }));
-vi.mock("../bootstrap.js", () => ({
-  bootstrapTokenProvider: vi.fn(async () => "boot"),
+vi.mock("../azure-cli-token.js", () => ({
+  azureCliTokenProvider: vi.fn(async () => "boot"),
   getSignedInIdentity: vi.fn(async () => ({ tenantId: "t-1", username: "dev@x.com" })),
 }));
 vi.mock("../auth.js", () => ({ setAuthConfig: vi.fn() }));
@@ -56,7 +56,7 @@ import type { McpTool } from "../types.js";
 import { registerContainerTypeTool } from "../tools/register-container-type.js";
 import { createContainerTypeTool } from "../tools/create-container-type.js";
 import { addContainerTypeAppGrantTool, removeContainerTypeAppGrantTool } from "../tools/container-type-app-grants.js";
-import { grantContainerTypeOwnerTool, revokeContainerTypeOwnerTool } from "../tools/container-type-permissions.js";
+import { ownerGrantContainerTypeTool, ownerDeleteContainerTypeTool } from "../tools/container-type-permissions.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -70,8 +70,8 @@ const gatedTools: Array<{ label: string; tool: McpTool; contains: string }> = [
   { label: "container_type_create", tool: createContainerTypeTool, contains: "creating container type" },
   { label: "container_type_app_grant_add", tool: addContainerTypeAppGrantTool, contains: "granting app permission" },
   { label: "container_type_app_grant_remove", tool: removeContainerTypeAppGrantTool, contains: "removing app permission grant" },
-  { label: "container_type_grant_owner", tool: grantContainerTypeOwnerTool, contains: "granting owner" },
-  { label: "container_type_revoke_owner", tool: revokeContainerTypeOwnerTool, contains: "revoking owner" },
+  { label: "container_type_owner_grant", tool: ownerGrantContainerTypeTool, contains: "granting owner" },
+  { label: "container_type_owner_delete", tool: ownerDeleteContainerTypeTool, contains: "revoking owner" },
 ];
 
 describe("restart-confirmation gate — stamp-write failure is tool-classified (PR #3 review)", () => {

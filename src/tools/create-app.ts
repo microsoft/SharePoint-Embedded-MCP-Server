@@ -5,9 +5,9 @@
  * Tool: project_app_create
  *
  * Creates the owning Entra application for a SharePoint Embedded setup, using
- * the Azure CLI **bootstrap token** (no Microsoft first-party app required).
+ * the Azure CLI **control-plane token** (no Microsoft first-party app required).
  * This is the first step of the two-token model:
- *   1. az bootstrap token  → create owning app + add SPE permissions  (here)
+ *   1. Azure CLI control-plane token  → create owning app + add SPE permissions  (here)
  *   2. owning-app token     → all SPE container-type/container operations
  *
  * After creating the app, we point MSAL auth at the new app's client ID so the
@@ -25,7 +25,7 @@
  * run, precise because it keys on the unique appId.
  */
 
-import { bootstrapTokenProvider, getSignedInIdentity } from "../bootstrap.js";
+import { azureCliTokenProvider, getSignedInIdentity } from "../azure-cli-token.js";
 import {
   addSpaRedirectUris,
   addSpePermissions,
@@ -108,7 +108,7 @@ export const createAppTool: McpTool = {
         };
       }
 
-      const getToken = bootstrapTokenProvider;
+      const getToken = azureCliTokenProvider;
 
       // Ask before silently reusing the last app (PM feedback: "it favors using
       // the last one — it should ask"). Critical always-ask (r-appgate): the

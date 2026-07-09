@@ -11,12 +11,12 @@ The server exposes **40 tools**, plus an MCP **Prompt** (`provision_spe_app`) an
 | Tool | Description |
 |------|-------------|
 | `status_get` | Signed-in identity (Azure CLI) + provisioning readiness |
-| `project_app_create` | Create the owning Entra app (via az bootstrap token) |
+| `project_app_create` | Create the owning Entra app (via Azure CLI control-plane token) |
 | `project_provision` | One-call orchestrator: app → container type → (billing) → register → container |
 | `container_type_create` / `container_type_register` / `container_create` | Individual provisioning steps |
 | `container_type_list` / `container_list` / `container_get` / `container_type_get` | Read operations |
 | `container_type_update` / `container_type_delete` | Update or delete a container type |
-| `container_type_grant_owner` / `container_type_revoke_owner` / `container_type_owners_list` | Manage container-type owners (beta; enables PCA container creation) |
+| `container_type_owner_grant` / `container_type_owner_delete` / `container_type_owners_list` | Manage container-type owners (beta; enables PCA container creation) |
 | `container_type_app_grant_add` / `container_type_app_grant_remove` / `container_type_app_grants_list` | Manage application permission grants on a container type registration (authorize consuming apps; v1.0) |
 
 **Billing**
@@ -96,7 +96,7 @@ Add to `%APPDATA%\Claude\claude_desktop_config.json` (Windows) or
 }
 ```
 
-> Bootstrap mode needs no app-specific environment variables; sign in once with
+> Azure CLI token mode needs no app-specific environment variables; sign in once with
 > `az login --allow-no-subscriptions`.
 
 ### Updating / removing
@@ -112,13 +112,13 @@ client config entry.
 
 ### Running modes
 
-**Bootstrap mode (default, recommended for the standalone POC)** — no Microsoft
+**Azure CLI token mode (default, recommended for the standalone POC)** — no Microsoft
 app registration required. The server uses your **Azure CLI** session for the
 control plane and provisions the owning app on demand.
 
 - Install the [Azure CLI](https://aka.ms/install-azure-cli)
 - Sign in once: `az login --allow-no-subscriptions` (the flag is required for M365-only tenants with no Azure subscription)
-- Start the server with **no** `--client-id`
+- Start the server with **no** `--owning-app-client-id`
 
 > **Conditional Access / step-up authentication (standard billing).** Standard-billing
 > provisioning performs Azure Resource Manager (ARM) writes — registering the
@@ -156,12 +156,12 @@ npm install
 # 2. Build
 npm run build
 
-# 3a. Bootstrap mode — just sign into Azure CLI (no app needed)
+# 3a. Azure CLI token mode — just sign into Azure CLI (no app needed)
 az login --allow-no-subscriptions
 npx @modelcontextprotocol/inspector node dist/cli.js start
 
 # 3b. OR pre-provisioned-app mode — authenticate as an existing app (once)
-node dist/cli.js auth --client-id YOUR_CLIENT_ID --tenant-id YOUR_TENANT_ID
+node dist/cli.js auth --owning-app-client-id YOUR_CLIENT_ID --tenant-id YOUR_TENANT_ID
 
 # 4. Test with MCP Inspector
 npx @modelcontextprotocol/inspector node dist/cli.js start
@@ -177,7 +177,7 @@ The server accepts configuration via CLI flags or environment variables:
 
 | CLI Flag | Env Var | Description |
 |----------|---------|-------------|
-| `--client-id` | `SPE_CLIENT_ID` | Entra ID Application (Client) ID |
+| `--owning-app-client-id` | `SPE_CLIENT_ID` | Entra ID Application (Client) ID |
 | `--tenant-id` | `SPE_TENANT_ID` | Entra ID Tenant ID |
 | `--read-only` | `SPE_READ_ONLY` | Advertise/allow only read/list/get/search tools; reject mutating calls |
 | `--tools` | `SPE_TOOLS` | Restrict exposed tools to a profile (`readOnly`, `docsOnly`, `provisioning`, `content`, `admin`) or a comma-separated tool list |
@@ -235,7 +235,7 @@ To point an MCP client at a local source build instead:
 ```
 
 > **`npx -y`** suppresses the install prompt so VS Code can launch the server
-> non-interactively. Bootstrap mode needs no app, so you can drop the `env` block
+> non-interactively. Azure CLI token mode needs no app, so you can drop the `env` block
 > and just `az login --allow-no-subscriptions`.
 
 ## Usage with Claude Desktop
@@ -261,10 +261,10 @@ Add to `%APPDATA%\Claude\claude_desktop_config.json` (Windows) or `~/Library/App
 
 ```bash
 # Start the MCP server (stdio transport)
-spe-mcp start [--client-id ID] [--tenant-id ID] [--read-only] [--tools <profileOrCsv>]
+spe-mcp start [--owning-app-client-id ID] [--tenant-id ID] [--read-only] [--tools <profileOrCsv>]
 
 # Authenticate interactively (cache tokens for headless use)
-spe-mcp auth --client-id ID --tenant-id ID [--reset]
+spe-mcp auth --owning-app-client-id ID --tenant-id ID [--reset]
 
 # Clear cached tokens
 spe-mcp logout
@@ -275,7 +275,7 @@ Every command has built-in help — run `spe-mcp <command> --help` (e.g.
 
 | Flag | Description |
 |------|-------------|
-| `--client-id <id>` | Owning Entra app Client ID. Omit to run in bootstrap mode (Azure CLI control plane). |
+| `--owning-app-client-id <id>` | Owning Entra app Client ID. Omit to run in Azure CLI token mode (Azure CLI control plane). |
 | `--tenant-id <id>` | Entra ID Tenant ID. Discovered from the Azure CLI when omitted. |
 | `--read-only` | Read-only mode: only read/list/get/search tools are exposed and callable. |
 | `--tools <profileOrCsv>` | Tool allowlist: a profile (`readOnly`, `docsOnly`, `provisioning`, `content`, `admin`) or a comma-separated list of tool names. |
@@ -290,7 +290,7 @@ The server uses [MSAL](https://learn.microsoft.com/en-us/entra/identity-platform
 
 For most developers nothing extra is needed: create the owning app with the `project_app_create` tool, then the first SPE call prompts a browser consent automatically.
 
-**Automation / headless:** in CI (`CI=true`) or a Linux host with no display, interactive sign-in is disabled by default, and SPE operations return an actionable error. Pre-cache a token by running `spe-mcp auth --client-id <appId> --tenant-id <tenantId>` once in a terminal. Override the defaults with `SPE_INTERACTIVE=1` (force browser sign-in) or `SPE_NON_INTERACTIVE=1` (force off).
+**Automation / headless:** in CI (`CI=true`) or a Linux host with no display, interactive sign-in is disabled by default, and SPE operations return an actionable error. Pre-cache a token by running `spe-mcp auth --owning-app-client-id <appId> --tenant-id <tenantId>` once in a terminal. Override the defaults with `SPE_INTERACTIVE=1` (force browser sign-in) or `SPE_NON_INTERACTIVE=1` (force off).
 
 ### Headless & orchestrator / sub-agent sign-in
 
@@ -305,7 +305,7 @@ Interactive sign-in is **enabled by default for local use** (the server can open
 
 **Orchestrator / sub-agent / agent-team scenarios.** When the MCP server runs over stdio and is driven by a *calling* agent (an orchestrator spawning sub-agents), the sub-agent's terminal is usually **not visible** to the caller. The device-code prompt is printed to **stderr**, which the calling agent typically cannot see — so a device-code wait would block invisibly. To avoid that, the server only offers device code when its stderr prompt is on a real **TTY**; otherwise it **fails fast** with actionable guidance rather than hanging. Recommended pattern for headless/agent setups:
 
-1. **Pre-authenticate before starting the server.** For the bootstrap / control-plane token, run `az login` (`--allow-no-subscriptions` for M365-only tenants). For the owning-app token, sign in once interactively in a **visible** terminal: `spe-mcp auth --client-id <appId> --tenant-id <tenantId>`.
+1. **Pre-authenticate before starting the server.** For the Azure CLI token / control-plane token, run `az login` (`--allow-no-subscriptions` for M365-only tenants). For the owning-app token, sign in once interactively in a **visible** terminal: `spe-mcp auth --owning-app-client-id <appId> --tenant-id <tenantId>`.
 2. **Restart the server after signing in** so it re-primes auth from the freshly cached token (startup auth is stamped for the session), then let the agent drive tool calls.
 
 This keeps sub-agents non-blocking: they either use a pre-cached token silently or return a clear "sign in first" error instead of stalling on an invisible prompt.
@@ -349,7 +349,7 @@ az logout
 Remove-Item "$HOME/.spe-mcp/state.json" -Force -ErrorAction SilentlyContinue
 ```
 
-`spe-mcp logout` clears MSAL token cache files, while `state.json` stores persisted provisioning metadata used to prime bootstrap auth on startup.
+`spe-mcp logout` clears MSAL token cache files, while `state.json` stores persisted provisioning metadata used to prime Azure CLI token auth on startup.
 
 > **TODO:** Add OS keychain support via [keytar](https://github.com/nicktrav/keytar) as the primary cache, falling back to file cache. Keytar provides OS-managed encryption (Windows Credential Manager / macOS Keychain / Linux Secret Service) but hit data size limits with MSAL's multi-scope cache during initial testing.
 
@@ -360,7 +360,7 @@ src/
 ├── index.ts                — MCP server: TOOLS registry, dispatch, transport, prompts/resources wiring
 ├── cli.ts                  — CLI entry point (start, auth, logout)
 ├── auth.ts                 — MSAL auth (silent → browser → device code)
-├── bootstrap.ts            — Azure CLI bootstrap (signed-in identity, az token)
+├── azureCliToken.ts            — Azure CLI Azure CLI token (signed-in identity, az token)
 ├── azure-cli.ts            — az invocations (subscriptions, resource groups, RP registration)
 ├── graph-client.ts         — Microsoft Graph client with retry + auth
 ├── docs-client.ts          — Microsoft Learn MCP proxy (docs_search / docs_fetch)
@@ -486,8 +486,8 @@ npm run build
 
 Set breakpoints in `src/` (e.g. a tool handler, `dispatch` in `index.ts`, or the
 `catch` in `startServer`), then press **F5**. The "Debug SPE MCP server" config
-starts a bootstrap-mode session (sign in first with
-`az login --allow-no-subscriptions`); pass `--client-id`/`--tenant-id` in `args`
+starts a Azure CLI token-mode session (sign in first with
+`az login --allow-no-subscriptions`); pass `--owning-app-client-id`/`--tenant-id` in `args`
 for pre-provisioned-app mode.
 
 **3. Attach with `--inspect` (CLI, Chrome DevTools, or when an MCP client spawns
