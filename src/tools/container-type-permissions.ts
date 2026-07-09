@@ -14,31 +14,20 @@
  */
 
 import { bootstrapTokenProvider } from "../bootstrap.js";
-import { setAuthConfig } from "../auth.js";
 import {
   getSignedInUser,
   grantContainerTypeOwner,
   listContainerTypePermissions,
   revokeContainerTypePermission,
 } from "../graph-client.js";
-import { readState } from "../state.js";
 import type { McpTool } from "../types.js";
+import { authContainerTypeState, err, reason } from "./container-type-shared.js";
 
-/** Point MSAL at the owning app (so SPE calls use its token) and return the
- *  provisioned container-type id as the default. */
+/** Point MSAL at the owning app and return the provisioned container-type id as
+ *  the default. Thin wrapper over the shared helper (owner tools only need the
+ *  container-type id). */
 function authAndDefaultCt(): string | undefined {
-  const state = readState();
-  if (state.appId && state.tenantId) {
-    setAuthConfig({ clientId: state.appId, tenantId: state.tenantId });
-  }
-  return state.containerTypeId;
-}
-
-function err(text: string) {
-  return { content: [{ type: "text" as const, text: `Error: ${text}` }], isError: true };
-}
-function reason(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
+  return authContainerTypeState().containerTypeId;
 }
 
 export const grantContainerTypeOwnerTool: McpTool = {

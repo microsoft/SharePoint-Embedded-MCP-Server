@@ -26,11 +26,11 @@ const GRAPH_RESOURCE = "https://graph.microsoft.com";
 const AZ_TIMEOUT_MS = 20_000;
 
 function log(message: string, data?: unknown): void {
-  const timestamp = new Date().toISOString();
+  const line = `[${new Date().toISOString()}] [Bootstrap] ${message}`;
   if (data !== undefined) {
-    console.error(`[${timestamp}] [Bootstrap] ${message}`, typeof data === "string" ? data : JSON.stringify(data));
+    console.error(line, typeof data === "string" ? data : JSON.stringify(data));
   } else {
-    console.error(`[${timestamp}] [Bootstrap] ${message}`);
+    console.error(line);
   }
 }
 

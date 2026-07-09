@@ -19,31 +19,13 @@
  * `owner` role on the container type itself for public-client container creation.)
  */
 
-import { setAuthConfig } from "../auth.js";
 import {
   grantContainerTypeAppPermission,
   listContainerTypeAppPermissions,
   revokeContainerTypeAppPermission,
 } from "../graph-client.js";
-import { readState } from "../state.js";
 import type { McpTool } from "../types.js";
-
-/** Point MSAL at the owning app (so SPE calls use its token) and return the
- *  provisioned container-type id (== registration id) as the default. */
-function authState(): { containerTypeId?: string; appId?: string } {
-  const state = readState();
-  if (state.appId && state.tenantId) {
-    setAuthConfig({ clientId: state.appId, tenantId: state.tenantId });
-  }
-  return { containerTypeId: state.containerTypeId, appId: state.appId };
-}
-
-function err(text: string) {
-  return { content: [{ type: "text" as const, text: `Error: ${text}` }], isError: true };
-}
-function reason(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
+import { authContainerTypeState, err, reason } from "./container-type-shared.js";
 
 /** Coerce a string | string[] arg into a clean string[]; undefined → fallback. */
 function toPermissions(value: unknown, fallback: string[]): string[] {
@@ -89,7 +71,7 @@ export const addContainerTypeAppGrantTool: McpTool = {
     },
   },
   handler: async (args) => {
-    const state = authState();
+    const state = authContainerTypeState();
     const containerTypeId = (args.containerTypeId as string) || state.containerTypeId;
     const appId = (args.appId as string) || state.appId;
     if (!containerTypeId) return err("no containerTypeId provided and none in provisioning state.");
@@ -130,7 +112,7 @@ export const listContainerTypeAppGrantsTool: McpTool = {
     },
   },
   handler: async (args) => {
-    const state = authState();
+    const state = authContainerTypeState();
     const containerTypeId = (args.containerTypeId as string) || state.containerTypeId;
     if (!containerTypeId) return err("no containerTypeId provided and none in provisioning state.");
 
@@ -170,7 +152,7 @@ export const removeContainerTypeAppGrantTool: McpTool = {
     required: ["appId"],
   },
   handler: async (args) => {
-    const state = authState();
+    const state = authContainerTypeState();
     const containerTypeId = (args.containerTypeId as string) || state.containerTypeId;
     const appId = args.appId as string | undefined;
     if (!containerTypeId) return err("no containerTypeId provided and none in provisioning state.");

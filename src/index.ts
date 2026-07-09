@@ -259,6 +259,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     const tool = TOOLS.find((t) => t.name === name);
     if (!tool) {
+      // Reachable guard, not dead code: this single handler receives EVERY
+      // tools/call the MCP SDK dispatches, so a client can request a name that
+      // was never registered (or one hidden by policy). Fail closed with a
+      // structured UNKNOWN_TOOL error rather than throwing. Exercised by the
+      // "returns isError + UNKNOWN_TOOL for an unknown tool" protocol e2e test.
       log(`Unknown tool: ${name}`);
       const result = fail("UNKNOWN_TOOL", `Unknown tool: ${name}`);
       return {
