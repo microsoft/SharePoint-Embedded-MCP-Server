@@ -56,6 +56,7 @@ interface ProvisionArgs {
   azureSubscriptionId?: Guid;
   resourceGroup?: string;
   region?: string;
+  confirmBilling?: boolean;
   seedSampleData?: boolean;
 }
 
@@ -132,6 +133,13 @@ export const provisionTool: McpTool = {
       azureSubscriptionId: { type: "string", description: "Azure subscription ID (required for standard billing)." },
       resourceGroup: { type: "string", description: "Azure resource group (required for standard billing)." },
       region: { type: "string", description: "Azure region for standard billing. Default: eastus." },
+      confirmBilling: {
+        type: "boolean",
+        description:
+          "Must be true to create the IRREVERSIBLE, CHARGEABLE standard Azure billing account " +
+          "(Microsoft.Syntex/accounts). Without it, standard provisioning returns a cost preview and " +
+          "makes no change. Ignored for trial billing and for resumes where billing is already set up.",
+      },
       seedSampleData: { type: "boolean", description: "Reserved: seed sample containers/docs after provisioning (see project_seed_sample_data)." },
     },
   },
@@ -145,6 +153,7 @@ export const provisionTool: McpTool = {
       azureSubscriptionId = state.azureSubscriptionId,
       resourceGroup = state.resourceGroup,
       region = "eastus",
+      confirmBilling = false,
     } = args as ProvisionArgs;
     // An explicit appDisplayName targets that named app even when state holds
     // another appId; absent one, resume by the persisted appId below.
@@ -223,6 +232,39 @@ export const provisionTool: McpTool = {
               "2. Run **azure_resource_groups_list** for that subscription and pick one → pass `resourceGroup`.\n" +
               "3. Re-run **project_provision** with `billingClassification=standard`, `azureSubscriptionId`, and `resourceGroup`." +
               partialProgress(steps, "standard billing prerequisites (subscription + resource group)"),
+          }],
+        };
+      }
+
+      // Financial-safety gate (per PR #3 review): standard billing creates a
+      // CHARGEABLE Microsoft.Syntex (RaaS) Azure account. Require an explicit
+      // confirmation before ANY owning app / container type / billing account is
+      // created, so a "build me an SPE app" request can never silently incur
+      // Azure cost. Skipped for trial. The skip for an idempotent resume is
+      // scoped to the SAME billing target — reusing the remembered app AND the
+      // same subscription/resource group — so a stale Syntex id from a previous
+      // (different) app can't wave through a brand-new chargeable account. The
+      // check is fail-closed: only a literal `true` proceeds. Makes no change.
+      const resumingSameBillingTarget =
+        !!state.syntexAccountResourceId &&
+        appSelection !== "new" &&
+        (!explicitAppName || explicitAppName === state.appDisplayName) &&
+        azureSubscriptionId === state.azureSubscriptionId &&
+        resourceGroup === state.resourceGroup;
+      if (billingClassification === "standard" && confirmBilling !== true && !resumingSameBillingTarget) {
+        return {
+          content: [{
+            type: "text" as const,
+            text:
+              "### Confirm standard (paid) billing\n\n" +
+              "**Standard** billing will create a **chargeable** `Microsoft.Syntex/accounts` (RaaS) Azure " +
+              "billing account, plus a new owning Entra app and container type. This incurs Azure costs " +
+              "and **cannot be reverted to trial**.\n\n" +
+              `- **Subscription:** \`${azureSubscriptionId}\`\n` +
+              `- **Resource group:** ${resourceGroup}\n` +
+              `- **Region:** ${region}\n\n` +
+              "> Re-run **project_provision** with `confirmBilling=true` to proceed. For a free setup, " +
+              "re-run with `billingClassification=trial` instead. No changes were made.",
           }],
         };
       }
