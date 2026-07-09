@@ -28,6 +28,7 @@ import { readState } from "./state.js";
 import { USER_AGENT } from "./user-agent.js";
 import { PACKAGE_VERSION } from "./version.js";
 import type { McpTool, ServerConfig } from "./types.js";
+import { createLogger } from "./logger.js";
 import { redact } from "./logging.js";
 import { fail } from "./responses.js";
 import { toSafeError } from "./errors.js";
@@ -94,14 +95,12 @@ const SERVER_VERSION = PACKAGE_VERSION;
 // server, stdout is the JSON-RPC protocol channel — writing logs there would
 // corrupt the message stream and break the client. `console.error` (stderr) is
 // therefore the correct, intentional sink for every log and status line below.
-function log(message: string, data?: unknown): void {
-  const timestamp = new Date().toISOString();
-  if (data !== undefined) {
-    console.error(`[${timestamp}] [MCP] ${message}`, JSON.stringify(data));
-  } else {
-    console.error(`[${timestamp}] [MCP] ${message}`);
-  }
-}
+//
+// Backed by the shared stderr logger (src/logger.ts). `stringifyData: true`
+// preserves the exact `[<iso>] [MCP] <message>` format — with any `data`
+// JSON-stringified as a second argument — that this entry point has always
+// emitted.
+const log = createLogger("MCP", { stringifyData: true }).log;
 
 // ─── Tool Registry ──────────────────────────────────────────────────────────
 
