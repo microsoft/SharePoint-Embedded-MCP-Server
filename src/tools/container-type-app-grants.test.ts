@@ -28,6 +28,7 @@ vi.mock("../state.js", () => ({ readState: vi.fn(() => ({ ...stateStore })) }));
 
 import * as graph from "../graph-client.js";
 import { setAuthConfig } from "../auth.js";
+import { getSessionId } from "../session.js";
 import {
   addContainerTypeAppGrantTool,
   listContainerTypeAppGrantsTool,
@@ -37,7 +38,11 @@ import {
 beforeEach(() => {
   vi.clearAllMocks();
   for (const k of Object.keys(stateStore)) delete stateStore[k];
-  Object.assign(stateStore, { appId: "app-1", tenantId: "t-1", containerTypeId: "ct-1" });
+  // r-appgate: these tools are control-plane mutations gated by the restart
+  // confirmation guard; seed a confirmed session so the gate no-ops and the
+  // tool's own logic is exercised. The gate itself is covered in
+  // context-gate.test.ts.
+  Object.assign(stateStore, { appId: "app-1", tenantId: "t-1", containerTypeId: "ct-1", confirmedSessionId: getSessionId() });
 });
 
 describe("container_type_app_grant_add", () => {

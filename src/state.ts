@@ -45,6 +45,24 @@ export interface ProvisioningState {
   scaffoldArchitecture?: string;
   /** Project name used by the last scaffold (drives azure.yaml service name on hydrate). */
   projectName?: string;
+  // ── Session confirmation (GitHub PR #3 review, r-appgate) ──────────────────
+  /**
+   * SESSION_ID (see session.ts) under which the user last confirmed the active
+   * owning app + container type. Because each restart is a new process with a
+   * new SESSION_ID, a value here that does NOT match the current session means
+   * the remembered context is unconfirmed and must be re-asked.
+   */
+  confirmedSessionId?: string;
+  /** ISO-8601 timestamp of that confirmation (may be from a prior session). */
+  contextConfirmedAt?: string;
+  /**
+   * Whether the confirmed owning app holds `FileStorageContainerType.Manage.All`
+   * (i.e., can enumerate ALL container types). When false/unknown, any cached
+   * container-type context may be stale. Left undefined when it cannot be
+   * cheaply inferred (undefined = "unknown", which suppresses the staleness
+   * warning; only an explicit `false` triggers it).
+   */
+  owningAppManagesAllContainerTypes?: boolean;
 }
 
 export function readState(): ProvisioningState {

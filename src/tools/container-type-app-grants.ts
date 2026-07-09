@@ -26,6 +26,16 @@ import {
 } from "../graph-client.js";
 import type { McpTool } from "../types.js";
 import { authContainerTypeState, err, reason } from "./container-type-shared.js";
+import { resolveContextGate } from "./context-gate.js";
+
+/** Optional restart-confirmation arg surfaced on the mutation tools (r-appgate). */
+const contextChoiceSchema = {
+  type: "string" as const,
+  enum: ["confirm", "switch"],
+  description:
+    "On a freshly restarted session, confirm the remembered owning app / container type ('confirm') " +
+    "or switch to a different one ('switch'). Supplied in response to the confirmation prompt; omit on the first call.",
+};
 
 /** Coerce a string | string[] arg into a clean string[]; undefined → fallback. */
 function toPermissions(value: unknown, fallback: string[]): string[] {
@@ -68,9 +78,14 @@ export const addContainerTypeAppGrantTool: McpTool = {
         items: { type: "string" },
         description: "Permissions for application (app-only) tokens, e.g. [\"full\"] or [\"none\"]. Default: [\"full\"].",
       },
+      contextChoice: contextChoiceSchema,
     },
   },
   handler: async (args) => {
+    // Restart confirmation gate (r-appgate) before mutating grants on a fresh session.
+    const gate = resolveContextGate(args.contextChoice as string | undefined);
+    if (gate) return gate;
+
     const state = authContainerTypeState();
     const containerTypeId = (args.containerTypeId as string) || state.containerTypeId;
     const appId = (args.appId as string) || state.appId;
@@ -148,10 +163,15 @@ export const removeContainerTypeAppGrantTool: McpTool = {
     properties: {
       containerTypeId: { type: "string", description: "Container type registration id. Default: the provisioned container type." },
       appId: { type: "string", description: "Client (app) id whose grant to remove (see container_type_app_grants_list)." },
+      contextChoice: contextChoiceSchema,
     },
     required: ["appId"],
   },
   handler: async (args) => {
+    // Restart confirmation gate (r-appgate) before mutating grants on a fresh session.
+    const gate = resolveContextGate(args.contextChoice as string | undefined);
+    if (gate) return gate;
+
     const state = authContainerTypeState();
     const containerTypeId = (args.containerTypeId as string) || state.containerTypeId;
     const appId = args.appId as string | undefined;

@@ -39,7 +39,8 @@ import { LOCAL_SPA_REDIRECT_URI } from "../constants.js";
 import { setAuthConfig } from "../auth.js";
 import { clientSafeMessage } from "../errors.js";
 import { needChoice } from "../elicitation.js";
-import { readState, writeState } from "../state.js";
+import { isContextConfirmedThisSession, stampContextConfirmed } from "../session.js";
+import { readState } from "../state.js";
 import type { McpTool } from "../types.js";
 
 export const createAppTool: McpTool = {
@@ -99,13 +100,18 @@ export const createAppTool: McpTool = {
       const getToken = bootstrapTokenProvider;
 
       // Ask before silently reusing the last app (PM feedback: "it favors using
-      // the last one — it should ask"). Only prompt when there IS a remembered
-      // app and the caller has not already expressed intent (an explicit name,
-      // or a prior reuse/new choice). Auth identity follows the chosen app
-      // (setAuthConfig repoints MSAL on a client change), so this choice also
-      // governs which signed-in identity the subsequent SPE calls use.
+      // the last one — it should ask"). Critical always-ask (r-appgate): the
+      // choice must fire not only when no intent was expressed, but ALSO on the
+      // first touch of a freshly restarted process — i.e., whenever an app is
+      // remembered, this call carries no appSelection, and the context has NOT
+      // been confirmed under the current session. The agent re-invokes with
+      // `appSelection` (reuse/new), so this asks at most once per session and
+      // never loops. NOTE: unlike before, an explicit `displayName` alone no
+      // longer bypasses the ask on an unconfirmed session — appSelection (not a
+      // name) is the answer to new-vs-existing; the "different app" option tells
+      // the caller to pass displayName alongside appSelection=new.
       const persisted = readState();
-      if (persisted.appId && !explicitName && !appSelection) {
+      if (persisted.appId && !appSelection && !isContextConfirmedThisSession(persisted)) {
         return needChoice(
           `You previously used the owning app "${persisted.appDisplayName ?? persisted.appId}". Reuse it, or use a different app?`,
           [
@@ -164,7 +170,10 @@ export const createAppTool: McpTool = {
       }
 
       // Persist and point MSAL at the new owning app for subsequent SPE calls.
-      writeState({
+      // stampContextConfirmed marks this session as confirmed (r-appgate) so the
+      // always-ask above does NOT re-fire on later calls in the same process;
+      // the next restart starts unconfirmed and asks again.
+      stampContextConfirmed({
         tenantId: identity.tenantId,
         appId: app.appId,
         appObjectId: app.objectId,

@@ -28,6 +28,7 @@ import {
 } from "../graph-client.js";
 import { readState, writeState } from "../state.js";
 import { defineTool, z } from "../tooling/define-tool.js";
+import { resolveContextGate } from "./context-gate.js";
 import type { BillingClassification } from "../types.js";
 import { fail, ok } from "../responses.js";
 import { clientSafeMessage } from "../errors.js";
@@ -243,6 +244,10 @@ const createContainerTypeSchema = z.object({
     "Automatically register the container type with full permissions for the owning app. Default: true. " +
     "Registration is REQUIRED before any containers can be created.",
   ),
+  contextChoice: z.enum(["confirm", "switch"]).optional().describe(
+    "On a freshly restarted session, confirm the remembered owning app / container type ('confirm') " +
+    "or switch to a different one ('switch'). Supplied in response to the confirmation prompt; omit on the first call.",
+  ),
 });
 
 function createContainerTypeValidationMessage(error: z.ZodError): string {
@@ -272,6 +277,11 @@ export const createContainerTypeTool = defineTool({
   schema: createContainerTypeSchema,
   validationErrorMessage: createContainerTypeValidationMessage,
   handler: async (args) => {
+    // Restart confirmation gate (r-appgate): confirm the remembered owning app /
+    // container type before creating a new one on a fresh session.
+    const gate = resolveContextGate(args.contextChoice);
+    if (gate) return gate;
+
     try {
       const result = await executeCreateContainerType(args);
       return result.success

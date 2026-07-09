@@ -40,6 +40,7 @@ import { setAuthConfig } from "../auth.js";
 import { createAppTool } from "../tools/create-app.js";
 import { registerContainerTypeTool } from "../tools/register-container-type.js";
 import { createContainerTool } from "../tools/create-container.js";
+import { getSessionId } from "../session.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -84,7 +85,11 @@ describe("project_app_create", () => {
     // whereas the appId (client ID) is the unique key. An explicit displayName is
     // a best-effort convenience lookup; once resolved, state persists the unique
     // appId ("named-app") so later runs resume by appId rather than by name.
+    // r-appgate: the explicit-name fast path only applies on a CONFIRMED session;
+    // on a fresh restart the always-ask fires first (covered in create-app.test.ts),
+    // so seed confirmedSessionId to exercise the post-confirmation behavior here.
     stateStore.appId = "persisted-app";
+    stateStore.confirmedSessionId = getSessionId();
     vi.mocked(bootstrap.getSignedInIdentity).mockResolvedValue({ tenantId: "t-1", username: "dev@x.com" });
     vi.mocked(graph.findApplicationByName).mockResolvedValue({ appId: "named-app", objectId: "obj-2", displayName: "Other App" });
 
@@ -162,6 +167,14 @@ describe("project_app_create", () => {
 // ─── container_type_register ─────────────────────────────────────────────
 
 describe("container_type_register", () => {
+  // r-appgate: container_type_register is a control-plane MUTATION, so it is
+  // gated by the restart confirmation guard. These tests exercise the tool's own
+  // logic on an ALREADY-confirmed session; the gate itself is covered in
+  // context-gate.test.ts. Seed confirmedSessionId so the gate no-ops here.
+  beforeEach(() => {
+    stateStore.confirmedSessionId = getSessionId();
+  });
+
   it("registers using state defaults", async () => {
     // Precondition: in the real flow the containerTypeId is produced by
     // container_type_create (tool `container_type_create`) and persisted to

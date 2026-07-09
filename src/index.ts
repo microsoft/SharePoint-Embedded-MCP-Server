@@ -443,6 +443,9 @@ export async function startServer(config: ServerConfig) {
     if (persisted.appId && persisted.tenantId) {
       setAuthConfig({ clientId: persisted.appId, tenantId: persisted.tenantId });
       log(`Primed auth from persisted state (owning app ${persisted.appId}, tenant ${persisted.tenantId})`);
+      // Priming only wires MSAL — it does NOT confirm the active context (r-appgate).
+      // A fresh process is UNconfirmed until the user answers the always-ask prompt,
+      // so we intentionally do not stamp confirmedSessionId here.
     }
     try {
       await assertAzCli();

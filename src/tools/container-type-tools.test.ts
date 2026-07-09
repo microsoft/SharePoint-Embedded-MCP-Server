@@ -27,11 +27,15 @@ vi.mock("../state.js", () => ({ readState: vi.fn(() => ({ ...stateStore })) }));
 import * as graph from "../graph-client.js";
 import { grantContainerTypeOwnerTool, listContainerTypeOwnersTool, revokeContainerTypeOwnerTool } from "../tools/container-type-permissions.js";
 import { getContainerTypeTool, updateContainerTypeTool, deleteContainerTypeTool } from "../tools/container-type-crud.js";
+import { getSessionId } from "../session.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
   for (const k of Object.keys(stateStore)) delete stateStore[k];
-  Object.assign(stateStore, { appId: "app-1", tenantId: "t-1", containerTypeId: "ct-1" });
+  // r-appgate: the owner grant/revoke tools are control-plane mutations gated by
+  // the restart confirmation guard; seed a confirmed session so the gate no-ops
+  // and each tool's own logic is exercised (gate coverage: context-gate.test.ts).
+  Object.assign(stateStore, { appId: "app-1", tenantId: "t-1", containerTypeId: "ct-1", confirmedSessionId: getSessionId() });
 });
 
 describe("container_type_grant_owner", () => {
