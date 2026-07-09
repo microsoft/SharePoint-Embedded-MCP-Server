@@ -20,6 +20,10 @@ vi.mock("../graph-client.js", () => ({
 vi.mock("../azure-cli.js", async (importActual) => ({
   ...(await importActual<typeof import("../azure-cli.js")>()),
   ensureSyntexProviderRegistered: vi.fn(),
+  // Guided standard-billing sub/RG selection (PR #3 review) lists these inline;
+  // default to empty and let each test set the shape it needs.
+  listSubscriptions: vi.fn(async () => []),
+  listResourceGroups: vi.fn(async () => []),
 }));
 
 const stateStore: Record<string, unknown> = {};
@@ -46,6 +50,11 @@ beforeEach(() => {
   // under test runs (gate behavior is covered in context-gate.test.ts).
   stateStore.confirmedSessionId = getSessionId();
   vi.mocked(graph.listContainerTypes).mockResolvedValue([]);
+  // Reset the guided sub/RG listings to their empty defaults each test —
+  // vi.clearAllMocks() clears call history but NOT mockResolvedValue
+  // implementations, so without this a prior test's shape would leak forward.
+  vi.mocked(azureCli.listSubscriptions).mockResolvedValue([]);
+  vi.mocked(azureCli.listResourceGroups).mockResolvedValue([]);
   // Standard-billing Azure prerequisite succeeds by default; rollback tests
   // override this to reject.
   vi.mocked(azureCli.ensureSyntexProviderRegistered).mockResolvedValue({
@@ -55,31 +64,99 @@ beforeEach(() => {
 });
 
 describe("container_type_create — standard billing validation", () => {
-  it("rejects standard billing without subscription + resource group (no Graph call, no false success)", async () => {
+  it("guides subscription selection inline (fallback) when standard billing lacks a subscription", async () => {
+    // PR #3 review: instead of punting to azure_subscriptions_list +
+    // azure_resource_groups_list and a manual re-invoke mid-creation, the tool
+    // lists the subscriptions itself and (with >1) asks the user to pick. No
+    // native elicitation is wired here, so elicitChoice degrades to the
+    // agent-guided ask keyed on `azureSubscriptionId`.
+    vi.mocked(azureCli.listSubscriptions).mockResolvedValue([
+      { id: "sub-a", name: "Sub A", state: "Enabled" },
+      { id: "sub-b", name: "Sub B", state: "Enabled" },
+    ]);
+
     const result = await createContainerTypeTool.handler({
       displayName: "X",
       billingClassification: "standard",
     });
 
-    expect(result.isError).toBe(true);
-    // Actionable guidance mirroring project_provision.
-    expect(result.content[0].text).toContain("azure_subscriptions_list");
-    expect(result.content[0].text).toContain("azure_resource_groups_list");
-    // No misconfigured Graph request, no false "created" success.
+    expect(azureCli.listSubscriptions).toHaveBeenCalled();
+    expect(result.content[0].text).toContain("azureSubscriptionId=sub-a");
+    expect(result.content[0].text).toContain("azureSubscriptionId=sub-b");
+    // No misconfigured Graph request, no false "created" success, and NOT the old
+    // "run azure_subscriptions_list yourself" punt.
+    expect(result.content[0].text).not.toContain("azure_subscriptions_list");
     expect(graph.createContainerType).not.toHaveBeenCalled();
     expect(graph.registerContainerType).not.toHaveBeenCalled();
     expect(result.content[0].text).not.toContain("Container Type Created");
   });
 
-  it("rejects standard billing when only the subscription is supplied (resource group still required)", async () => {
+  it("guides resource-group selection inline (fallback) once a subscription is supplied", async () => {
+    // Subscription supplied → the tool lists resource groups WITHIN it and asks
+    // the user to pick (agent-guided fallback keyed on `resourceGroup`).
+    vi.mocked(azureCli.listResourceGroups).mockResolvedValue([
+      { name: "rg-x", location: "eastus", id: "/subscriptions/sub-1/resourceGroups/rg-x" },
+      { name: "rg-y", location: "westus", id: "/subscriptions/sub-1/resourceGroups/rg-y" },
+    ]);
+
     const result = await createContainerTypeTool.handler({
       displayName: "X",
       billingClassification: "standard",
       azureSubscriptionId: "sub-1",
     });
 
-    expect(result.isError).toBe(true);
+    expect(azureCli.listResourceGroups).toHaveBeenCalledWith("sub-1");
+    expect(result.content[0].text).toContain("resourceGroup=rg-x");
+    expect(result.content[0].text).toContain("resourceGroup=rg-y");
     expect(graph.createContainerType).not.toHaveBeenCalled();
+  });
+
+  it("errors clearly when standard billing has no Azure subscriptions (no crash)", async () => {
+    // Default mock returns zero subscriptions → a clear, non-crashing error that
+    // points at `az login`, and nothing is created.
+    const result = await createContainerTypeTool.handler({
+      displayName: "X",
+      billingClassification: "standard",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("az login");
+    expect(graph.createContainerType).not.toHaveBeenCalled();
+    expect(graph.registerContainerType).not.toHaveBeenCalled();
+  });
+
+  it("auto-selects a lone subscription + resource group and proceeds (no prompt)", async () => {
+    // Exactly one of each → auto-selected without any elicitation, threaded into
+    // the Graph create, and surfaced as a note in the result body.
+    vi.mocked(azureCli.listSubscriptions).mockResolvedValue([
+      { id: "only-sub", name: "Only Sub", state: "Enabled" },
+    ]);
+    vi.mocked(azureCli.listResourceGroups).mockResolvedValue([
+      { name: "only-rg", location: "eastus", id: "/subscriptions/only-sub/resourceGroups/only-rg" },
+    ]);
+    vi.mocked(graph.createContainerType).mockResolvedValue({
+      containerTypeId: "ct-1", owningAppId: "app-1", displayName: "X",
+      billingClassification: "standard",
+    });
+    vi.mocked(graph.registerContainerType).mockResolvedValue(undefined as never);
+
+    const result = await createContainerTypeTool.handler({
+      displayName: "X",
+      billingClassification: "standard",
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain("Using the only Azure subscription");
+    expect(result.content[0].text).toContain("Using the only resource group");
+    expect(graph.createContainerType).toHaveBeenCalledWith(
+      expect.objectContaining({
+        displayName: "X",
+        owningAppId: "app-1",
+        billingClassification: "standard",
+        azureSubscriptionId: "only-sub",
+        resourceGroup: "only-rg",
+      }),
+    );
   });
 
   it("proceeds with standard billing when subscription + resource group are supplied", async () => {

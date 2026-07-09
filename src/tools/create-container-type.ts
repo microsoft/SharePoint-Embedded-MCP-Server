@@ -29,6 +29,7 @@ import {
 import { readState, writeState } from "../state.js";
 import { defineTool, z } from "../tooling/define-tool.js";
 import { resolveContextGate } from "./context-gate.js";
+import { resolveStandardBillingTarget } from "./standard-billing-target.js";
 import type { BillingClassification } from "../types.js";
 import { fail, ok } from "../responses.js";
 import { clientSafeMessage } from "../errors.js";
@@ -89,10 +90,13 @@ async function executeCreateContainerType(args: CreateContainerTypeArgs) {
     return { success: false, error: "owningAppId (Application/Client ID) is required — run project_app_create first or pass it explicitly" };
   }
 
-  // Standard billing requires an Azure subscription + resource group. Validate
-  // up front (parity with project_provision) so we never emit a misconfigured
-  // Graph request that omits the subscription and then falsely reports success.
-  // Region may default, so it is not required here.
+  // Standard billing requires an Azure subscription + resource group. The tool's
+  // handler runs GUIDED inline selection first (see resolveStandardBillingTarget),
+  // so by the time we get here both are normally present. This stays as a
+  // last-line defensive check (parity with project_provision) so a direct call —
+  // or a resolution that somehow yields blanks — never emits a misconfigured Graph
+  // request that omits the subscription and then falsely reports success. Region
+  // may default, so it is not required here.
   if (billingClassification === "standard" && (!azureSubscriptionId || !resourceGroup)) {
     return {
       success: false,
@@ -298,11 +302,36 @@ export const createContainerTypeTool = defineTool({
     const gate = await resolveContextGate(args.contextChoice);
     if (gate) return gate;
 
+    // Guided standard-billing sub/RG selection (PR #3 review): when the caller
+    // chose standard billing but is missing a subscription and/or resource group,
+    // run the Azure listings INLINE and prompt for a pick (native elicitation, or
+    // the agent-guided fallback) so the user doesn't have to break out to
+    // azure_subscriptions_list / azure_resource_groups_list mid-creation and
+    // re-invoke. Singletons auto-select. The resolved values thread through the
+    // existing region check + rollback in executeCreateContainerType unchanged.
+    let effectiveArgs = args;
+    let guidedNotes: string[] = [];
+    if (args.billingClassification === "standard" && (!args.azureSubscriptionId || !args.resourceGroup)) {
+      const target = await resolveStandardBillingTarget({
+        azureSubscriptionId: args.azureSubscriptionId,
+        resourceGroup: args.resourceGroup,
+      });
+      if (!target.resolved) return target.result;
+      effectiveArgs = { ...args, azureSubscriptionId: target.azureSubscriptionId, resourceGroup: target.resourceGroup };
+      guidedNotes = target.notes;
+    }
+
     try {
-      const result = await executeCreateContainerType(args);
-      return result.success
-        ? ok(result, formatResult(result))
-        : fail("INVALID_ARGS", result.error ?? "Container type creation failed");
+      const result = await executeCreateContainerType(effectiveArgs);
+      if (!result.success) {
+        return fail("INVALID_ARGS", result.error ?? "Container type creation failed");
+      }
+      // Surface any guided-selection notes (e.g. an auto-selected singleton) above
+      // the standard result so the user sees which subscription/RG was used.
+      const body = guidedNotes.length
+        ? `${guidedNotes.map((n) => `> ${n}`).join("\n")}\n\n${formatResult(result)}`
+        : formatResult(result);
+      return ok(result, body);
     } catch (error) {
       return fail("UPSTREAM", `creating container type: ${clientSafeMessage(error)}`);
     }
