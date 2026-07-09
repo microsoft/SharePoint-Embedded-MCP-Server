@@ -15,10 +15,10 @@
  * prior tenant from interfering on a tenant switch.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, join } from "node:path";
-import { ensureSecureDir, writeSecureFile } from "./secure-fs.js";
+import { existsSync } from "node:fs";
+import { basename } from "node:path";
+import { getCacheDir, getCacheFile, getLegacyCacheFile } from "./paths.js";
+import { ensureSecureDir, readSecureFile, writeSecureFile } from "./secure-fs.js";
 import {
   type AccountInfo,
   type AuthenticationResult,
@@ -271,15 +271,9 @@ function logError(message: string, data?: unknown): void {
 // different tenants never co-mingle, which is the root cause of the
 // tenant-switch silent-auth failures and wrong-tenant-token hazard.
 
-const CACHE_DIR = join(homedir(), ".spe-mcp");
-// Legacy single-file cache used before per-tenant partitioning. Kept only so
-// that clearCachedToken() can clean it up; it is never read on the hot path.
-const LEGACY_CACHE_FILE = join(CACHE_DIR, "token-cache.json");
-
-/** Make a value safe to embed in a filename (GUIDs are already safe; be defensive). */
-function sanitizeForFilename(value: string): string {
-  return value.replace(/[^a-zA-Z0-9._-]/g, "_");
-}
+// The token-cache directory + partitioned file paths come from the resolve-once
+// seam in paths.ts, so they honor a --data-dir / SPE_DATA_DIR override. Legacy
+// single-file cache (pre-partitioning) is only cleaned up by clearCachedToken().
 
 /**
  * Derive the token-cache file path for a given auth config. Partitioned by
@@ -291,11 +285,9 @@ function sanitizeForFilename(value: string): string {
  */
 export function getCacheFilePath(config: AuthConfig | null = authConfig): string {
   if (config?.tenantId) {
-    const tenant = sanitizeForFilename(config.tenantId);
-    const client = config.clientId ? sanitizeForFilename(config.clientId) : "default";
-    return join(CACHE_DIR, `token-cache.${tenant}.${client}.json`);
+    return getCacheFile(config.tenantId, config.clientId ?? "default");
   }
-  return LEGACY_CACHE_FILE;
+  return getLegacyCacheFile();
 }
 
 /**
@@ -316,8 +308,10 @@ const fileCachePlugin: ICachePlugin = {
   beforeCacheAccess: async (cacheContext) => {
     const cacheFile = getCacheFilePath();
     try {
-      if (existsSync(cacheFile)) {
-        const cached = readFileSync(cacheFile, "utf-8");
+      // O_NOFOLLOW + owner check: a planted symlink is refused (throws) rather
+      // than followed; a missing cache returns null and forces a fresh sign-in.
+      const cached = readSecureFile(cacheFile);
+      if (cached !== null) {
         cacheContext.tokenCache.deserialize(cached);
         log(`Token cache loaded from file (${basename(cacheFile)})`);
       }
@@ -329,7 +323,7 @@ const fileCachePlugin: ICachePlugin = {
     if (cacheContext.cacheHasChanged) {
       const cacheFile = getCacheFilePath();
       try {
-        ensureSecureDir(CACHE_DIR);
+        ensureSecureDir(getCacheDir());
         const serialized = cacheContext.tokenCache.serialize();
         // SEC-003: token cache holds refresh tokens — owner-only (0o600).
         writeSecureFile(cacheFile, serialized);
@@ -896,7 +890,7 @@ export async function clearCachedToken(): Promise<void> {
   try {
     log("Clearing cached tokens...");
     const { unlinkSync } = await import("node:fs");
-    const filesToRemove = new Set([getCacheFilePath(), LEGACY_CACHE_FILE]);
+    const filesToRemove = new Set([getCacheFilePath(), getLegacyCacheFile()]);
     for (const file of filesToRemove) {
       try {
         if (existsSync(file)) {
