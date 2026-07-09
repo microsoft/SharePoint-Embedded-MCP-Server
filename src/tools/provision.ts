@@ -44,7 +44,7 @@ import {
 } from "../container-retry.js";
 import { needChoice } from "../elicitation.js";
 import { readState, writeState } from "../state.js";
-import type { McpTool } from "../types.js";
+import type { Guid, McpTool } from "../types.js";
 
 interface ProvisionArgs {
   appDisplayName?: string;
@@ -52,7 +52,7 @@ interface ProvisionArgs {
   containerTypeName?: string;
   containerName?: string;
   billingClassification?: "trial" | "standard";
-  azureSubscriptionId?: string;
+  azureSubscriptionId?: Guid;
   resourceGroup?: string;
   region?: string;
   seedSampleData?: boolean;

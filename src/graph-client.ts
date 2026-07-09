@@ -25,6 +25,7 @@ import type {
   CustomProperties,
   Drive,
   DriveItem,
+  Guid,
   PreviewResult,
   SearchResponse,
   SharingLink,
@@ -200,9 +201,13 @@ async function graphRequest<T>(
 }
 
 /**
- * Same as graphRequest, but targets the Microsoft Graph **beta** endpoint. Used
- * for SPE container-type management and the container-type `permissions` (owner)
- * collection, which are only available under /beta.
+ * Convenience wrapper over {@link graphRequest} that targets the Microsoft Graph
+ * **beta** endpoint. It does not duplicate any request logic — it simply calls
+ * `graphRequest` with `baseUrl = GRAPH_BETA_BASE`, so retry/auth/error handling
+ * stays in one place. It exists only so the many beta call sites (SPE
+ * container-type management and the container-type `permissions`/owner
+ * collection, which are beta-only) don't each have to repeat the base-URL
+ * argument.
  */
 function graphRequestBeta<T>(
   method: string,
@@ -230,13 +235,35 @@ const SPE_DELEGATED_PERMISSION_IDS = {
   FileStorageContainerTypeReg_Selected: "d1e4f63a-1569-475c-b9b2-bdc140405e38",
 } as const;
 
+/**
+ * The kind of a Microsoft Graph `requiredResourceAccess` entry: `"Scope"` for a
+ * delegated permission (acting on behalf of a signed-in user) or `"Role"` for an
+ * application permission (app-only). SPE's owning app requests delegated scopes,
+ * so every entry we author uses `"Scope"`; `"Role"` is included for
+ * completeness / round-tripping any pre-existing app-only grants we merge over.
+ */
+type GraphResourceAccessType = "Scope" | "Role";
+
+/**
+ * A single Microsoft Graph permission entry inside a
+ * {@link RequiredResourceAccess} block — the `{ id, type }` shape Entra expects
+ * under `application.requiredResourceAccess[].resourceAccess`. `id` is the
+ * stable GUID of a delegated scope or app role on the target resource (for us,
+ * the Microsoft Graph service principal); `type` distinguishes the two.
+ */
 interface ResourceAccess {
-  id: string;
-  type: string;
+  id: Guid;
+  type: GraphResourceAccessType;
 }
 
+/**
+ * A Microsoft Graph `requiredResourceAccess` block: the set of {@link
+ * ResourceAccess} permissions requested against one resource API, keyed by that
+ * API's app id (`resourceAppId` — the Microsoft Graph service principal
+ * `00000003-0000-0000-c000-000000000000` for the scopes we add).
+ */
 interface RequiredResourceAccess {
-  resourceAppId: string;
+  resourceAppId: Guid;
   resourceAccess: ResourceAccess[];
 }
 
@@ -277,11 +304,18 @@ function mergeRequiredResourceAccess(
     merged.push(target);
   }
 
+  // Seed a Set of the target's existing `id|type` keys (id lower-cased so dedupe
+  // is case-insensitive) so each membership check is O(1) instead of re-scanning
+  // the array with `.some()`. Newly-added keys are recorded too, guarding against
+  // duplicates within `desiredAccess` itself. Order is preserved (we still push
+  // onto the array); the Set is only the presence index.
+  const seen = new Set(
+    target.resourceAccess.map((a) => `${a.id?.toLowerCase()}|${a.type}`),
+  );
   for (const desired of desiredAccess) {
-    const present = target.resourceAccess.some(
-      (a) => a.id?.toLowerCase() === desired.id.toLowerCase() && a.type === desired.type,
-    );
-    if (!present) {
+    const key = `${desired.id.toLowerCase()}|${desired.type}`;
+    if (!seen.has(key)) {
+      seen.add(key);
       target.resourceAccess.push({ id: desired.id, type: desired.type });
     }
   }
@@ -313,14 +347,25 @@ function mergeRedirectUris(existing: string[], toAdd: string[]): string[] {
 }
 
 export interface OwningApp {
-  appId: string;
-  objectId: string;
+  /** Application (client) id. */
+  appId: Guid;
+  /** Directory object id. */
+  objectId: Guid;
   displayName: string;
 }
 
+/**
+ * The raw Microsoft Graph `application` payload as returned by the
+ * `/applications` endpoints — a subset of the fields we actually consume. Note
+ * Graph's naming: `id` is the directory **object id** and `appId` is the
+ * **client id**; {@link toOwningApp} maps this into our {@link OwningApp} shape
+ * (`objectId`/`appId`) so callers aren't exposed to the ambiguous `id` field.
+ */
 interface RawApplication {
-  id: string;
-  appId: string;
+  /** Directory object id (Graph `id`), surfaced as {@link OwningApp.objectId}. */
+  id: Guid;
+  /** Application (client) id, surfaced as {@link OwningApp.appId}. */
+  appId: Guid;
   displayName: string;
   isFallbackPublicClient?: boolean;
 }
@@ -472,7 +517,7 @@ export async function addSpaRedirectUris(
     }
 
     // 4. PATCH the merged list back (read-modify-write; existing URIs preserved).
-    await graphRequest<unknown>(
+    await graphRequest<void>(
       "PATCH",
       `/applications/${appObjectId}`,
       { spa: { redirectUris: merged } },
@@ -532,7 +577,7 @@ export async function addSpePermissions(
     );
 
     // 3. PATCH the merged array back.
-    await graphRequest<unknown>(
+    await graphRequest<void>(
       "PATCH",
       `/applications/${appObjectId}`,
       { requiredResourceAccess: merged },
@@ -558,14 +603,14 @@ export async function addSpePermissions(
  * bootstrap token provider — the az client has User.Read so `/me` succeeds.
  */
 export async function getSignedInUser(
-  getToken: () => Promise<string>,
-): Promise<{ id: string; displayName?: string; userPrincipalName?: string }> {
-  return graphRequest<{ id: string; displayName?: string; userPrincipalName?: string }>(
+  azCliTokenProvider: () => Promise<string>,
+): Promise<{ id: Guid; displayName?: string; userPrincipalName?: string }> {
+  return graphRequest<{ id: Guid; displayName?: string; userPrincipalName?: string }>(
     "GET",
     "/me?$select=id,displayName,userPrincipalName",
     undefined,
     undefined,
-    getToken,
+    azCliTokenProvider,
   );
 }
 
@@ -610,9 +655,14 @@ export async function listContainerTypes(): Promise<ContainerType[]> {
 
 export async function createContainerType(params: {
   displayName: string;
-  owningAppId: string;
+  owningAppId: Guid;
   billingClassification?: "trial" | "standard" | "directToCustomer";
-  azureSubscriptionId?: string;
+  // OPTIONAL by design: the Graph container-type *create* call does not take a
+  // subscription (see the NOTE below). azureSubscriptionId/resourceGroup/region
+  // are only required for the separate ARM billing-link step (standard billing);
+  // they ride on this signature for call-site convenience but are consumed there,
+  // not here. Trial container types need none of them.
+  azureSubscriptionId?: Guid;
   resourceGroup?: string;
   region?: string;
 }): Promise<ContainerType> {
@@ -661,7 +711,7 @@ export async function registerContainerType(
   // Tenant-level registration endpoint (verified by the live-tested skill
   // 04-container-type.ps1). MUST include applicationPermissionGrants or
   // container creation later fails with UnauthorizedAccessException.
-  await graphRequest<unknown>(
+  await graphRequest<void>(
     "PUT",
     `/storage/fileStorage/containerTypeRegistrations/${containerTypeId}`,
     body,
@@ -719,6 +769,10 @@ export async function listContainerTypeAppPermissions(
 // registration can only be deleted once it has NO containers AND NO deleted
 // (recycle-bin) containers.
 
+// Microsoft Graph returns collections as an OData envelope — `{ value: [...] }`
+// (plus optional paging fields) — never a bare JSON array. This interface types
+// only that raw wire shape; the public helpers below unwrap `.value` and return
+// a plain `ContainerTypeRegistrationRecord[]` so callers never see the envelope.
 interface ContainerTypeRegistrationsListResponse {
   value: ContainerTypeRegistrationRecord[];
 }
@@ -733,7 +787,10 @@ export async function getContainerTypeRegistration(
   );
 }
 
-/** List the container type registrations on the tenant (v1.0). */
+/**
+ * List the container type registrations on the tenant (v1.0). Unwraps Graph's
+ * OData `{ value: [...] }` envelope and returns the bare array.
+ */
 export async function listContainerTypeRegistrations(): Promise<ContainerTypeRegistrationRecord[]> {
   const result = await graphRequest<ContainerTypeRegistrationsListResponse>(
     "GET",
@@ -749,7 +806,7 @@ export async function listContainerTypeRegistrations(): Promise<ContainerTypeReg
  * containers. This is the step that unblocks container type deletion.
  */
 export async function deleteContainerTypeRegistration(containerTypeId: string): Promise<void> {
-  await graphRequest<unknown>(
+  await graphRequest<void>(
     "DELETE",
     `/storage/fileStorage/containerTypeRegistrations/${containerTypeId}`,
   );
@@ -760,7 +817,7 @@ export async function revokeContainerTypeAppPermission(
   containerTypeId: string,
   appId: string,
 ): Promise<void> {
-  await graphRequest<unknown>(
+  await graphRequest<void>(
     "DELETE",
     `/storage/fileStorage/containerTypeRegistrations/${containerTypeId}/applicationPermissionGrants/${appId}`,
   );
@@ -816,7 +873,7 @@ export async function revokeContainerTypePermission(
   containerTypeId: string,
   permissionId: string,
 ): Promise<void> {
-  await graphRequestBeta<unknown>(
+  await graphRequestBeta<void>(
     "DELETE",
     `/storage/fileStorage/containerTypes/${containerTypeId}/permissions/${permissionId}`,
   );
@@ -880,7 +937,7 @@ export async function listDeletedContainers(containerTypeId?: string): Promise<C
 }
 
 export async function activateContainer(containerId: string): Promise<void> {
-  await graphRequest<unknown>(
+  await graphRequest<void>(
     "POST",
     `/storage/fileStorage/containers/${containerId}/activate`,
   );
@@ -915,35 +972,35 @@ export async function getContainer(containerId: string): Promise<Container> {
 }
 
 export async function deleteContainer(containerId: string): Promise<void> {
-  await graphRequest<unknown>(
+  await graphRequest<void>(
     "DELETE",
     `/storage/fileStorage/containers/${containerId}`,
   );
 }
 
 export async function permanentDeleteContainer(containerId: string): Promise<void> {
-  await graphRequest<unknown>(
+  await graphRequest<void>(
     "POST",
     `/storage/fileStorage/containers/${containerId}/permanentDelete`,
   );
 }
 
 export async function restoreDeletedContainer(containerId: string): Promise<void> {
-  await graphRequest<unknown>(
+  await graphRequest<void>(
     "POST",
     `/storage/fileStorage/deletedContainers/${containerId}/restore`,
   );
 }
 
 export async function lockContainer(containerId: string): Promise<void> {
-  await graphRequest<unknown>(
+  await graphRequest<void>(
     "POST",
     `/storage/fileStorage/containers/${containerId}/lock`,
   );
 }
 
 export async function unlockContainer(containerId: string): Promise<void> {
-  await graphRequest<unknown>(
+  await graphRequest<void>(
     "POST",
     `/storage/fileStorage/containers/${containerId}/unlock`,
   );
@@ -964,7 +1021,7 @@ export async function updateContainerPermission(
   permissionId: string,
   role: string,
 ): Promise<void> {
-  await graphRequest<unknown>(
+  await graphRequest<void>(
     "PATCH",
     `/storage/fileStorage/containers/${containerId}/permissions/${permissionId}`,
     { roles: [role] },
@@ -975,7 +1032,7 @@ export async function removeContainerPermission(
   containerId: string,
   permissionId: string,
 ): Promise<void> {
-  await graphRequest<unknown>(
+  await graphRequest<void>(
     "DELETE",
     `/storage/fileStorage/containers/${containerId}/permissions/${permissionId}`,
   );
@@ -1105,7 +1162,7 @@ export async function revokeSharingLink(
   itemId: string,
   permissionId: string,
 ): Promise<void> {
-  await graphRequest<unknown>(
+  await graphRequest<void>(
     "DELETE",
     `/drives/${driveId}/items/${itemId}/permissions/${permissionId}`,
   );
@@ -1132,7 +1189,14 @@ export async function searchContent(
   );
 }
 
-// ─── Billing / Container Type Config ────────────────────────────────────────
+// ─── Container Type Config (get / update / delete) ──────────────────────────
+// NOTE on billing: there are no billing *operations* in this module. SPE billing
+// is an Azure Resource Manager concern — a Microsoft.Syntex/accounts (RaaS)
+// resource linked to the container type — and lives in `azure-cli.ts`
+// (ensureSyntexProviderRegistered / getSyntexAccounts / createSyntexAccount),
+// orchestrated by `tools/provision.ts`. The functions below only read/mutate the
+// container type's Graph configuration (which *carries* a billingClassification
+// field); `billing_check` reads that field via getContainerType.
 
 export async function getContainerType(
   containerTypeId: string,
@@ -1175,7 +1239,7 @@ export async function updateContainerType(
 
 /** Delete a container type (owning-app token). Used by cleanup. */
 export async function deleteContainerType(containerTypeId: string): Promise<void> {
-  await graphRequestBeta<unknown>(
+  await graphRequestBeta<void>(
     "DELETE",
     `/storage/fileStorage/containerTypes/${containerTypeId}`,
   );
@@ -1186,7 +1250,7 @@ export async function deleteApplication(
   appObjectId: string,
   getToken: () => Promise<string>,
 ): Promise<void> {
-  await graphRequest<unknown>(
+  await graphRequest<void>(
     "DELETE",
     `/applications/${appObjectId}`,
     undefined,
