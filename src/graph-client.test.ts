@@ -478,6 +478,18 @@ describe("registerContainerType — app-only default ['none'] + re-grant preserv
 
     expect(putGrant(1).applicationPermissions).toEqual(["none"]);
   });
+
+  it("fails closed (throws, no PUT) when the read-merge lookup fails with a non-404 (avoids silent revoke)", async () => {
+    // An AMBIGUOUS lookup failure (403, not a clean 404) must NOT proceed to a PUT
+    // that would replace the whole grant collection and could silently revoke an
+    // app-only grant we merely failed to read. Fail closed instead (PR #3 review).
+    fetchMock.mockResolvedValueOnce(errResponse(403, "insufficient privileges")); // GET grants → 403
+
+    await expect(registerContainerType("ct-1", "app-1")).rejects.toThrow(/Access denied/);
+
+    // Only the GET happened — no PUT (which would have replaced the grant) was attempted.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("listContainerTypes — runtime staleness-flag self-heal (PR #3 review)", () => {

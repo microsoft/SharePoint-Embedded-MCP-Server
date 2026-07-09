@@ -288,7 +288,7 @@ describe("project_provision — ownerScope intent", () => {
     expect(stateStore.owningAppManagesAllContainerTypes).toBe(true);
   });
 
-  it("selected persists ownerScope and sets owningAppManagesAllContainerTypes=false", async () => {
+  it("selected persists ownerScope; a freshly created selected app still holds Manage.All so the flag is true", async () => {
     vi.mocked(graph.findApplicationByName).mockResolvedValue(null);
     vi.mocked(graph.createApplication).mockResolvedValue({ appId: "app-1", objectId: "obj-1", displayName: "App" });
     vi.mocked(graph.createContainerType).mockResolvedValue({ containerTypeId: "ct-1", owningAppId: "app-1", displayName: "App Container Type" });
@@ -297,10 +297,30 @@ describe("project_provision — ownerScope intent", () => {
     const r = await provisionTool.handler({ appDisplayName: "App", billingClassification: "trial", ownerScope: "selected" });
 
     expect(r.content[0].text).toContain("SPE Provisioned");
-    // Least-privilege intent → the narrow scope set and the staleness flag is false.
+    // Least-privilege intent → the NARROW scope set is requested. But a freshly
+    // CREATED app is still granted FileStorageContainerType.Manage.All (kept in the
+    // selected set), so it CAN enumerate all container types → flag true. The false
+    // case comes only from the runtime 403 self-correction for reused/external apps
+    // that lack the scope (PR #3 review).
     expect(graph.addSpePermissions).toHaveBeenCalledWith("obj-1", expect.any(Function), { ownerScope: "selected" });
     expect(stateStore.ownerScope).toBe("selected");
-    expect(stateStore.owningAppManagesAllContainerTypes).toBe(false);
+    expect(stateStore.owningAppManagesAllContainerTypes).toBe(true);
+  });
+
+  it("does NOT stamp the managesAll flag from intent when reusing an existing app (defers to runtime detection)", async () => {
+    // A reused/external app may or may not hold Manage.All, so the stamp must omit
+    // the flag and let the runtime listContainerTypes 403-check decide (PR #3 review).
+    vi.mocked(graph.findApplicationByName).mockResolvedValue({ appId: "app-x", objectId: "obj-x", displayName: "App" });
+    vi.mocked(graph.createContainerType).mockResolvedValue({ containerTypeId: "ct-1", owningAppId: "app-x", displayName: "App Container Type" });
+    vi.mocked(graph.createContainer).mockResolvedValue({ id: "c-1", displayName: "Default Container", containerTypeId: "ct-1", status: "inactive" });
+
+    const r = await provisionTool.handler({ appDisplayName: "App", appSelection: "reuse", billingClassification: "trial", ownerScope: "selected" });
+
+    expect(r.content[0].text).toContain("SPE Provisioned");
+    expect(stateStore.ownerScope).toBe("selected");
+    // graph-client is mocked, so the real runtime wrapper doesn't run → flag stays
+    // unset for the reused app (not asserted true from intent).
+    expect(stateStore.owningAppManagesAllContainerTypes).toBeUndefined();
   });
 });
 

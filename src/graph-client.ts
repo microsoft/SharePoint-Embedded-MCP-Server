@@ -783,9 +783,19 @@ export async function registerContainerType(
       if (priorGrant?.applicationPermissions && priorGrant.applicationPermissions.length > 0) {
         effectiveAppPermissions = priorGrant.applicationPermissions;
       }
-    } catch {
-      /* No existing registration/grant to read (e.g., first registration or a
-         404) — keep the least-privilege ["none"] default. */
+    } catch (lookupError) {
+      // Only a genuine "no existing registration/grant" (404 NOT_FOUND) is safe to
+      // treat as an absent grant and keep the least-privilege ["none"] default. Any
+      // OTHER failure (e.g. 403, or a transient error that exhausted retries) is
+      // AMBIGUOUS: proceeding with the PUT would replace the whole grant collection
+      // and could silently REVOKE an app-only grant we merely failed to read. Fail
+      // closed by rethrowing rather than risk a silent downgrade (PR #3 review).
+      if (
+        !(lookupError instanceof AppError &&
+          (lookupError.code === "NOT_FOUND" || lookupError.status === 404))
+      ) {
+        throw lookupError;
+      }
     }
   }
 

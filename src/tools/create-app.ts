@@ -200,7 +200,14 @@ export const createAppTool: McpTool = {
         appObjectId: app.objectId,
         appDisplayName: app.displayName,
         ownerScope,
-        owningAppManagesAllContainerTypes: ownerScope === "manage-all",
+        // Both scope sets (manage-all AND selected) grant
+        // FileStorageContainerType.Manage.All, so a freshly CREATED owning app can
+        // always enumerate all container types → flag true. For a REUSED app we
+        // cannot be sure (the best-effort grant may not have taken, or it is an
+        // external app lacking the scope), so we leave the flag to the runtime
+        // listContainerTypes self-correction (403 → false) rather than assert it
+        // here from intent (PR #3 review).
+        ...(reused ? {} : { owningAppManagesAllContainerTypes: true }),
       });
       setAuthConfig({ clientId: app.appId, tenantId: identity.tenantId });
 

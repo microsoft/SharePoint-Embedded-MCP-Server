@@ -349,6 +349,9 @@ export const provisionTool: McpTool = {
         : resumeByAppId
           ? await findApplicationByAppId(state.appId as string, getToken)
           : await findApplicationByName(appDisplayName, getToken);
+      // Capture created-vs-reused BEFORE `app` is reassigned in the create branch:
+      // a found app is reused, a null result means we freshly create one below.
+      const reusedApp = !!app;
       if (!app) {
         app = await createApplication(appDisplayName, getToken);
         recordStep(steps, `Created owning app **${app.displayName}** (\`${app.appId}\`)`);
@@ -362,16 +365,18 @@ export const provisionTool: McpTool = {
       // Mark this session confirmed (r-appgate) as the app is settled, and hand
       // off to the owning-app token for SPE operations. Confirming here keeps the
       // always-ask above from re-firing on later calls in the same process.
-      // Record the least-privilege intent too (PR #3 review): manage-all implies
-      // this owning app manages all container types; selected does not. The
-      // listContainerTypes call later self-corrects this flag from the live grant.
+      // Record the least-privilege intent too (PR #3 review). Both scope sets
+      // (manage-all AND selected) grant FileStorageContainerType.Manage.All, so a
+      // freshly CREATED owning app can enumerate all container types → flag true.
+      // For a REUSED app we defer the flag to the listContainerTypes call below,
+      // which self-corrects it from the live grant (a 403 sets it false).
       stampContextConfirmed({
         tenantId: identity.tenantId,
         appId: app.appId,
         appObjectId: app.objectId,
         appDisplayName: app.displayName,
         ownerScope,
-        owningAppManagesAllContainerTypes: ownerScope === "manage-all",
+        ...(reusedApp ? {} : { owningAppManagesAllContainerTypes: true }),
       });
       setAuthConfig({ clientId: app.appId, tenantId: identity.tenantId });
 
