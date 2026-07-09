@@ -35,6 +35,7 @@ import {
   registerContainerType,
 } from "../graph-client.js";
 import { setAuthConfig } from "../auth.js";
+import { guestSignInAdvisory } from "../guest-advisory.js";
 import {
   CONTAINER_CREATE_MAX_ATTEMPTS,
   containerCreateBackoffMs,
@@ -573,7 +574,11 @@ export const provisionTool: McpTool = {
         (billingClassification === "standard"
           ? `| SUBSCRIPTION_ID | \`${azureSubscriptionId}\` |\n| RESOURCE_GROUP | ${resourceGroup} |\n| SYNTEX_ACCOUNT | \`${syntexAccountResourceId ?? "(pending)"}\` |\n`
           : "") +
-        "\n> Next: `project_hydrate_config` to write these into a project, then `project_scaffold` to generate an app.";
+        "\n> Next: `project_hydrate_config` to write these into a project, then `project_scaffold` to generate an app." +
+        // NON-BLOCKING heads-up appended for a B2B guest identity (guests often
+        // lack permission to create Entra apps / own container types). Empty for
+        // a member; provisioning is never blocked by it. (PR #3 review.)
+        guestSignInAdvisory(identity.username);
 
       return { content: [{ type: "text" as const, text: summary }] };
     } catch (error) {

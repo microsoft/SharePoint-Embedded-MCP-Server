@@ -629,13 +629,17 @@ export async function addSpePermissions(
  * Resolve the signed-in user's directory object id (and UPN). Used to default
  * the container-type `owner` grant to the current user. Pass the Azure CLI
  * bootstrap token provider — the az client has User.Read so `/me` succeeds.
+ *
+ * `userType` ("Member" | "Guest") is included so callers can surface a clear,
+ * NON-BLOCKING message that a guest (B2B) user cannot be a container-type owner
+ * (the Graph API rejects it) instead of a raw API error. (PR #3 review.)
  */
 export async function getSignedInUser(
   azCliTokenProvider: () => Promise<string>,
-): Promise<{ id: Guid; displayName?: string; userPrincipalName?: string }> {
-  return graphRequest<{ id: Guid; displayName?: string; userPrincipalName?: string }>(
+): Promise<{ id: Guid; displayName?: string; userPrincipalName?: string; userType?: string }> {
+  return graphRequest<{ id: Guid; displayName?: string; userPrincipalName?: string; userType?: string }>(
     "GET",
-    "/me?$select=id,displayName,userPrincipalName",
+    "/me?$select=id,displayName,userPrincipalName,userType",
     undefined,
     undefined,
     azCliTokenProvider,

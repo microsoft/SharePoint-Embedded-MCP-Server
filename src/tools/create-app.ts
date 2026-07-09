@@ -37,6 +37,7 @@ import {
 } from "../graph-client.js";
 import { LOCAL_SPA_REDIRECT_URI } from "../constants.js";
 import { setAuthConfig } from "../auth.js";
+import { guestSignInAdvisory } from "../guest-advisory.js";
 import { clientSafeMessage } from "../errors.js";
 import { elicitChoice, elicitText } from "../elicitation.js";
 import { isContextConfirmedThisSession, stampContextConfirmed } from "../session.js";
@@ -247,7 +248,11 @@ export const createAppTool: McpTool = {
         `| **SPE permissions** | ${permsSummary} |\n\n` +
         "> The server is now **configured to sign in as this app** for SharePoint Embedded " +
         "operations — **no restart needed**. The first SPE call opens a browser for a one-time " +
-        "consent (or unset `SPE_NON_INTERACTIVE`); after that, container types and containers can be created.";
+        "consent (or unset `SPE_NON_INTERACTIVE`); after that, container types and containers can be created." +
+        // NON-BLOCKING heads-up appended for a B2B guest identity (guests often
+        // lack permission to create Entra apps / own container types). Empty for
+        // a member; never blocks the operation. (PR #3 review.)
+        guestSignInAdvisory(identity.username);
 
       return { content: [{ type: "text" as const, text: output }] };
     } catch (error) {

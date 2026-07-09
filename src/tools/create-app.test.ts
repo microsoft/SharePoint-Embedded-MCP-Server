@@ -277,3 +277,35 @@ describe("project_app_create — native elicitation continues in-band (PR #3 rev
     expect(createApplicationMock).toHaveBeenCalledWith("My New App", expect.anything());
   });
 });
+
+describe("project_app_create — NON-BLOCKING guest sign-in note (PR #3 review)", () => {
+  it("appends a guest heads-up (does NOT block) when signed in as a B2B guest", async () => {
+    getSignedInIdentityMock.mockResolvedValue({
+      tenantId: "tenant-1",
+      username: "alice_corp.com#EXT#@resourcetenant.onmicrosoft.com",
+    });
+    createApplicationMock.mockResolvedValue({ appId: "new-app", objectId: "obj-new", displayName: "SPE Builder App" });
+
+    const r = await createAppTool.handler({});
+
+    // Non-blocking: the app is still created and the tool succeeds.
+    expect(r.isError).toBeUndefined();
+    expect(r.content[0].text).toContain("Owning App Created");
+    expect(createApplicationMock).toHaveBeenCalledTimes(1);
+    // The informational note is present.
+    expect(r.content[0].text).toContain("guest (B2B)");
+    expect(r.content[0].text).toContain("Heads-up");
+  });
+
+  it("does NOT append the note for a member identity", async () => {
+    getSignedInIdentityMock.mockResolvedValue({ tenantId: "tenant-1", username: "dev@contoso.com" });
+    createApplicationMock.mockResolvedValue({ appId: "new-app", objectId: "obj-new", displayName: "SPE Builder App" });
+
+    const r = await createAppTool.handler({});
+
+    expect(r.isError).toBeUndefined();
+    expect(r.content[0].text).toContain("Owning App Created");
+    expect(r.content[0].text).not.toContain("guest (B2B)");
+    expect(r.content[0].text).not.toContain("Heads-up");
+  });
+});

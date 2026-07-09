@@ -54,6 +54,59 @@ describe("container_type_grant_owner", () => {
     expect(graph.grantContainerTypeOwner).toHaveBeenCalledWith("ct-1", "user-2");
   });
 
+  it("proceeds normally when the signed-in user is a Member (userType present)", async () => {
+    vi.mocked(graph.getSignedInUser).mockResolvedValueOnce({
+      id: "user-1",
+      userPrincipalName: "admin@x.com",
+      userType: "Member",
+    });
+    const r = await grantContainerTypeOwnerTool.handler({});
+    expect(graph.grantContainerTypeOwner).toHaveBeenCalledWith("ct-1", "user-1");
+    expect(r.isError).toBeFalsy();
+  });
+
+  it("returns a clear NON-BLOCKING message and does NOT grant when the signed-in user is a Guest", async () => {
+    vi.mocked(graph.getSignedInUser).mockResolvedValueOnce({
+      id: "guest-1",
+      userPrincipalName: "alice_corp.com#EXT#@x.onmicrosoft.com",
+      userType: "Guest",
+    });
+
+    const r = await grantContainerTypeOwnerTool.handler({});
+
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("guest");
+    expect(r.content[0].text).toContain("member");
+    // Proactive: we never attempt the doomed grant for a guest default.
+    expect(graph.grantContainerTypeOwner).not.toHaveBeenCalled();
+  });
+
+  it("maps a Graph guest-owner rejection to clear guidance (explicit guest userId)", async () => {
+    vi.mocked(graph.grantContainerTypeOwner).mockRejectedValueOnce(
+      new Error("Guest users cannot be added as owners of a container type."),
+    );
+
+    const r = await grantContainerTypeOwnerTool.handler({ userId: "guest-2" });
+
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("guest (B2B) users cannot be granted");
+    expect(r.content[0].text).toContain("member");
+    // The raw API sentence is replaced by actionable guidance.
+    expect(r.content[0].text).not.toContain("added as owners");
+  });
+
+  it("still surfaces the raw reason for a non-guest grant failure", async () => {
+    vi.mocked(graph.grantContainerTypeOwner).mockRejectedValueOnce(
+      new Error("Too many owners (max 3)."),
+    );
+
+    const r = await grantContainerTypeOwnerTool.handler({ userId: "user-3" });
+
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("granting owner");
+    expect(r.content[0].text).toContain("Too many owners");
+  });
+
   it("errors when no container type is known", async () => {
     delete stateStore.containerTypeId;
     const r = await grantContainerTypeOwnerTool.handler({});
