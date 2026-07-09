@@ -62,6 +62,46 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/**
+ * Structured stderr log (matches the per-module convention used in bootstrap.ts
+ * / graph-client.ts). Provisioning is a multi-minute orchestration; without a
+ * live signal the buffered `steps` array only surfaces at the very end, so the
+ * server log looks frozen mid-run. Logging each completed step here (rather than
+ * threading MCP `notifications/progress` through index.ts, which another work
+ * item owns this batch) gives operators live movement with no protocol plumbing.
+ */
+function log(message: string): void {
+  console.error(`[${new Date().toISOString()}] [Provision] ${message}`);
+}
+
+/**
+ * Append a completed step to the running list AND emit it to the server log so
+ * progress is visible while the orchestration is still in flight.
+ */
+function recordStep(steps: string[], text: string): void {
+  steps.push(text);
+  log(`step ${steps.length}: ${text}`);
+}
+
+/**
+ * Render the steps completed so far as a partial-progress block for an
+ * early-return / failure path. A mid-flow failure that returned only its own
+ * error text used to hide how far provisioning got; because the flow is
+ * idempotent/resumable, surfacing the completed steps (and where it stopped)
+ * makes a half-finished run debuggable and resumable. Returns "" when no steps
+ * have run yet (e.g. sign-in / elicitation gates), so those returns are
+ * unchanged rather than carrying an empty, noisy section.
+ */
+function partialProgress(steps: string[], stoppedAt: string): string {
+  if (steps.length === 0) return "";
+  const done = steps.map((s, i) => `${i + 1}. ${s}`).join("\n");
+  return (
+    "\n\n### Progress before this stop\n\n" +
+    done +
+    `\n\n_Stopped at: ${stoppedAt}. Provisioning is idempotent — re-run \`project_provision\` to resume from here._`
+  );
+}
+
 export const provisionTool: McpTool = {
   name: "project_provision",
   annotations: { plane: "control" },
@@ -116,12 +156,16 @@ export const provisionTool: McpTool = {
     const appSelection =
       args.appSelection === "reuse" || args.appSelection === "new" ? args.appSelection : undefined;
 
+    // Declared before the try so every early-return error path AND the catch-all
+    // below can surface how far provisioning got (partial-steps summary).
+    const steps: string[] = [];
+
     try {
       // 0. Confirm signed-in identity (bootstrap/control plane).
       const identity = await getSignedInIdentity();
       if (!identity) {
         return {
-          content: [{ type: "text" as const, text: "⛔ Not signed in to Azure CLI. Run `az login --allow-no-subscriptions`, then retry." }],
+          content: [{ type: "text" as const, text: "⛔ Not signed in to Azure CLI. Run `az login --allow-no-subscriptions`, then retry." + partialProgress(steps, "sign-in check") }],
           isError: true,
         };
       }
@@ -171,12 +215,11 @@ export const provisionTool: McpTool = {
               "Standard billing needs an Azure subscription and resource group.\n\n" +
               "1. Run **azure_subscriptions_list** and pick one → pass `azureSubscriptionId`.\n" +
               "2. Run **azure_resource_groups_list** for that subscription and pick one → pass `resourceGroup`.\n" +
-              "3. Re-run **project_provision** with `billingClassification=standard`, `azureSubscriptionId`, and `resourceGroup`.",
+              "3. Re-run **project_provision** with `billingClassification=standard`, `azureSubscriptionId`, and `resourceGroup`." +
+              partialProgress(steps, "standard billing prerequisites (subscription + resource group)"),
           }],
         };
       }
-
-      const steps: string[] = [];
 
       // 1. Owning app (bootstrap token), idempotent.
       const getToken = bootstrapTokenProvider;
@@ -192,11 +235,11 @@ export const provisionTool: McpTool = {
           : await findApplicationByName(appDisplayName, getToken);
       if (!app) {
         app = await createApplication(appDisplayName, getToken);
-        steps.push(`Created owning app **${app.displayName}** (\`${app.appId}\`)`);
+        recordStep(steps, `Created owning app **${app.displayName}** (\`${app.appId}\`)`);
         // Create path: permissions are required, so errors propagate.
         await addSpePermissions(app.objectId, getToken);
       } else {
-        steps.push(`Reused owning app **${app.displayName}** (\`${app.appId}\`)`);
+        recordStep(steps, `Reused owning app **${app.displayName}** (\`${app.appId}\`)`);
         // Attach/reuse path: adding permissions is best-effort and non-blocking.
         await addSpePermissions(app.objectId, getToken, { bestEffort: true });
       }
@@ -207,7 +250,7 @@ export const provisionTool: McpTool = {
       // 2. Standard billing prerequisite: register the Syntex provider.
       if (billingClassification === "standard" && azureSubscriptionId) {
         const provider = await ensureSyntexProviderRegistered(azureSubscriptionId);
-        steps.push(`Microsoft.Syntex provider: ${provider.registrationState}`);
+        recordStep(steps, `Microsoft.Syntex provider: ${provider.registrationState}`);
       }
 
       // 3. Container type (reuse by owning app — 1:1), with billing.
@@ -227,9 +270,9 @@ export const provisionTool: McpTool = {
         });
         containerTypeId = ct.containerTypeId;
         createdCt = true;
-        steps.push(`Created container type **${ctName}** (\`${containerTypeId}\`, ${billingClassification})`);
+        recordStep(steps, `Created container type **${ctName}** (\`${containerTypeId}\`, ${billingClassification})`);
       } else {
-        steps.push(`Reused container type \`${containerTypeId}\``);
+        recordStep(steps, `Reused container type \`${containerTypeId}\``);
       }
 
       // 3a. Standard billing: create the Microsoft.Syntex (RaaS) ARM billing
@@ -247,12 +290,12 @@ export const provisionTool: McpTool = {
         )?.id;
         try {
           if (syntexAccountResourceId) {
-            steps.push(`Reused Microsoft.Syntex billing account (\`${syntexAccountResourceId}\`)`);
+            recordStep(steps, `Reused Microsoft.Syntex billing account (\`${syntexAccountResourceId}\`)`);
           } else {
             syntexAccountResourceId = await createSyntexAccount(
               azureSubscriptionId, resourceGroup, region, containerTypeId,
             );
-            steps.push(`Created Microsoft.Syntex billing account (\`${syntexAccountResourceId}\`)`);
+            recordStep(steps, `Created Microsoft.Syntex billing account (\`${syntexAccountResourceId}\`)`);
           }
         } catch (billingError) {
           const billingMsg = billingError instanceof Error ? billingError.message : String(billingError);
@@ -265,12 +308,12 @@ export const provisionTool: McpTool = {
               rollbackNote = ` WARNING: rollback ALSO failed — container type \`${containerTypeId}\` may still exist and should be deleted manually (${rb}).`;
             }
             return {
-              content: [{ type: "text" as const, text: `Error during provisioning: standard billing account creation failed: ${billingMsg}.${rollbackNote} Fix the Azure billing prerequisite and re-run project_provision.` }],
+              content: [{ type: "text" as const, text: `Error during provisioning: standard billing account creation failed: ${billingMsg}.${rollbackNote} Fix the Azure billing prerequisite and re-run project_provision.` + partialProgress(steps, "standard billing account creation (Microsoft.Syntex)") }],
               isError: true,
             };
           }
           return {
-            content: [{ type: "text" as const, text: `Error during provisioning: standard billing account creation failed: ${billingMsg}. The pre-existing container type was left intact — re-run billing_setup once the prerequisite is fixed.` }],
+            content: [{ type: "text" as const, text: `Error during provisioning: standard billing account creation failed: ${billingMsg}. The pre-existing container type was left intact — re-run billing_setup once the prerequisite is fixed.` + partialProgress(steps, "standard billing account creation (Microsoft.Syntex)") }],
             isError: true,
           };
         }
@@ -287,7 +330,7 @@ export const provisionTool: McpTool = {
 
       // 4. Register on the tenant (required before containers).
       await registerContainerType(containerTypeId, app.appId);
-      steps.push("Registered container type on tenant");
+      recordStep(steps, "Registered container type on tenant");
 
       // 4a. Grant the signed-in user the `owner` role on the container type
       // (Graph beta). Owners can create containers using a public client (PCA),
@@ -297,9 +340,9 @@ export const provisionTool: McpTool = {
       try {
         const me = await getSignedInUser(getToken);
         await grantContainerTypeOwner(containerTypeId, me.id);
-        steps.push(`Granted owner role to ${me.userPrincipalName ?? me.id} (enables PCA container creation)`);
+        recordStep(steps, `Granted owner role to ${me.userPrincipalName ?? me.id} (enables PCA container creation)`);
       } catch (grantError) {
-        steps.push(`⚠️ Owner grant skipped: ${grantError instanceof Error ? grantError.message : String(grantError)}`);
+        recordStep(steps, `⚠️ Owner grant skipped: ${grantError instanceof Error ? grantError.message : String(grantError)}`);
       }
 
       // 5. Create + activate a container, with propagation backoff.
@@ -335,15 +378,15 @@ export const provisionTool: McpTool = {
       }
       if (containerId) {
         writeState({ containerId, containerName });
-        steps.push(`Created container **${containerName}** (\`${containerId}\`)`);
+        recordStep(steps, `Created container **${containerName}** (\`${containerId}\`)`);
       } else if (isContainerPropagationError(lastErrorClass)) {
         // Transient: the grant is still propagating. The earlier steps DID
         // succeed; the container can be created later with `container_create`.
-        steps.push(`⚠️ Container creation still pending (registration propagation) — retry with \`container_create\`: ${lastError}`);
+        recordStep(steps, `⚠️ Container creation still pending (registration propagation) — retry with \`container_create\`: ${lastError}`);
       } else {
         // Permanent: a typo'd/unknown containerTypeId or unrecoverable error.
         // This will NOT self-resolve — surface it as a failure, not "pending".
-        steps.push(`❌ Container creation FAILED (not recoverable by retry — check the container type ID): ${lastError}`);
+        recordStep(steps, `❌ Container creation FAILED (not recoverable by retry — check the container type ID): ${lastError}`);
       }
 
       const summary =
@@ -363,7 +406,11 @@ export const provisionTool: McpTool = {
       return { content: [{ type: "text" as const, text: summary }] };
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Unknown error";
-      return { content: [{ type: "text" as const, text: `Error during provisioning: ${msg}` }], isError: true };
+      // A mid-flow throw (e.g. permissions, container-type, or registration
+      // call failing) used to surface only this message and hide how far the
+      // orchestration got. Include the completed steps so a partially-provisioned
+      // run is debuggable and resumable.
+      return { content: [{ type: "text" as const, text: `Error during provisioning: ${msg}` + partialProgress(steps, `an unexpected error (${msg})`) }], isError: true };
     }
   },
 };
