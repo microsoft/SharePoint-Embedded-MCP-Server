@@ -157,9 +157,16 @@ export interface ApplicationPermissionGrant {
  *  - `Required<Pick<…>>` — `id`, `displayName`, `containerTypeId`, and `status`
  *    are returned by Graph for every live container and are dereferenced by
  *    call sites without a null guard (e.g. `activateContainer(container.id)`).
- *    Marking them non-optional preserves the previous interface's guarantees;
- *    the official type declares them optional because the schema is shared
- *    across all read/write shapes.
+ *    Marking them non-optional preserves the previous interface's *optionality*
+ *    guarantees. Caveat: `Required<T>` strips `?` but NOT `| null`, so the
+ *    Graph `NullableOption` fields keep their `null` — here `status` widens to
+ *    `"inactive" | "active" | "unknownFutureValue" | null` (the old field was a
+ *    bare `string`). This is safe only because every consumer *compares* these
+ *    fields (e.g. `=== "active"`) rather than passing them into a non-null
+ *    `string` param. For richer types whose call sites dereference/pass
+ *    `NullableOption` fields, wrap with `NonNullable<>` (or a guard) instead of
+ *    a bare `Required<Pick<…>>`. `id`/`displayName`/`containerTypeId` are plain
+ *    `string` upstream (non-nullable), so `Required` yields clean `string`.
  *  - `Pick<…>` — `createdDateTime`, `description`, and `lockState` are
  *    genuinely optional and are always accessed defensively (`?? …`).
  *
