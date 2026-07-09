@@ -92,13 +92,20 @@ export function resetElicitationForTests(): void {
 }
 
 /**
- * True only when a client that advertises the elicitation capability is wired.
- * Capabilities are read lazily (always post-`initialize`), so this reflects the
- * live client. The SDK further gates form mode on `elicitation.form` and throws
- * otherwise — that throw is caught by the callers below and falls back.
+ * True only when a client that advertises FORM elicitation is wired. The SDK's
+ * form mode requires `elicitation.form`; a client advertising only URL-mode
+ * elicitation would make the form request throw, so gate on `.form` here to
+ * avoid a wasted native attempt (the throw is still caught by callers as a
+ * belt-and-suspenders fallback). Capabilities are read lazily (always
+ * post-`initialize`), so this reflects the live client.
  */
 function nativeElicitationAvailable(): boolean {
-  return !!wired && !!wired.getClientCapabilities()?.elicitation;
+  const elicitation = wired?.getClientCapabilities()?.elicitation as
+    | { form?: unknown }
+    | undefined;
+  // Per the MCP spec an empty `elicitation: {}` is equivalent to form support,
+  // so accept either an explicit `.form` or an (empty) capability object.
+  return !!wired && !!elicitation && (elicitation.form !== undefined || Object.keys(elicitation).length === 0);
 }
 
 /**
@@ -173,6 +180,9 @@ export async function elicitChoice(
           return { resolved: true, value: picked };
         }
         // Accepted but the value did not match a known option — treat as no-op.
+        // Defensive: the SDK validates accepted `content` against requestedSchema
+        // and throws on mismatch (caught below), so in production an out-of-enum
+        // value normally hits the fallback rather than reaching here.
         return { resolved: false, result: declinedChoiceResult(options) };
       }
       // decline / cancel → the user opted out; make no change.

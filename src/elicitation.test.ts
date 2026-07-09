@@ -84,6 +84,20 @@ describe("elicitChoice — fallback (no native elicitation)", () => {
     if (!r.resolved) expect(r.result.content[0].text).toContain("appSelection=reuse");
   });
 
+  it("when the client advertises ONLY url-mode elicitation (no form), falls back WITHOUT calling elicitInput", async () => {
+    const server = fakeServer({
+      capabilities: { elicitation: { url: {} } }, // url-only: form not supported
+      elicitInput: async () => ({ action: "accept", content: { appSelection: "reuse" } }),
+    });
+    wireElicitation(server);
+
+    const r = await elicitChoice("q", OPTIONS, "appSelection");
+
+    expect(server.elicitInput).not.toHaveBeenCalled();
+    expect(r.resolved).toBe(false);
+    if (!r.resolved) expect(r.result.content[0].text).toContain("appSelection=reuse");
+  });
+
   it("when getClientCapabilities() returns undefined, falls back WITHOUT calling elicitInput", async () => {
     const server = fakeServer({
       capabilities: undefined,
