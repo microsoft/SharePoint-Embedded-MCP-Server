@@ -40,11 +40,12 @@ import {
   existsSync,
   fchmodSync,
   fstatSync,
+  ftruncateSync,
   lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
-  writeSync,
+  writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { resolve, sep } from "node:path";
@@ -111,6 +112,16 @@ function isUnderHome(dir: string): boolean {
  * Windows: apply an owner-only DACL to an off-profile override directory, or
  * throw. `/inheritance:r` strips inherited ACEs; `/grant:r <user>:(OI)(CI)F`
  * replaces the user's ACE with full control inherited by files + subdirs.
+ *
+ * icacls is invoked by absolute path (not a bare name) so a planted
+ * `icacls.exe` on PATH / in the CWD cannot be run in its place.
+ *
+ * KNOWN LIMITATION (tracked as a follow-up under Feature AB#3116729): this does
+ * NOT remove pre-existing *explicit* ACEs and does not verify the directory
+ * owner (Node has no cheap owner read on Windows). An attacker who can
+ * pre-create the exact override path with a permissive explicit ACE is not
+ * fully mitigated here. The default `~/.spe-mcp` (under %USERPROFILE%) is
+ * unaffected — it inherits the per-user profile ACL and never reaches this path.
  */
 function secureWindowsDirAclOrThrow(dir: string): void {
   const user = process.env.USERDOMAIN
@@ -119,8 +130,11 @@ function secureWindowsDirAclOrThrow(dir: string): void {
   if (!user) {
     throw insecureDir(dir, "the current Windows user could not be determined to set an owner-only ACL");
   }
+  const icacls = process.env.SystemRoot
+    ? `${process.env.SystemRoot}\\System32\\icacls.exe`
+    : "C:\\Windows\\System32\\icacls.exe";
   try {
-    execFileSync("icacls", [dir, "/inheritance:r", "/grant:r", `${user}:(OI)(CI)F`], {
+    execFileSync(icacls, [dir, "/inheritance:r", "/grant:r", `${user}:(OI)(CI)F`], {
       stdio: "ignore",
     });
   } catch {
@@ -161,7 +175,12 @@ export function ensureSecureDir(dir: string): void {
       throw insecureDir(dir, "it is owned by another user");
     }
     const mode = lstatSync(key).mode & 0o777;
-    if (mode & 0o077) {
+    if (mode & 0o077 && !isUnderHome(dir)) {
+      // Group/other-accessible. For an explicit off-home override (the
+      // untrusted-input case) this is fail-closed. For the user's own home tree
+      // (the default ~/.spe-mcp) we stay best-effort: a mode-ignoring filesystem
+      // (WSL DrvFs, some NFS/CIFS) must not turn the default path into a hard
+      // failure — ownership + symlink checks above still apply there.
       throw insecureDir(dir, "it is accessible to group or other (expected 0o700)");
     }
   } else if (!isUnderHome(dir)) {
@@ -179,7 +198,9 @@ export function ensureSecureDir(dir: string): void {
  * Throws (fail-closed) if the target is a symlink or owned by another user.
  */
 export function writeSecureFile(path: string, data: string): void {
-  const flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC | O_NOFOLLOW;
+  // No O_TRUNC: we truncate only AFTER verifying the fd below, so a
+  // foreign-owned/symlinked target is never emptied before the refusal throws.
+  const flags = fsConstants.O_WRONLY | fsConstants.O_CREAT | O_NOFOLLOW;
   let fd: number;
   try {
     fd = openSync(path, flags, OWNER_RW);
@@ -202,7 +223,11 @@ export function writeSecureFile(path: string, data: string): void {
       // this also repairs a pre-existing world-readable file.
       fchmodSync(fd, OWNER_RW);
     }
-    writeSync(fd, data, null, "utf-8");
+    // Truncate only now (post-verification), then write. writeFileSync(fd, …)
+    // loops until every byte is flushed, handling short writes / EINTR that a
+    // single writeSync could leave partially written.
+    ftruncateSync(fd, 0);
+    writeFileSync(fd, data, "utf-8");
   } finally {
     closeSync(fd);
   }

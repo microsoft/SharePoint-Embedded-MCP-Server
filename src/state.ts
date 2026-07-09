@@ -16,9 +16,9 @@
  * `--data-dir` / `SPE_DATA_DIR` override.
  */
 
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { getDataDir, getStateFile } from "./paths.js";
-import { ensureSecureDir, writeSecureFile } from "./secure-fs.js";
+import { ensureSecureDir, readSecureFile, writeSecureFile } from "./secure-fs.js";
 import type { BillingClassification, OwnerScope } from "./types.js";
 
 export interface ProvisioningState {
@@ -71,13 +71,16 @@ export interface ProvisioningState {
 }
 
 export function readState(): ProvisioningState {
-  const stateFile = getStateFile();
   try {
-    if (existsSync(stateFile)) {
-      return JSON.parse(readFileSync(stateFile, "utf-8")) as ProvisioningState;
+    // O_NOFOLLOW + owner check (readSecureFile): a symlinked or foreign-owned
+    // state.json is refused (throws → treated as empty) rather than followed,
+    // consistent with the writeState hardening. Returns null when absent.
+    const raw = readSecureFile(getStateFile());
+    if (raw !== null) {
+      return JSON.parse(raw) as ProvisioningState;
     }
   } catch {
-    /* ignore corrupt state — treat as empty */
+    /* ignore corrupt or insecure state — treat as empty */
   }
   return {};
 }

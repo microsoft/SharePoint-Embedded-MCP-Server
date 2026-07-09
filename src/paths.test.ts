@@ -13,6 +13,7 @@ import {
   getCacheDir,
   getCacheFile,
   getLegacyCacheFile,
+  sanitizeForFilename,
   __testing,
 } from "./paths.js";
 
@@ -122,5 +123,12 @@ describe("paths — data directory resolution", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("sanitizeForFilename replaces path-unsafe characters (keeps [A-Za-z0-9._-])", () => {
+    expect(sanitizeForFilename("abc-123_DEF.xyz")).toBe("abc-123_DEF.xyz");
+    expect(sanitizeForFilename("a/b\\c:d*e")).toBe("a_b_c_d_e");
+    // A traversal-looking value cannot introduce separators into the filename.
+    expect(sanitizeForFilename("../../etc/passwd")).toBe(".._.._etc_passwd");
   });
 });
