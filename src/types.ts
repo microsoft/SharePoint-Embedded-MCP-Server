@@ -5,6 +5,10 @@
  * Shared type definitions for the SPE MCP Server.
  */
 
+// Types-only import (zero runtime cost). `@microsoft/microsoft-graph-types` is
+// a pure `.d.ts` package pinned in devDependencies — nothing here emits JS.
+import type { FileStorageContainer } from "@microsoft/microsoft-graph-types";
+
 // ─── Primitives ──────────────────────────────────────────────────────────────
 
 /**
@@ -137,15 +141,40 @@ export interface ApplicationPermissionGrant {
 
 // ─── Graph API Types: Containers ─────────────────────────────────────────────
 
-export interface Container {
-  id: string;
-  displayName: string;
-  containerTypeId: string;
-  status: string;
-  createdDateTime?: string;
-  description?: string;
-  lockState?: "unlocked" | "lockedReadOnly";
-}
+/**
+ * A SharePoint Embedded container (Microsoft Graph `fileStorageContainer`).
+ *
+ * **WI-22 Phase 0 POC** — this alias is derived from the official
+ * `@microsoft/microsoft-graph-types` {@link FileStorageContainer} shape via a
+ * `Pick` + curated-JSDoc wrapper, replacing the former hand-maintained
+ * interface. The upstream package is **types-only** (lives in
+ * `devDependencies`) and contributes **zero runtime JavaScript** — it compiles
+ * away entirely. Field names already match the Graph resource 1:1, so the only
+ * curation needed is (a) selecting the subset this server consumes and
+ * (b) tightening always-present fields to non-optional for null-safety.
+ *
+ * Field selection rationale:
+ *  - `Required<Pick<…>>` — `id`, `displayName`, `containerTypeId`, and `status`
+ *    are returned by Graph for every live container and are dereferenced by
+ *    call sites without a null guard (e.g. `activateContainer(container.id)`).
+ *    Marking them non-optional preserves the previous interface's guarantees;
+ *    the official type declares them optional because the schema is shared
+ *    across all read/write shapes.
+ *  - `Pick<…>` — `createdDateTime`, `description`, and `lockState` are
+ *    genuinely optional and are always accessed defensively (`?? …`).
+ *
+ * Semantics preserved from the original curated interface:
+ *  - `displayName` is the human-visible name and is **not** the `id`. Address
+ *    containers by `id` in Graph calls; surface `displayName` to users.
+ *  - `status` is `inactive` at creation and must be activated before use
+ *    (see `activateContainer`). Official union: `inactive | active`.
+ *  - `lockState` drives archive/restore: `lockedReadOnly` == archived,
+ *    `unlocked` == writable. An absent value is treated as `unlocked`.
+ */
+export type Container = Required<
+  Pick<FileStorageContainer, "id" | "displayName" | "containerTypeId" | "status">
+> &
+  Pick<FileStorageContainer, "createdDateTime" | "description" | "lockState">;
 
 export interface ContainerPermission {
   id?: string;

@@ -61,6 +61,7 @@
     "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {
+    "@microsoft/microsoft-graph-types": "2.43.1",
     "@types/node": "^20.11.0",
     "@typescript-eslint/eslint-plugin": "^8.57.2",
     "@typescript-eslint/parser": "^8.57.2",
