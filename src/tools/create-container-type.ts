@@ -28,6 +28,7 @@ import {
 } from "../graph-client.js";
 import { readState, writeState } from "../state.js";
 import { defineTool, z } from "../tooling/define-tool.js";
+import type { BillingClassification } from "../types.js";
 import { fail, ok } from "../responses.js";
 import { clientSafeMessage } from "../errors.js";
 
@@ -39,15 +40,24 @@ import { clientSafeMessage } from "../errors.js";
 interface CreateContainerTypeArgs {
   displayName: string;
   owningAppId?: string;
-  billingClassification?: "trial" | "standard" | "directToCustomer";
+  billingClassification?: BillingClassification;
   azureSubscriptionId?: string;
   resourceGroup?: string;
   region?: string;
   autoRegister?: boolean;
 }
 
-/** Allowed billing models — must mirror the tool inputSchema enum. */
-const BILLING_CLASSIFICATIONS = ["trial", "standard", "directToCustomer"] as const;
+/**
+ * Allowed billing models — must mirror the tool inputSchema enum. Zod needs the
+ * runtime array, so it stays; `satisfies readonly BillingClassification[]` pins
+ * it to the single {@link BillingClassification} union so the array and the type
+ * can't drift apart.
+ */
+const BILLING_CLASSIFICATIONS = [
+  "trial",
+  "standard",
+  "directToCustomer",
+] as const satisfies readonly BillingClassification[];
 
 async function executeCreateContainerType(args: CreateContainerTypeArgs) {
   const {

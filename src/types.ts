@@ -79,6 +79,14 @@ export interface ServerConfig {
 
 // ─── Graph API Types: Container Types ────────────────────────────────────────
 
+/**
+ * The billing model a container type is created under. This is the single
+ * source of truth for the classification across the codebase — the tool input
+ * enum, persisted state, and Graph response mapping all reference this union so
+ * the allowed values can't drift apart.
+ */
+export type BillingClassification = "trial" | "standard" | "directToCustomer";
+
 export interface ContainerType {
   containerTypeId: string;
   owningAppId: string;
@@ -87,7 +95,7 @@ export interface ContainerType {
   azureSubscriptionId?: string;
   createdDateTime?: string;
   expirationDateTime?: string;
-  billingClassification?: "trial" | "standard" | "directToCustomer";
+  billingClassification?: BillingClassification;
   /**
    * Optimistic-concurrency tag. Read from a Create/Get response and **required**
    * in the body of an Update (PATCH) call — omitting it returns HTTP 400.
@@ -124,7 +132,7 @@ export interface ContainerTypeRegistration {
 export interface ContainerTypeRegistrationRecord {
   id?: string;
   owningAppId?: string;
-  billingClassification?: string;
+  billingClassification?: BillingClassification;
   registeredDateTime?: string;
   applicationPermissionGrants?: ApplicationPermissionGrant[];
 }
