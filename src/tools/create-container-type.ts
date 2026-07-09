@@ -295,7 +295,7 @@ export const createContainerTypeTool = defineTool({
   handler: async (args) => {
     // Restart confirmation gate (r-appgate): confirm the remembered owning app /
     // container type before creating a new one on a fresh session.
-    const gate = resolveContextGate(args.contextChoice);
+    const gate = await resolveContextGate(args.contextChoice);
     if (gate) return gate;
 
     try {

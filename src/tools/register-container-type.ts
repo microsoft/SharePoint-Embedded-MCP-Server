@@ -54,7 +54,7 @@ export const registerContainerTypeTool: McpTool = {
   handler: async (args) => {
     // Restart confirmation gate (r-appgate): confirm the remembered owning app /
     // container type before mutating tenant registration on a fresh session.
-    const gate = resolveContextGate((args as RegisterArgs).contextChoice);
+    const gate = await resolveContextGate((args as RegisterArgs).contextChoice);
     if (gate) return gate;
 
     const state = readState();

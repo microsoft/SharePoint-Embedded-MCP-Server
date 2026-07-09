@@ -34,14 +34,14 @@ beforeEach(() => {
 });
 
 describe("requireConfirmedContext", () => {
-  it("returns null when there is nothing remembered to confirm", () => {
-    expect(requireConfirmedContext()).toBeNull();
+  it("returns null when there is nothing remembered to confirm", async () => {
+    expect(await requireConfirmedContext()).toBeNull();
   });
 
-  it("returns a confirm/switch choice when an owning app is remembered but unconfirmed", () => {
+  it("returns a confirm/switch choice when an owning app is remembered but unconfirmed", async () => {
     stateStore = { appId: "app-1", appDisplayName: "Contoso Docs App", containerTypeName: "Docs CT" };
 
-    const r = requireConfirmedContext();
+    const r = await requireConfirmedContext();
 
     expect(r).not.toBeNull();
     expect(r?.isError).toBe(false);
@@ -53,54 +53,54 @@ describe("requireConfirmedContext", () => {
     expect(text).toContain("contextChoice=switch");
   });
 
-  it("also fires when only a container type is remembered (no owning app)", () => {
+  it("also fires when only a container type is remembered (no owning app)", async () => {
     stateStore = { containerTypeId: "ct-1" };
-    expect(requireConfirmedContext()).not.toBeNull();
+    expect(await requireConfirmedContext()).not.toBeNull();
   });
 
-  it("returns null once the context is confirmed under the current session", () => {
+  it("returns null once the context is confirmed under the current session", async () => {
     stateStore = { appId: "app-1", confirmedSessionId: getSessionId() };
-    expect(requireConfirmedContext()).toBeNull();
+    expect(await requireConfirmedContext()).toBeNull();
   });
 
-  it("notes a prior session when contextConfirmedAt was set by an earlier process", () => {
+  it("notes a prior session when contextConfirmedAt was set by an earlier process", async () => {
     stateStore = {
       appId: "app-1",
       contextConfirmedAt: "2024-01-01T00:00:00.000Z",
       confirmedSessionId: "some-old-session",
     };
 
-    const text = requireConfirmedContext()?.content[0].text ?? "";
+    const text = (await requireConfirmedContext())?.content[0].text ?? "";
     expect(text).toContain("prior session");
   });
 
-  it("appends a staleness warning only when owningAppManagesAllContainerTypes === false", () => {
+  it("appends a staleness warning only when owningAppManagesAllContainerTypes === false", async () => {
     stateStore = { appId: "app-1", owningAppManagesAllContainerTypes: false };
-    expect(requireConfirmedContext()?.content[0].text).toContain("stale");
+    expect((await requireConfirmedContext())?.content[0].text).toContain("stale");
 
     stateStore = { appId: "app-1", owningAppManagesAllContainerTypes: true };
-    expect(requireConfirmedContext()?.content[0].text).not.toContain("stale");
+    expect((await requireConfirmedContext())?.content[0].text).not.toContain("stale");
 
     stateStore = { appId: "app-1" }; // undefined => unknown => no warning
-    expect(requireConfirmedContext()?.content[0].text).not.toContain("stale");
+    expect((await requireConfirmedContext())?.content[0].text).not.toContain("stale");
   });
 });
 
 describe("resolveContextGate", () => {
-  it("stamps the session confirmed and returns null on 'confirm'", () => {
+  it("stamps the session confirmed and returns null on 'confirm'", async () => {
     stateStore = { appId: "app-1" };
 
-    const r = resolveContextGate("confirm");
+    const r = await resolveContextGate("confirm");
 
     expect(r).toBeNull();
     expect(stateStore.confirmedSessionId).toBe(getSessionId());
     expect(stateStore.contextConfirmedAt).toBeTruthy();
   });
 
-  it("directs the user to re-provision on 'switch' (without stamping)", () => {
+  it("directs the user to re-provision on 'switch' (without stamping)", async () => {
     stateStore = { appId: "app-1" };
 
-    const r = resolveContextGate("switch");
+    const r = await resolveContextGate("switch");
 
     expect(r).not.toBeNull();
     expect(r?.isError).toBe(false);
@@ -108,13 +108,13 @@ describe("resolveContextGate", () => {
     expect(stateStore.confirmedSessionId).toBeUndefined();
   });
 
-  it("returns the confirmation choice when no contextChoice is supplied (unconfirmed)", () => {
+  it("returns the confirmation choice when no contextChoice is supplied (unconfirmed)", async () => {
     stateStore = { appId: "app-1" };
-    expect(resolveContextGate(undefined)).not.toBeNull();
+    expect(await resolveContextGate(undefined)).not.toBeNull();
   });
 
-  it("returns null when no contextChoice is supplied but the session is already confirmed", () => {
+  it("returns null when no contextChoice is supplied but the session is already confirmed", async () => {
     stateStore = { appId: "app-1", confirmedSessionId: getSessionId() };
-    expect(resolveContextGate(undefined)).toBeNull();
+    expect(await resolveContextGate(undefined)).toBeNull();
   });
 });

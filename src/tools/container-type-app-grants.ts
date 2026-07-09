@@ -83,7 +83,7 @@ export const addContainerTypeAppGrantTool: McpTool = {
   },
   handler: async (args) => {
     // Restart confirmation gate (r-appgate) before mutating grants on a fresh session.
-    const gate = resolveContextGate(args.contextChoice as string | undefined);
+    const gate = await resolveContextGate(args.contextChoice as string | undefined);
     if (gate) return gate;
 
     const state = authContainerTypeState();
@@ -169,7 +169,7 @@ export const removeContainerTypeAppGrantTool: McpTool = {
   },
   handler: async (args) => {
     // Restart confirmation gate (r-appgate) before mutating grants on a fresh session.
-    const gate = resolveContextGate(args.contextChoice as string | undefined);
+    const gate = await resolveContextGate(args.contextChoice as string | undefined);
     if (gate) return gate;
 
     const state = authContainerTypeState();

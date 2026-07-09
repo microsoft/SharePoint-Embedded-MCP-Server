@@ -42,7 +42,7 @@ import {
   toClassifiableError,
   type ClassifiableError,
 } from "../container-retry.js";
-import { needChoice } from "../elicitation.js";
+import { elicitChoice, elicitText } from "../elicitation.js";
 import { isContextConfirmedThisSession, stampContextConfirmed } from "../session.js";
 import { readState, writeState } from "../state.js";
 import type { Guid, McpTool } from "../types.js";
@@ -146,15 +146,19 @@ export const provisionTool: McpTool = {
   handler: async (args) => {
     const state = readState();
     const {
-      appDisplayName = "SPE Builder App",
       containerTypeName,
       containerName = "Default Container",
-      billingClassification,
       azureSubscriptionId = state.azureSubscriptionId,
       resourceGroup = state.resourceGroup,
       region = "eastus",
       confirmBilling = false,
     } = args as ProvisionArgs;
+    // `let` because native elicitation can resolve these in-band: a "different
+    // app" prompt supplies a name, and the billing prompt supplies the model.
+    // `?? "SPE Builder App"` matches the prior destructuring default exactly
+    // (both only substitute on undefined).
+    let appDisplayName = (args as ProvisionArgs).appDisplayName ?? "SPE Builder App";
+    let billingClassification = (args as ProvisionArgs).billingClassification;
     // An explicit appDisplayName targets that named app even when state holds
     // another appId; absent one, resume by the persisted appId below.
     const explicitAppName =
@@ -163,7 +167,7 @@ export const provisionTool: McpTool = {
         : undefined;
     // The user's explicit decision about a remembered owning app: "reuse" the
     // last one or use a "new"/different one. Undefined until asked.
-    const appSelection =
+    let appSelection =
       args.appSelection === "reuse" || args.appSelection === "new" ? args.appSelection : undefined;
 
     // Declared before the try so every early-return error path AND the catch-all
@@ -185,13 +189,18 @@ export const provisionTool: McpTool = {
       // whenever an app is remembered, this call carries no appSelection, and
       // the context is NOT confirmed under the current session — so a freshly
       // restarted process always re-asks even though state already holds an app.
-      // The agent re-invokes with appSelection (reuse/new); no loop. An explicit
-      // appDisplayName alone no longer bypasses the ask on an unconfirmed
-      // session (appSelection is the new-vs-existing answer). Comes before the
-      // billing prompt so the app is settled first; the chosen app also drives
-      // which signed-in identity the SPE calls use.
+      //
+      // Prefer NATIVE MCP elicitation (PR #3 review): a capable client prompts
+      // the user directly and we CONTINUE in-band with their pick. Without
+      // elicitation support, elicitChoice falls back to the agent-guided text ask
+      // and the agent re-invokes with appSelection (reuse/new) — no loop, and
+      // behavior identical to before. An explicit appDisplayName alone no longer
+      // bypasses the ask on an unconfirmed session (appSelection is the
+      // new-vs-existing answer). Comes before the billing prompt so the app is
+      // settled first; the chosen app also drives which signed-in identity the
+      // SPE calls use.
       if (state.appId && !appSelection && !isContextConfirmedThisSession(state)) {
-        return needChoice(
+        const choice = await elicitChoice(
           `You previously used the owning app "${state.appDisplayName ?? state.appId}". Reuse it, or use a different app?`,
           [
             {
@@ -207,11 +216,24 @@ export const provisionTool: McpTool = {
           ],
           "appSelection",
         );
+        if (!choice.resolved) return choice.result;
+        appSelection = choice.value as "reuse" | "new";
+        // Native path resolved the ask in-band. For a "different app" with no
+        // explicit name, prompt for one too so the flow is complete instead of
+        // silently defaulting; on decline/no-capability we keep the default.
+        if (appSelection === "new" && !explicitAppName) {
+          const name = await elicitText("Name for the new owning app?", "appDisplayName", {
+            title: "New app name",
+          });
+          if (name.resolved) appDisplayName = name.value;
+        }
       }
 
       // Elicit billing model if not provided and not already standard in state.
+      // Native elicitation prompts the user and continues in-band; the fallback
+      // returns the agent-guided text ask (re-invoked with billingClassification).
       if (!billingClassification) {
-        return needChoice(
+        const choice = await elicitChoice(
           "What billing model for your container type?",
           [
             { label: "Trial", value: "trial", description: "free, 30 days, max 3 per tenant" },
@@ -219,6 +241,8 @@ export const provisionTool: McpTool = {
           ],
           "billingClassification",
         );
+        if (!choice.resolved) return choice.result;
+        billingClassification = choice.value as "trial" | "standard";
       }
 
       // For standard billing, require subscription + resource group (elicit if missing).
