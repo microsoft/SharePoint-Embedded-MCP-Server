@@ -39,6 +39,7 @@ import {
   type ResolvedToolPolicy,
 } from "./policy.js";
 import { withConfirmation } from "./tools/confirmation.js";
+import { wireElicitation, type ElicitationCapableServer } from "./elicitation.js";
 // Status / diagnostics
 import { statusTool } from "./tools/status.js";
 // Container Type tools
@@ -257,6 +258,20 @@ const server = new Server(
     instructions: SPE_SERVER_INSTRUCTIONS,
   },
 );
+
+// Wire the server so tool handlers can issue native MCP elicitation
+// (`elicitation/create`) prompts. Client capabilities are queried lazily at
+// elicit time — always post-`initialize` — so this ordering is safe. Falls back
+// to agent-guided text asks when the client does not support elicitation.
+//
+// The SDK's `elicitInput` param is a Zod-derived union whose `requestedSchema`
+// is stricter than the minimal `ElicitationCapableServer` shape our tool
+// handlers consume. The form-mode request we build at runtime (a restricted
+// object schema with `oneOf`/string primitives) satisfies the SDK's validator,
+// so we bridge the purely-structural gap with a documented cast here — the one
+// boundary where the concrete `Server` meets our interface — rather than
+// importing the SDK request type throughout the codebase.
+wireElicitation(server as unknown as ElicitationCapableServer);
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   const tools = listVisibleTools();

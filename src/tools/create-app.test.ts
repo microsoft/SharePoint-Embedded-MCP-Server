@@ -15,7 +15,7 @@
  * Graph / bootstrap / auth / state are mocked so nothing hits the network.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { LOCAL_SPA_REDIRECT_URI } from "../constants.js";
 
 const getSignedInIdentityMock = vi.fn();
@@ -52,6 +52,11 @@ vi.mock("../state.js", () => ({
 
 import { createAppTool } from "./create-app.js";
 import { getSessionId } from "../session.js";
+import {
+  wireElicitation,
+  resetElicitationForTests,
+  type ElicitInputResult,
+} from "../elicitation.js";
 
 const EXISTING_APP = {
   appId: "cd7243b7-f00c-4aec-8a96-67e0a15ea5e6",
@@ -221,5 +226,54 @@ describe("project_app_create — ask before reusing a remembered app (PM feedbac
 
     expect(r.content[0].text).toContain("Owning App Created");
     expect(createApplicationMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("project_app_create — native elicitation continues in-band (PR #3 review)", () => {
+  const REMEMBERED = { appId: "remembered-app-id", appDisplayName: "Contoso Docs App" };
+
+  // These tests wire a fake capability-advertising server so elicitChoice takes
+  // the NATIVE path; reset after each so other suites keep the (unwired) fallback.
+  afterEach(() => {
+    resetElicitationForTests();
+  });
+
+  it("CONTINUES with the user's native pick (reuse) instead of returning the choice", async () => {
+    readStateMock.mockReturnValue(REMEMBERED);
+    findApplicationByAppIdMock.mockResolvedValue({ ...EXISTING_APP, appId: REMEMBERED.appId });
+
+    const elicitInput = vi.fn(
+      async (): Promise<ElicitInputResult> => ({ action: "accept", content: { appSelection: "reuse" } }),
+    );
+    wireElicitation({ elicitInput, getClientCapabilities: () => ({ elicitation: {} }) });
+
+    // No appSelection arg: on a capable client the user is asked natively and we
+    // proceed in-band with their answer — no re-invoke, no returned choice text.
+    const r = await createAppTool.handler({});
+
+    expect(elicitInput).toHaveBeenCalledTimes(1);
+    expect(r.content[0].text).toContain("Owning App Found");
+    expect(findApplicationByAppIdMock).toHaveBeenCalledWith(REMEMBERED.appId, expect.anything());
+  });
+
+  it("on native 'new' with no explicit name, elicits the new app name and uses it", async () => {
+    readStateMock.mockReturnValue(REMEMBERED);
+    findApplicationByNameMock.mockResolvedValue(null);
+    createApplicationMock.mockResolvedValue({ appId: "fresh-app", objectId: "obj-fresh", displayName: "My New App" });
+
+    // First elicit (appSelection) → "new"; second elicit (displayName) → a name.
+    const elicitInput = vi
+      .fn<(params: { requestedSchema: { properties: Record<string, unknown> } }) => Promise<ElicitInputResult>>()
+      .mockResolvedValueOnce({ action: "accept", content: { appSelection: "new" } })
+      .mockResolvedValueOnce({ action: "accept", content: { displayName: "My New App" } });
+    wireElicitation({ elicitInput, getClientCapabilities: () => ({ elicitation: {} }) });
+
+    const r = await createAppTool.handler({});
+
+    expect(elicitInput).toHaveBeenCalledTimes(2);
+    expect(r.isError).toBeUndefined();
+    // The elicited name (not the "SPE Builder App" default) drives resolution.
+    expect(findApplicationByNameMock).toHaveBeenCalledWith("My New App", expect.anything());
+    expect(createApplicationMock).toHaveBeenCalledWith("My New App", expect.anything());
   });
 });

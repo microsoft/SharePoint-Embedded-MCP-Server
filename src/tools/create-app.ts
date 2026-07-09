@@ -38,7 +38,7 @@ import {
 import { LOCAL_SPA_REDIRECT_URI } from "../constants.js";
 import { setAuthConfig } from "../auth.js";
 import { clientSafeMessage } from "../errors.js";
-import { needChoice } from "../elicitation.js";
+import { elicitChoice, elicitText } from "../elicitation.js";
 import { isContextConfirmedThisSession, stampContextConfirmed } from "../session.js";
 import { readState } from "../state.js";
 import type { McpTool } from "../types.js";
@@ -73,14 +73,15 @@ export const createAppTool: McpTool = {
   handler: async (args) => {
     // An explicitly-provided displayName targets that specific named app; absent
     // one we use the default (and prefer resuming the persisted appId below).
+    // `let` because a native "different app" prompt can supply a name in-band.
     const explicitName =
       typeof args.displayName === "string" && args.displayName.trim() !== ""
         ? args.displayName
         : undefined;
-    const displayName = explicitName ?? "SPE Builder App";
+    let displayName = explicitName ?? "SPE Builder App";
     // The user's explicit decision (relayed by the agent) about a remembered
     // app: "reuse" the last one or use a "new"/different one. Undefined until asked.
-    const appSelection =
+    let appSelection =
       args.appSelection === "reuse" || args.appSelection === "new" ? args.appSelection : undefined;
 
     try {
@@ -104,15 +105,19 @@ export const createAppTool: McpTool = {
       // choice must fire not only when no intent was expressed, but ALSO on the
       // first touch of a freshly restarted process — i.e., whenever an app is
       // remembered, this call carries no appSelection, and the context has NOT
-      // been confirmed under the current session. The agent re-invokes with
-      // `appSelection` (reuse/new), so this asks at most once per session and
-      // never loops. NOTE: unlike before, an explicit `displayName` alone no
-      // longer bypasses the ask on an unconfirmed session — appSelection (not a
-      // name) is the answer to new-vs-existing; the "different app" option tells
-      // the caller to pass displayName alongside appSelection=new.
+      // been confirmed under the current session.
+      //
+      // Prefer NATIVE MCP elicitation (PR #3 review): on a capable client the
+      // user is prompted directly and we CONTINUE in-band with their pick — no
+      // re-invoke needed and no loop. On a client without elicitation, elicitChoice
+      // falls back to the agent-guided text ask (needChoice), which the agent
+      // re-invokes with `appSelection` (reuse/new) — identical to prior behavior.
+      // NOTE: an explicit `displayName` alone no longer bypasses the ask on an
+      // unconfirmed session — appSelection (not a name) is the answer to
+      // new-vs-existing; "different app" tells the caller to also pass displayName.
       const persisted = readState();
       if (persisted.appId && !appSelection && !isContextConfirmedThisSession(persisted)) {
-        return needChoice(
+        const choice = await elicitChoice(
           `You previously used the owning app "${persisted.appDisplayName ?? persisted.appId}". Reuse it, or use a different app?`,
           [
             {
@@ -128,6 +133,17 @@ export const createAppTool: McpTool = {
           ],
           "appSelection",
         );
+        if (!choice.resolved) return choice.result;
+        appSelection = choice.value as "reuse" | "new";
+        // Native path resolved the ask in-band. For a "different app" with no
+        // explicit name, prompt for one too so the flow is complete instead of
+        // silently defaulting; on decline/no-capability we keep the default.
+        if (appSelection === "new" && !explicitName) {
+          const name = await elicitText("Name for the new owning app?", "displayName", {
+            title: "New app name",
+          });
+          if (name.resolved) displayName = name.value;
+        }
       }
 
       // Resolution order:
