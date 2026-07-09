@@ -93,6 +93,30 @@ function explainAuthError(e: unknown): string | null {
   return guidance;
 }
 
+// Humanize a byte count for the file list (e.g. 2048 → "2.0 KB").
+function formatSize(bytes?: number): string {
+  if (typeof bytes !== "number" || bytes < 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = bytes / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(v < 10 ? 1 : 0)} ${units[i]}`;
+}
+
+// Derive up-to-two-letter initials from a UPN/email for the account avatar.
+function initials(username?: string): string {
+  const s = (username ?? "").trim();
+  if (!s) return "?";
+  const namePart = s.split("@")[0];
+  const parts = namePart.split(/[.\-_ ]+/).filter(Boolean);
+  const chars = parts.length >= 2 ? parts[0][0] + parts[1][0] : namePart.slice(0, 2);
+  return chars.toUpperCase();
+}
+
 interface Container {
   id: string;
   displayName: string;
@@ -251,98 +275,142 @@ export function App() {
   );
 
   return (
-    <main style={{ fontFamily: "Segoe UI, system-ui, sans-serif", maxWidth: 880, margin: "2rem auto", padding: "0 1rem" }}>
-      <h1>SharePoint Embedded reference app</h1>
-      <p style={{ color: "#555" }}>
-        A runnable React SPA scaffolded by the SPE Builder MCP. Sign in to browse and create the containers
-        (and browse files) of your container type.
-      </p>
-
-      <section style={{ background: "#f6f8fa", borderRadius: 8, padding: "1rem", margin: "1rem 0" }}>
-        <h2 style={{ marginTop: 0, fontSize: "1rem" }}>Configuration</h2>
-        <table style={{ borderCollapse: "collapse" }}>
-          <tbody>
-            {configRows.map(([k, v]) => (
-              <tr key={k}>
-                <td style={{ padding: "2px 12px 2px 0", color: "#666" }}>{k}</td>
-                <td style={{ padding: 2, fontFamily: "monospace" }}>{v || <em>(not set)</em>}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
-
-      {!ready ? (
-        <p>Initializing…</p>
-      ) : !account ? (
-        <button onClick={signIn} style={btn}>Sign in</button>
-      ) : (
-        <>
-          <p>
-            Signed in as <strong>{account.username}</strong>{" "}
-            <button onClick={signOut} style={{ ...btn, marginLeft: 8 }}>Sign out</button>
-          </p>
-          <button onClick={loadContainers} disabled={busy} style={btn}>List containers</button>
-
-          <div style={{ margin: "8px 0", display: "flex", gap: 8, alignItems: "center" }}>
-            <input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder="New container name"
-              disabled={busy}
-              style={{ padding: "6px 8px", minWidth: 220, border: "1px solid #ccc", borderRadius: 4 }}
-            />
-            <button onClick={createContainer} disabled={busy || !cfg.containerTypeId} style={btn}>Create container</button>
+    <div className="app">
+      <header className="appbar">
+        <div className="appbar__mark" aria-hidden>◈</div>
+        <div>
+          <div className="appbar__title">SharePoint Embedded</div>
+          <div className="appbar__subtitle">Reference app</div>
+        </div>
+        <div className="appbar__spacer" />
+        {account && (
+          <div className="account">
+            <div className="account__avatar" aria-hidden>{initials(account.username)}</div>
+            <span className="account__name">{account.username}</span>
+            <button className="btn btn--ghost" onClick={signOut}>Sign out</button>
           </div>
+        )}
+      </header>
 
-          {containers.length > 0 && (
-            <ul>
-              {containers.map((c) => (
-                <li key={c.id}>
-                  <code>{c.displayName}</code>{" "}
-                  <button onClick={() => loadFiles(c.id)} disabled={busy} style={linkBtn}>files</button>
-                </li>
-              ))}
-            </ul>
-          )}
+      <main className="main">
+        {!ready ? (
+          <div className="center-pad">
+            <span className="spinner" aria-hidden /> Initializing…
+          </div>
+        ) : !account ? (
+          <section className="hero">
+            <div className="hero__glyph" aria-hidden>🗂️</div>
+            <h1>Your SharePoint Embedded app</h1>
+            <p>
+              A runnable React starter scaffolded by the SPE Builder. Sign in to browse and create the
+              storage containers of your container type, and explore their files.
+            </p>
+            <button className="btn btn--primary btn--lg" onClick={signIn}>
+              <span aria-hidden>🔐</span> Sign in with Microsoft
+            </button>
+          </section>
+        ) : (
+          <>
+            <div className="page-head">
+              <div>
+                <h1>Containers</h1>
+                <p>Storage containers in your container type.</p>
+              </div>
+              <button className="btn btn--ghost" onClick={loadContainers} disabled={busy}>
+                {busy ? <span className="spinner" aria-hidden /> : <span aria-hidden>⟳</span>} Refresh
+              </button>
+            </div>
 
-          {files.length > 0 && (
-            <>
-              <h3>Files</h3>
-              <ul>
-                {files.map((f) => (
-                  <li key={f.id}>
-                    {f.folder ? "📁" : "📄"} {f.name}
-                    {typeof f.size === "number" ? ` (${f.size} bytes)` : ""}
-                  </li>
+            <div className="toolbar">
+              <label className="field">
+                <span className="field__icon" aria-hidden>＋</span>
+                <input
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  placeholder="New container name"
+                  disabled={busy}
+                  aria-label="New container name"
+                />
+              </label>
+              <button
+                className="btn btn--primary"
+                onClick={createContainer}
+                disabled={busy || !cfg.containerTypeId}
+              >
+                Create container
+              </button>
+            </div>
+
+            {containers.length > 0 ? (
+              <div className="grid">
+                {containers.map((c) => (
+                  <div className="card" key={c.id}>
+                    <div className="card__icon" aria-hidden>📦</div>
+                    <div className="card__body">
+                      <div className="card__title" title={c.displayName}>{c.displayName}</div>
+                      <div className="card__meta">
+                        <span className="pill pill--ok pill--dot">{c.status ?? "active"}</span>
+                      </div>
+                    </div>
+                    <button
+                      className="btn btn--subtle"
+                      onClick={() => loadFiles(c.id)}
+                      disabled={busy}
+                    >
+                      Open →
+                    </button>
+                  </div>
                 ))}
-              </ul>
-            </>
-          )}
-        </>
-      )}
+              </div>
+            ) : (
+              <div className="empty">
+                <div className="empty__glyph" aria-hidden>📭</div>
+                <p>
+                  No containers loaded yet. Click <strong>Refresh</strong> to list them, or create your
+                  first one above.
+                </p>
+              </div>
+            )}
 
-      {error && (
-        <pre style={{ background: "#fff3f3", color: "#a40000", padding: "0.75rem", borderRadius: 6, whiteSpace: "pre-wrap" }}>
-          {error}
-        </pre>
-      )}
-    </main>
+            {files.length > 0 && (
+              <div className="panel">
+                <div className="panel__head">
+                  <span aria-hidden>🗃️</span> Files
+                  <span className="panel__count">
+                    {files.length} item{files.length === 1 ? "" : "s"}
+                  </span>
+                </div>
+                {files.map((f) => (
+                  <div className="row" key={f.id}>
+                    <span className="row__glyph" aria-hidden>{f.folder ? "📁" : "📄"}</span>
+                    <span className="row__name">{f.name}</span>
+                    <span className="row__size">{f.folder ? "—" : formatSize(f.size)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {error && (
+          <div className="callout" role="alert">
+            <span className="callout__glyph" aria-hidden>⚠️</span>
+            <pre>{error}</pre>
+          </div>
+        )}
+
+        <details className="details">
+          <summary>Connection details</summary>
+          <div className="config">
+            {configRows.map(([k, v]) => (
+              <div className="config__row" key={k}>
+                <span className="config__key">{k}</span>
+                <span className="config__val">{v || <em>(not set)</em>}</span>
+              </div>
+            ))}
+          </div>
+        </details>
+      </main>
+    </div>
   );
 }
-
-const btn: React.CSSProperties = {
-  background: "#0078d4",
-  color: "white",
-  border: "none",
-  borderRadius: 4,
-  padding: "0.5rem 1rem",
-  cursor: "pointer",
-};
-const linkBtn: React.CSSProperties = {
-  background: "transparent",
-  color: "#0078d4",
-  border: "none",
-  cursor: "pointer",
-  textDecoration: "underline",
-};
