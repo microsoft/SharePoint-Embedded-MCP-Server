@@ -152,7 +152,12 @@ function deviceCodeCancelDelayMs(expiresInSeconds?: number): number {
     expiresInSeconds > 0
       ? expiresInSeconds
       : DEVICE_CODE_LIFETIME_SECONDS;
-  return seconds * 1000;
+  // Clamp to a sane upper bound (4× the ~15-min AAD lifetime). AAD never issues a
+  // code longer-lived than ~15 min, but an absurd expiresIn would otherwise exceed
+  // Node's max setTimeout delay (~24.85 days) and be clamped to 1ms — cancelling
+  // almost immediately. MSAL's native timeout stays authoritative regardless.
+  const boundedSeconds = Math.min(seconds, DEVICE_CODE_LIFETIME_SECONDS * 4);
+  return boundedSeconds * 1000;
 }
 
 // ─── Configuration ──────────────────────────────────────────────────────────
