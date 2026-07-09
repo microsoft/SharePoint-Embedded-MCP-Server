@@ -5,6 +5,24 @@ export interface SafeError {
   code: string;
   message: string;
   suggestion?: string;
+  /**
+   * Short random tag (8 chars) generated per failure to correlate the
+   * client-facing error with the full server-side diagnostics.
+   *
+   * How to debug with it:
+   *  - It is appended to the message returned to the MCP client
+   *    (e.g. `... (correlationId: a1b2c3d4)`) and to the `suggestion` for
+   *    unexpected `INTERNAL_ERROR`s.
+   *  - The server also logs it to **stderr** at the point of failure, e.g.
+   *    `[<ts>] [MCP] Tool error (a1b2c3d4) { ... }`. stderr is the server's
+   *    log channel (stdout is reserved for the MCP JSON-RPC protocol).
+   *  - To investigate, grep the server's stderr log for the id, e.g.
+   *    `grep a1b2c3d4 spe-mcp.log`, to find the redacted argument preview and
+   *    the sanitized upstream (Graph/ARM) failure that produced it.
+   *
+   * It is a client↔log join key only — it is not sent to Graph/ARM and is not
+   * an `x-ms-client-request-id`.
+   */
   correlationId: string;
 }
 

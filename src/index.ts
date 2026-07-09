@@ -90,6 +90,10 @@ import { SPE_SERVER_INSTRUCTIONS } from "./server-instructions.js";
 // Derived from package.json (single source of truth) — see src/version.ts.
 const SERVER_VERSION = PACKAGE_VERSION;
 
+// All server diagnostics go to **stderr**, never stdout. For a stdio MCP
+// server, stdout is the JSON-RPC protocol channel — writing logs there would
+// corrupt the message stream and break the client. `console.error` (stderr) is
+// therefore the correct, intentional sink for every log and status line below.
 function log(message: string, data?: unknown): void {
   const timestamp = new Date().toISOString();
   if (data !== undefined) {
@@ -383,6 +387,8 @@ export async function startServer(config: ServerConfig) {
     throw error;
   }
   log("Server connected and ready for requests");
+  // User-facing startup status. Emitted on stderr (not stdout) for the same
+  // reason as log() above: stdout carries the MCP JSON-RPC protocol only.
   console.error("[SPE MCP Server] Started and ready for connections");
 
   if (config.clientId) {
