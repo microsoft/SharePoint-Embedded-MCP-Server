@@ -116,9 +116,44 @@ export function setInteractiveMode(): void {
   interactiveEnabled = true;
 }
 
-// Device code timeout: 2 min interactive, 10 min headless (user needs time
-// to find the auth prompt in stderr / MCP logs).
-const DEVICE_CODE_TIMEOUT_MS = process.stderr.isTTY ? 120_000 : 600_000;
+// Device-code lifetime. The Azure AD device code that MSAL polls against is
+// valid for ~15 minutes; MSAL keeps polling the token endpoint until the user
+// completes sign-in OR the code expires (per the DeviceCodeResponse the STS
+// returns). Our own client-side cancel MUST therefore be bounded to that same
+// ~15-min horizon and never shorter: the previous fixed values (2 min on a TTY,
+// 10 min headless) were BELOW the code's real lifetime, so they cancelled a
+// device code that was still valid and aborted a sign-in the user could still
+// have completed. The authoritative per-request lifetime is read from
+// DeviceCodeResponse.expiresIn (seconds) in the callback below; this constant is
+// the default/upper safety bound used until that value is known. MSAL's own
+// polling `timeout` (see the request) already honours code-expiry precedence, so
+// this JS timer is only a belt-and-suspenders net at the same horizon. (PR #3
+// review.)
+const DEVICE_CODE_LIFETIME_SECONDS = 900; // ~15 min — official AAD device-code lifetime
+const DEVICE_CODE_TIMEOUT_MS = DEVICE_CODE_LIFETIME_SECONDS * 1000;
+
+/**
+ * Derive the client-side cancel delay (ms) for the device-code polling loop from
+ * the code's real lifetime. MSAL already stops polling when the code expires, and
+ * its native `timeout` honours code-expiry precedence, so this JS safety-net timer
+ * must never fire EARLIER than the code lifetime. Uses the server-reported
+ * `expiresIn` (seconds, from DeviceCodeResponse) when available; otherwise falls
+ * back to the ~15-min AAD default. Never returns less than a valid `expiresIn`
+ * would imply, which is exactly what fixes the premature-cancel bug. (PR #3
+ * review.)
+ *
+ * @param expiresInSeconds DeviceCodeResponse.expiresIn (seconds), if known
+ * @returns cancel delay in milliseconds
+ */
+function deviceCodeCancelDelayMs(expiresInSeconds?: number): number {
+  const seconds =
+    typeof expiresInSeconds === "number" &&
+    Number.isFinite(expiresInSeconds) &&
+    expiresInSeconds > 0
+      ? expiresInSeconds
+      : DEVICE_CODE_LIFETIME_SECONDS;
+  return seconds * 1000;
+}
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
@@ -519,8 +554,23 @@ async function acquireTokenSilent(account: AccountInfo): Promise<AuthenticationR
 async function acquireTokenByDeviceCode(): Promise<AuthenticationResult> {
   log("Starting device code flow...");
 
+  // JS safety-net cancel timer. Declared up-front so the callback can RE-ARM it
+  // to the real code lifetime once the STS reports `expiresIn`.
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const armCancelTimer = (delayMs: number): void => {
+    if (timeoutId) clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => {
+      deviceCodeRequest.cancel = true;
+    }, delayMs);
+  };
+
   const deviceCodeRequest: DeviceCodeRequest = {
     scopes: getScopes(),
+    // Native MSAL polling timeout (seconds), bound to the device-code lifetime.
+    // Per MSAL, "the device code expiration window will always take precedence
+    // over this set period", so this caps the wait at ~15 min WITHOUT ever
+    // cancelling a code that is still valid.
+    timeout: DEVICE_CODE_LIFETIME_SECONDS,
     deviceCodeCallback: (response) => {
       console.error(`\n${"=".repeat(60)}`);
       console.error("  AUTHENTICATION REQUIRED");
@@ -531,13 +581,17 @@ async function acquireTokenByDeviceCode(): Promise<AuthenticationResult> {
       console.error(`    ${response.userCode}\n`);
       console.error(`  ${response.message}`);
       console.error(`${"=".repeat(60)}\n`);
+      // Re-arm the JS safety net to the REAL lifetime the STS reported so it can
+      // never fire before the code actually expires (fixes the premature-cancel
+      // bug where a fixed 10-min headless timeout < the ~15-min code lifetime).
+      armCancelTimer(deviceCodeCancelDelayMs(response.expiresIn));
     },
     cancel: false,
   };
 
-  const timeoutId = setTimeout(() => {
-    deviceCodeRequest.cancel = true;
-  }, DEVICE_CODE_TIMEOUT_MS);
+  // Arm the initial safety net at the default ~15-min lifetime; the callback
+  // above re-arms it with the exact `expiresIn` as soon as the STS responds.
+  armCancelTimer(deviceCodeCancelDelayMs());
 
   try {
     const result = await ensurePcaInitialized().acquireTokenByDeviceCode(deviceCodeRequest);
@@ -547,7 +601,7 @@ async function acquireTokenByDeviceCode(): Promise<AuthenticationResult> {
     log("Device code flow succeeded");
     return result;
   } finally {
-    clearTimeout(timeoutId);
+    if (timeoutId) clearTimeout(timeoutId);
   }
 }
 
@@ -690,7 +744,8 @@ async function acquireTokenInteractiveWithFallbacks(): Promise<AuthenticationRes
     strategies.push({ name: "interactive browser", fn: acquireTokenInteractive });
     // Only fall back to device code when its stderr prompt is actually visible
     // (a TTY). Over stdio the code would print where no one can see it and the
-    // call would hang for up to 10 minutes — so we skip it and fail fast below.
+    // call would block for the code's full ~15-min lifetime — so we skip it and
+    // fail fast below.
     if (deviceCodeIsVisible()) {
       strategies.push({ name: "device code", fn: acquireTokenByDeviceCode });
     }
@@ -930,6 +985,14 @@ export const __testing = {
   setPca(value: PublicClientApplication | null): void {
     pca = value;
   },
+  /** The ~15-min AAD device-code lifetime (seconds) used as the default/upper bound. */
+  DEVICE_CODE_LIFETIME_SECONDS,
+  /** The device-code cancel horizon in ms (derived from the lifetime, never below it). */
+  DEVICE_CODE_TIMEOUT_MS,
+  /** Pure derivation of the cancel delay (ms) from a DeviceCodeResponse.expiresIn. */
+  deviceCodeCancelDelayMs,
+  /** The device-code acquisition flow, exposed so timeout behavior can be driven with fake timers. */
+  acquireTokenByDeviceCode,
   /** Read the current in-memory PublicClientApplication (null after a reset). */
   getPca(): PublicClientApplication | null {
     return pca;
