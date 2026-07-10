@@ -118,7 +118,7 @@ client config entry.
 
 ## Prerequisites
 
-- **Node.js** >= 18
+- **Node.js** 22, 24, or 26
 
 ### Running modes
 
