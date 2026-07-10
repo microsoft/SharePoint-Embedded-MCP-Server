@@ -12,7 +12,7 @@
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
-      "identifier": "@microsoft/spe-mcp-server",
+      "identifier": "@microsoft/spe-mcp",
       "version": "0.1.0-alpha.1",
       "runtimeHint": "npx",
       "transport": {

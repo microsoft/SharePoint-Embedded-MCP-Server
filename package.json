@@ -1,5 +1,5 @@
 {
-  "name": "@microsoft/spe-mcp-server",
+  "name": "@microsoft/spe-mcp",
   "version": "0.2.0-alpha.1",
   "description": "SharePoint Embedded MCP Server — manage container types, containers, and content via any MCP client",
   "keywords": [
