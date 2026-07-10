@@ -23,14 +23,14 @@ const STATIC_RESOURCES: StaticResource[] = [
   {
     uri: "spe://client-config/vscode",
     name: "VS Code MCP configuration",
-    description: "Copy/paste .vscode/mcp.json block for @microsoft/spe-mcp-server.",
+    description: "Copy/paste .vscode/mcp.json block for @microsoft/spe-mcp.",
     mimeType: "application/json",
     text: `{
   "servers": {
     "spe": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "-p", "@microsoft/spe-mcp-server", "spe-mcp", "start"]
+      "args": ["-y", "-p", "@microsoft/spe-mcp", "spe-mcp", "start"]
     }
   }
 }
@@ -39,13 +39,13 @@ const STATIC_RESOURCES: StaticResource[] = [
   {
     uri: "spe://client-config/claude-desktop",
     name: "Claude Desktop MCP configuration",
-    description: "Copy/paste claude_desktop_config.json block for @microsoft/spe-mcp-server.",
+    description: "Copy/paste claude_desktop_config.json block for @microsoft/spe-mcp.",
     mimeType: "application/json",
     text: `{
   "mcpServers": {
     "spe": {
       "command": "npx",
-      "args": ["-y", "-p", "@microsoft/spe-mcp-server", "spe-mcp", "start"]
+      "args": ["-y", "-p", "@microsoft/spe-mcp", "spe-mcp", "start"]
     }
   }
 }
@@ -54,13 +54,13 @@ const STATIC_RESOURCES: StaticResource[] = [
   {
     uri: "spe://client-config/cursor",
     name: "Cursor MCP configuration",
-    description: "Copy/paste Cursor MCP server block for @microsoft/spe-mcp-server.",
+    description: "Copy/paste Cursor MCP server block for @microsoft/spe-mcp.",
     mimeType: "application/json",
     text: `{
   "mcpServers": {
     "spe": {
       "command": "npx",
-      "args": ["-y", "-p", "@microsoft/spe-mcp-server", "spe-mcp", "start"]
+      "args": ["-y", "-p", "@microsoft/spe-mcp", "spe-mcp", "start"]
     }
   }
 }

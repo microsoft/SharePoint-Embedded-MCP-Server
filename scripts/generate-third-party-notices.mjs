@@ -3,7 +3,7 @@
 // Licensed under the MIT license.
 
 /**
- * Generates THIRD-PARTY-NOTICES for @microsoft/spe-mcp-server by walking the
+ * Generates THIRD-PARTY-NOTICES for @microsoft/spe-mcp by walking the
  * resolved *production* dependency tree (`npm ls --omit=dev --all --json`) and
  * collecting each package's declared license plus its license text from
  * node_modules. Run after any production-dependency change:

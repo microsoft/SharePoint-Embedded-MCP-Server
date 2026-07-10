@@ -1,6 +1,6 @@
 # Privacy
 
-`@microsoft/spe-mcp-server` ("the tool") is an open-source Model Context Protocol (MCP)
+`@microsoft/spe-mcp` ("the tool") is an open-source Model Context Protocol (MCP)
 server that you run **locally** to manage **your own** SharePoint Embedded, Microsoft Graph,
 and Azure resources. This notice explains what the tool does and does not do with data. It is
 provided for transparency and does not replace the

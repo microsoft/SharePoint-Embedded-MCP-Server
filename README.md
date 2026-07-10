@@ -6,6 +6,12 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for Sh
 > charges, and any connected AI agent can act on your tenant with your credentials. Please
 > read the **[Important notices](#important-notices)** before use.
 
+## Documentation
+
+- **Get started on Microsoft Learn:** [SharePoint Embedded MCP server](https://learn.microsoft.com/sharepoint/dev/embedded/getting-started/spe-mcp-server)
+- **SharePoint Embedded product docs:** <https://learn.microsoft.com/sharepoint/dev/embedded/>
+- **In this repo:** [Available Tools](#available-tools) · [Configuration](#configuration) · [Security controls](docs/SECURITY-CONTROLS.md) · [Troubleshooting](docs/TROUBLESHOOTING.md)
+
 ## Available Tools
 
 The server exposes **40 tools**, plus an MCP **Prompt** (`provision_spe_app`) and **Resources** (reference architectures).
@@ -76,7 +82,7 @@ configuration:
     "spe": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@microsoft/spe-mcp-server"]
+      "args": ["-y", "@microsoft/spe-mcp"]
     }
   }
 }
@@ -94,7 +100,7 @@ Add to `%APPDATA%\Claude\claude_desktop_config.json` (Windows) or
   "mcpServers": {
     "spe": {
       "command": "npx",
-      "args": ["-y", "@microsoft/spe-mcp-server"]
+      "args": ["-y", "@microsoft/spe-mcp"]
     }
   }
 }
@@ -107,7 +113,7 @@ Add to `%APPDATA%\Claude\claude_desktop_config.json` (Windows) or
 
 Because clients run the package through `npx`, they pick up published updates
 without a global install. Pin a specific version with
-`@microsoft/spe-mcp-server@0.1.0-alpha.1`. To remove the server, delete the MCP
+`@microsoft/spe-mcp@0.1.0-alpha.1`. To remove the server, delete the MCP
 client config entry.
 
 ## Prerequisites
@@ -206,7 +212,7 @@ Add an MCP server entry to `.vscode/mcp.json` in your workspace:
     "spe": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@microsoft/spe-mcp-server"],
+      "args": ["-y", "@microsoft/spe-mcp"],
       "env": {
         "SPE_CLIENT_ID": "your-client-id",
         "SPE_TENANT_ID": "your-tenant-id"
@@ -251,7 +257,7 @@ Add to `%APPDATA%\Claude\claude_desktop_config.json` (Windows) or `~/Library/App
   "mcpServers": {
     "spe": {
       "command": "npx",
-      "args": ["-y", "@microsoft/spe-mcp-server"],
+      "args": ["-y", "@microsoft/spe-mcp"],
       "env": {
         "SPE_CLIENT_ID": "your-client-id",
         "SPE_TENANT_ID": "your-tenant-id"
@@ -329,12 +335,12 @@ The data directory holds a single provisioning `state.json` plus the token cache
   "servers": {
     "spe-tenantA": {
       "command": "npx",
-      "args": ["-y", "@microsoft/spe-mcp-server", "start"],
+      "args": ["-y", "@microsoft/spe-mcp", "start"],
       "env": { "SPE_DATA_DIR": "~/.spe-mcp-tenantA", "SPE_TENANT_ID": "<tenant-A>" }
     },
     "spe-tenantB": {
       "command": "npx",
-      "args": ["-y", "@microsoft/spe-mcp-server", "start"],
+      "args": ["-y", "@microsoft/spe-mcp", "start"],
       "env": { "SPE_DATA_DIR": "~/.spe-mcp-tenantB", "SPE_TENANT_ID": "<tenant-B>" }
     }
   }
@@ -542,7 +548,7 @@ vulnerability, please report it privately as described in [SECURITY.md](SECURITY
 -->
 ## Important notices
 
-> **Preview software.** `@microsoft/spe-mcp-server` is an early (alpha) preview released for
+> **Preview software.** `@microsoft/spe-mcp` is an early (alpha) preview released for
 > evaluation and feedback. It is provided **"as is"**, without warranty of any kind; see the
 > [MIT License](LICENSE). Tool names, options, and behavior may change without notice.
 
