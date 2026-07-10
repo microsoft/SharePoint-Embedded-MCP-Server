@@ -100,7 +100,7 @@ export interface ServerConfig {
    * time. Also settable via the `SPE_TOOLS` env var.
    *
    * Surfaced to end users as the `--tools <profileOrCsv>` flag on the CLI —
-   * run `spe-mcp start --help` (or `npx @microsoft/spe-mcp-server start --help`)
+   * run `spe-mcp start --help` (or `npx @microsoft/spe-mcp start --help`)
    * to see the profile list and description.
    */
   tools?: string;
