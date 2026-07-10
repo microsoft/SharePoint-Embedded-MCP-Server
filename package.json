@@ -1,0 +1,88 @@
+{
+  "name": "@microsoft/spe-mcp",
+  "version": "0.2.0-alpha.1",
+  "description": "SharePoint Embedded MCP Server — manage container types, containers, and content via any MCP client",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "sharepoint-embedded",
+    "spe",
+    "microsoft-graph",
+    "sharepoint",
+    "containers",
+    "ai-tools",
+    "copilot"
+  ],
+  "homepage": "https://learn.microsoft.com/sharepoint/dev/embedded/overview",
+  "bugs": {
+    "url": "https://github.com/microsoft/SharePoint-Embedded-MCP-Server/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/microsoft/SharePoint-Embedded-MCP-Server.git"
+  },
+  "author": {
+    "name": "Microsoft Corporation",
+    "url": "https://www.microsoft.com"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "spe-mcp": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "samples",
+    "README.md",
+    "LICENSE",
+    "THIRD-PARTY-NOTICES"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "notices": "node scripts/generate-third-party-notices.mjs",
+    "prepublishOnly": "npm run build",
+    "ci": "npm run typecheck && npm run build && npm run test"
+  },
+  "dependencies": {
+    "@azure/msal-node": "^2.6.0",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "commander": "^12.0.0",
+    "open": "^10.0.0",
+    "zod": "^4.4.3",
+    "zod-to-json-schema": "^3.25.2"
+  },
+  "devDependencies": {
+    "@microsoft/microsoft-graph-types": "2.43.1",
+    "@microsoft/microsoft-graph-types-beta": "0.44.0-preview",
+    "@types/node": "^20.11.0",
+    "@typescript-eslint/eslint-plugin": "^8.57.2",
+    "@typescript-eslint/parser": "^8.57.2",
+    "@vitest/coverage-v8": "^3.2.4",
+    "eslint": "^9.39.4",
+    "typescript": "^5.3.0",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": "^22.0.0 || ^24.0.0 || ^26.0.0"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "overrides": {
+    "@azure/msal-node": {
+      "uuid": "^11.1.1"
+    },
+    "esbuild": "^0.28.1"
+  },
+  "mcpName": "com.microsoft/sharepointembedded-mcp-server"
+}

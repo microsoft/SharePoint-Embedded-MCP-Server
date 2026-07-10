@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+name: spe-sample-csharp-web
+metadata:
+  template: spe-builder-mcp
+services:
+  web:
+    project: .
+    language: dotnet
+    host: containerapp
+    docker:
+      path: ./Dockerfile
