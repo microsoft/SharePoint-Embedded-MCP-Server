@@ -2,6 +2,10 @@
 
 A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for SharePoint Embedded. Lets any MCP-compatible AI client (VS Code Copilot, Claude Desktop, Cursor, Azure Foundry) manage SPE resources via natural language.
 
+> ⚠️ **Preview software.** Provisioning SharePoint Embedded resources can incur Azure
+> charges, and any connected AI agent can act on your tenant with your credentials. Please
+> read the **[Important notices](#important-notices)** before use.
+
 ## Available Tools
 
 The server exposes **40 tools**, plus an MCP **Prompt** (`provision_spe_app`) and **Resources** (reference architectures).
@@ -371,7 +375,7 @@ src/
 ├── resources.ts            — MCP Resources (reference architectures)
 ├── reference-architectures.ts — Reference-architecture catalog (reads ../samples/)
 ├── elicitation.ts          — Interactive consent / step-up prompts
-├── user-agent.ts           — Telemetry User-Agent string
+├── user-agent.ts           — Product User-Agent string (no telemetry channel)
 ├── types.ts                — Shared TypeScript types
 └── tools/                  — 31 tools across 28 modules (one McpTool per export)
     ├── status.ts                   — status_get
@@ -530,7 +534,81 @@ Microsoft takes security seriously. If you believe you have found a security
 vulnerability, please report it privately as described in [SECURITY.md](SECURITY.md) —
 **do not** file a public GitHub issue.
 
-<!-- MCP-DISCLAIMER: Pending frontline-CELA notice text per https://aka.ms/MCP4CELA — required before public release. -->
+<!--
+  MCP notices. The standardized notice/disclaimer wording for Microsoft MCP servers is
+  owned by frontline CELA (CELA-only guidance: https://aka.ms/MCP4CELA). The text below is
+  a good-faith draft that covers the required topics; the exact MCP disclaimer wording is
+  pending frontline-CELA confirmation for Matter-0000001599.
+-->
+## Important notices
+
+> **Preview software.** `@microsoft/spe-mcp-server` is an early (alpha) preview released for
+> evaluation and feedback. It is provided **"as is"**, without warranty of any kind; see the
+> [MIT License](LICENSE). Tool names, options, and behavior may change without notice.
+
+### Autonomous and agent-invoked operations
+
+This server exposes tools that **create, modify, and delete real resources** in your
+Microsoft Entra tenant and Azure subscription — for example app registrations, SharePoint
+Embedded container types, containers, and their content. Any connected MCP client,
+**including autonomous AI agents**, can invoke these tools on your behalf, and you are
+responsible for the actions taken with your credentials. To stay in control:
+
+- **Review each action.** State-changing tools require an explicit confirmation
+  (`confirm: true`) before they run — the destructive-operation confirmation gate
+  (**SAFE-002**).
+- **Explore read-only.** Start the server with `--read-only` (or `SPE_READ_ONLY`) to
+  advertise and allow only read-only tools (**SAFE-003**).
+- **Limit the surface.** Use the `--tools` allowlist / profiles (or `SPE_TOOLS`) to expose
+  only the tools you need (**SAFE-004**).
+
+See [docs/SECURITY-CONTROLS.md](docs/SECURITY-CONTROLS.md) for the full list of safeguards.
+
+### Cost and billing
+
+SharePoint Embedded is a **metered, billable** service (standard billing is registered
+through the `Microsoft.Syntex` resource provider in your Azure subscription). Provisioning
+or using SPE resources with this tool **may incur charges** on the subscription you connect.
+A free **trial** container type is available for evaluation. You are responsible for any
+charges incurred in your tenant and subscription.
+
+### Data, privacy, and telemetry
+
+The server runs **locally** and talks to your MCP client over stdio. It authenticates **to
+your own tenant** and calls Microsoft first-party endpoints — Microsoft Graph and Azure
+Resource Manager — **on your behalf**; the content and directory data involved flow only
+between your machine, your MCP client, and those Microsoft services in your own
+tenant/subscription.
+
+The server opens **no separate telemetry channel** and sends **no usage analytics** to
+Microsoft. Outbound Graph/ARM requests carry a **static product `User-Agent`**
+(`spe-mcp-server/<version>`) that contains **no personal, tenant, or usage data** and is
+used only for aggregate traffic attribution. Authentication tokens are cached locally with
+owner-only permissions (**SEC-003**). For details see [PRIVACY.md](PRIVACY.md) and
+[docs/DATA-FLOW.md](docs/DATA-FLOW.md); Microsoft's handling of data you send to its online
+services is described in the
+[Microsoft Privacy Statement](https://privacy.microsoft.com/privacystatement).
+
+### Data residency and EU Data Boundary
+
+This tool performs **no independent cross-region processing** and stores no customer content
+of its own. Because it calls your own tenant's Microsoft Graph and Azure endpoints, data
+location, residency, and **EU Data Boundary (EUDB)** commitments follow the underlying
+Microsoft Online Services and your tenant configuration — not this tool. The only additional
+endpoint is the read-only, public [Microsoft Learn MCP](https://learn.microsoft.com/api/mcp)
+documentation service (no authentication, no customer data; host-validated per **SEC-007**),
+which can be disabled with `--tools`. All outbound calls target Microsoft-operated services;
+the server contacts **no non-Microsoft services**.
+
+### Product Terms
+
+SharePoint Embedded, Microsoft Graph, and other Microsoft Online Services accessed through
+this tool are **licensed separately**, and their use is governed by the agreement under which
+you obtained them — including the
+[Microsoft Product Terms](https://www.microsoft.com/licensing/terms/) and the
+[Microsoft Products and Services Data Protection Addendum (DPA)](https://www.microsoft.com/licensing/docs/view/Microsoft-Products-and-Services-Data-Protection-Addendum-DPA).
+This open-source tool grants no rights to any Microsoft Online Service and does not modify
+those terms.
 
 ## Trademarks
 
