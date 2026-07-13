@@ -23,16 +23,16 @@ consent to these practices.
 > (`spe-mcp-server/<version>`) attached to the Microsoft Graph and Azure Resource Manager
 > requests you already make on your own behalf; it carries no personal, tenant, or usage
 > data and is used only for aggregate traffic attribution. It is **on by default** and can be
-> suppressed with `SPE_COLLECT_TELEMETRY=false` (see below). See [PRIVACY.md](PRIVACY.md) and
+> suppressed with `SPE_MCP_COLLECT_TELEMETRY=false` (see below). See [PRIVACY.md](PRIVACY.md) and
 > [docs/DATA-FLOW.md](docs/DATA-FLOW.md) for the full data-flow description.
 
 ## Telemetry configuration
 
-Telemetry collection is controlled by the `SPE_COLLECT_TELEMETRY` environment variable and is
+Telemetry collection is controlled by the `SPE_MCP_COLLECT_TELEMETRY` environment variable and is
 **on by default**. The only telemetry this build emits is the static product `User-Agent`
 token (`spe-mcp-server/<version>`) stamped on outbound Graph/ARM requests for aggregate traffic
 attribution — there is no usage-analytics channel and no personal, tenant, or per-user data. To
-opt out, set `SPE_COLLECT_TELEMETRY=false` in your environment; the product token is then
+opt out, set `SPE_MCP_COLLECT_TELEMETRY=false` in your environment; the product token is then
 omitted from all outbound requests.
 
 ## Compliance responsibility

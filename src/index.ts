@@ -410,7 +410,7 @@ export async function startServer(config: ServerConfig) {
   // Stamp outbound `az` / `azd` traffic for aggregate attribution. The Azure
   // CLI and Developer CLI append AZURE_HTTP_USER_AGENT to their User-Agent on
   // every ARM request. Respect any value the user already set, and honor the
-  // `SPE_COLLECT_TELEMETRY` opt-out: when opted out, also strip a stale product
+  // `SPE_MCP_COLLECT_TELEMETRY` opt-out: when opted out, also strip a stale product
   // token left in the environment by a prior (non-opted-out) run so the opt-out
   // is reliably enforced.
   const armUserAgent = productUserAgent();

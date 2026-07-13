@@ -30,7 +30,7 @@ per-user data to Microsoft.** The only Microsoft-bound attribution signal is a s
   `User-Agent` of the form `spe-mcp-server/<version>` (`src/user-agent.ts`). It contains
   **no personal, tenant, or usage information** and exists only so the service can measure
   aggregate traffic driven by this tool. It is a request header on calls you already make —
-  not a separate data feed — and it is **on by default**; set `SPE_COLLECT_TELEMETRY=false`
+  not a separate data feed — and it is **on by default**; set `SPE_MCP_COLLECT_TELEMETRY=false`
   to omit it (see [Turning it off](#turning-it-off)).
 
 See [docs/DATA-FLOW.md](docs/DATA-FLOW.md) for the full list of network endpoints and what
@@ -64,7 +64,7 @@ terms, which are outside the control of this project.
 
 The product `User-Agent` attribution token (`spe-mcp-server/<version>`) is the only
 Microsoft-bound telemetry signal, and it is **on by default**. To opt out, set
-`SPE_COLLECT_TELEMETRY=false` in your environment; the tool then omits the token from all
+`SPE_MCP_COLLECT_TELEMETRY=false` in your environment; the tool then omits the token from all
 outbound Graph and Azure Resource Manager requests. Those requests still go out — they simply
 carry the underlying tool's default `User-Agent` instead (e.g. the Azure CLI's own token for
 `az`/`azd`, or the Node runtime default for direct Graph calls), whose logging is governed by
