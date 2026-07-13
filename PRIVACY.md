@@ -65,7 +65,10 @@ terms, which are outside the control of this project.
 The product `User-Agent` attribution token (`spe-mcp-server/<version>`) is the only
 Microsoft-bound telemetry signal, and it is **on by default**. To opt out, set
 `SPE_COLLECT_TELEMETRY=false` in your environment; the tool then omits the token from all
-outbound Graph and Azure Resource Manager requests. To further limit
+outbound Graph and Azure Resource Manager requests. Those requests still go out — they simply
+carry the underlying tool's default `User-Agent` instead (e.g. the Azure CLI's own token for
+`az`/`azd`, or the Node runtime default for direct Graph calls), whose logging is governed by
+those services' own terms. To further limit
 outbound calls you can run with `--read-only` (no mutating operations) or `--tools` (restrict
 the exposed tool set, including the optional Microsoft Learn documentation lookup). See
 [docs/DATA-FLOW.md](docs/DATA-FLOW.md), [docs/SECURITY-CONTROLS.md](docs/SECURITY-CONTROLS.md),

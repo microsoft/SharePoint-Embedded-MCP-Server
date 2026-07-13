@@ -48,7 +48,12 @@ These never leave your machine:
 
 ## Telemetry
 
-The server opens **no usage-analytics channel**. The only Microsoft-bound attribution signal
-is a static product `User-Agent` (`spe-mcp-server/<version>`) with no personal, tenant, or
-usage data, stamped on outbound Graph/ARM requests. It is **on by default**; set
-`SPE_COLLECT_TELEMETRY=false` to omit it. See [PRIVACY.md](../PRIVACY.md) for details.
+The server opens **no usage-analytics channel** and does **not** collect telemetry — it only
+adds a product `User-Agent` for aggregate product-usage attribution. That signal is a static
+product `User-Agent` (`spe-mcp-server/<version>`) with no personal, tenant, or usage data,
+stamped on outbound Graph/ARM requests. It is **on by default**; set
+`SPE_COLLECT_TELEMETRY=false` to omit it. Opting out neither silences the request nor adds a
+new signal — outbound calls simply fall back to the underlying tool's default `User-Agent`
+(the Azure CLI's own token for `az`/`azd`; the Node runtime default for direct Graph calls),
+whose logging is governed by those services' own terms. See [PRIVACY.md](../PRIVACY.md) for
+details.

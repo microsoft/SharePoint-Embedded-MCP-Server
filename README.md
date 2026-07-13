@@ -608,7 +608,9 @@ build opens no usage-analytics channel** — the only Microsoft-bound signal is 
 variable and is **on by default**. The only telemetry emitted is the static product
 `User-Agent` token on outbound Graph/ARM requests (aggregate traffic attribution — no usage
 analytics, no personal/tenant/per-user data). Set `SPE_COLLECT_TELEMETRY=false` to omit the
-token from all outbound requests.
+token from all outbound requests; those requests then fall back to the underlying tool's
+default `User-Agent` (the Azure CLI's own token for `az`/`azd`; the Node runtime default for
+direct Graph calls).
 
 ### Data residency and EU Data Boundary
 
