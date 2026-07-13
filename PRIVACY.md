@@ -33,6 +33,12 @@ to send data to Microsoft.** Specifically:
 See [docs/DATA-FLOW.md](docs/DATA-FLOW.md) for the full list of network endpoints and what
 travels to each.
 
+> **Standard Microsoft data-collection notice.** Microsoft's standard notice states that
+> software "may collect information about you and your use of the software and send it to
+> Microsoft" (full text in [NOTICE.md](NOTICE.md#data-collection)). It is reproduced for
+> completeness; **this build of the tool implements no such collection** — see above and the
+> [Telemetry configuration](NOTICE.md#telemetry-configuration) note.
+
 ## Service-side data handling
 
 Microsoft Graph, Azure, and SharePoint Embedded are Microsoft Online Services. Any data you
@@ -51,7 +57,11 @@ terms, which are outside the control of this project.
 
 ## Turning it off
 
-Because the tool has no telemetry channel, there is nothing to opt out of. To further limit
+This tool implements **no telemetry channel**, so there is nothing to opt out of. For
+consistency with Microsoft's MCP guidance, `SPE_COLLECT_TELEMETRY` is reserved as the opt-out
+control: if a telemetry channel is ever added, setting `SPE_COLLECT_TELEMETRY=false` will
+disable it, and this notice will be updated to describe what is collected. To further limit
 outbound calls you can run with `--read-only` (no mutating operations) or `--tools` (restrict
 the exposed tool set, including the optional Microsoft Learn documentation lookup). See
-[docs/DATA-FLOW.md](docs/DATA-FLOW.md) and [docs/SECURITY-CONTROLS.md](docs/SECURITY-CONTROLS.md).
+[docs/DATA-FLOW.md](docs/DATA-FLOW.md), [docs/SECURITY-CONTROLS.md](docs/SECURITY-CONTROLS.md),
+and the consolidated [NOTICE.md](NOTICE.md).

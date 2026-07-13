@@ -540,17 +540,16 @@ Microsoft takes security seriously. If you believe you have found a security
 vulnerability, please report it privately as described in [SECURITY.md](SECURITY.md) —
 **do not** file a public GitHub issue.
 
-<!--
-  MCP notices. The standardized notice/disclaimer wording for Microsoft MCP servers is
-  owned by frontline CELA (CELA-only guidance: https://aka.ms/MCP4CELA). The text below is
-  a good-faith draft that covers the required topics; the exact MCP disclaimer wording is
-  pending frontline-CELA confirmation for Matter-0000001599.
--->
 ## Important notices
+
+The MCP-specific notices and disclaimers for this project are consolidated in
+[NOTICE.md](NOTICE.md); the key points are summarized below.
 
 > **Preview software.** `@microsoft/spe-mcp` is an early (alpha) preview released for
 > evaluation and feedback. It is provided **"as is"**, without warranty of any kind; see the
 > [MIT License](LICENSE). Tool names, options, and behavior may change without notice.
+> Microsoft shall not be liable for any damages arising from use, misuse, or misconfiguration
+> of this software.
 
 ### Autonomous and agent-invoked operations
 
@@ -595,6 +594,18 @@ owner-only permissions (**SEC-003**). For details see [PRIVACY.md](PRIVACY.md) a
 services is described in the
 [Microsoft Privacy Statement](https://privacy.microsoft.com/privacystatement).
 
+**Data collection (standard Microsoft notice).** The software may collect information about
+you and your use of the software and send it to Microsoft; Microsoft may use this information
+to provide and improve products and services, and your use of the software operates as your
+consent to these practices (full text in [NOTICE.md](NOTICE.md#data-collection)). **This
+build implements no such collection** — it opens no telemetry channel and sends no usage
+analytics.
+
+**Telemetry configuration.** Telemetry, if it is ever added, is gated by the
+`SPE_COLLECT_TELEMETRY` environment variable and would be disabled with
+`SPE_COLLECT_TELEMETRY=false`. Today there is no telemetry channel, so there is nothing to
+configure or opt out of.
+
 ### Data residency and EU Data Boundary
 
 This tool performs **no independent cross-region processing** and stores no customer content
@@ -606,6 +617,26 @@ documentation service (no authentication, no customer data; host-validated per *
 which can be disabled with `--tools`. All outbound calls target Microsoft-operated services;
 the server contacts **no non-Microsoft services**.
 
+### Compliance responsibility
+
+This MCP server may interact with clients and services outside Microsoft compliance
+boundaries — in particular, the third-party MCP client, host, or agent you choose to connect
+it to. You are responsible for ensuring that any integration complies with applicable
+organizational, regulatory, and contractual requirements.
+
+### Third-party components
+
+This MCP server may use or depend on third-party components, such as third-party MCP clients,
+hosts, agents, AI applications, and/or models. You are responsible for reviewing and
+complying with the licenses of any third-party components and vetting the security of any
+third-party components. The open-source libraries this server depends on directly are
+disclosed in [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES).
+
+### Export control
+
+Use of this software must comply with all applicable export laws and regulations, including
+U.S. Export Administration Regulations and local jurisdiction requirements.
+
 ### Product Terms
 
 SharePoint Embedded, Microsoft Graph, and other Microsoft Online Services accessed through
@@ -614,7 +645,9 @@ you obtained them — including the
 [Microsoft Product Terms](https://www.microsoft.com/licensing/terms/) and the
 [Microsoft Products and Services Data Protection Addendum (DPA)](https://www.microsoft.com/licensing/docs/view/Microsoft-Products-and-Services-Data-Protection-Addendum-DPA).
 This open-source tool grants no rights to any Microsoft Online Service and does not modify
-those terms.
+those terms. More generally, this server may provide access to underlying resources — tools,
+services, and/or data — and your use of any such underlying resource via this server is
+governed by that resource's own license terms.
 
 ## Trademarks
 
