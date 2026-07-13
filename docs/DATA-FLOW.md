@@ -48,6 +48,7 @@ These never leave your machine:
 
 ## Telemetry
 
-The server opens **no telemetry channel** and sends **no usage analytics**. Outbound requests
-carry only a static product `User-Agent` (`spe-mcp-server/<version>`) with no personal,
-tenant, or usage data. See [PRIVACY.md](../PRIVACY.md) for details.
+The server opens **no usage-analytics channel**. The only Microsoft-bound attribution signal
+is a static product `User-Agent` (`spe-mcp-server/<version>`) with no personal, tenant, or
+usage data, stamped on outbound Graph/ARM requests. It is **on by default**; set
+`SPE_COLLECT_TELEMETRY=false` to omit it. See [PRIVACY.md](../PRIVACY.md) for details.

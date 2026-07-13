@@ -15,7 +15,7 @@ import { LOCAL_SPA_REDIRECT_URI } from "./constants.js";
 import { AppError } from "./errors.js";
 import { parseRetryAfterMs } from "./http-client.js";
 import { readState, writeState } from "./state.js";
-import { USER_AGENT } from "./user-agent.js";
+import { productUserAgent } from "./user-agent.js";
 import type {
   ApplicationPermissionGrant,
   Container,
@@ -147,12 +147,15 @@ async function graphRequest<T>(
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const token = await getToken();
 
-    const headers: Record<string, string> = {
+    const baseHeaders: Record<string, string> = {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
-      "User-Agent": USER_AGENT,
-      ...customHeaders,
     };
+    const ua = productUserAgent();
+    if (ua) {
+      baseHeaders["User-Agent"] = ua;
+    }
+    const headers: Record<string, string> = { ...baseHeaders, ...customHeaders };
 
     const options: RequestInit = { method, headers };
     if (body && (method === "POST" || method === "PUT" || method === "PATCH")) {

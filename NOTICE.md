@@ -17,22 +17,23 @@ of Microsoft's privacy statement. You can learn more about data collection and u
 help documentation and our privacy statement. Your use of the software operates as your
 consent to these practices.
 
-> **Current status for this server.** This build of `@microsoft/spe-mcp` implements **no**
-> telemetry channel and sends **no** usage analytics to Microsoft. The only Microsoft-bound
-> signal is a static product `User-Agent`
+> **What this build sends.** `@microsoft/spe-mcp` opens **no separate telemetry channel** and
+> sends **no usage analytics or personal, tenant, or per-user data** to Microsoft. The only
+> Microsoft-bound signal is a static product `User-Agent` token
 > (`spe-mcp-server/<version>`) attached to the Microsoft Graph and Azure Resource Manager
 > requests you already make on your own behalf; it carries no personal, tenant, or usage
-> data and is used only for aggregate traffic attribution. See [PRIVACY.md](PRIVACY.md) and
+> data and is used only for aggregate traffic attribution. It is **on by default** and can be
+> suppressed with `SPE_COLLECT_TELEMETRY=false` (see below). See [PRIVACY.md](PRIVACY.md) and
 > [docs/DATA-FLOW.md](docs/DATA-FLOW.md) for the full data-flow description.
 
 ## Telemetry configuration
 
-Telemetry collection is controlled by the `SPE_COLLECT_TELEMETRY` environment variable.
-**This server currently implements no telemetry channel**, so there is nothing to collect
-and nothing to opt out of today. If a telemetry channel is added in a future release, it
-will be disabled by setting `SPE_COLLECT_TELEMETRY=false` in your environment, and this
-notice and [PRIVACY.md](PRIVACY.md) will be updated to describe exactly what is collected
-and how to turn it off.
+Telemetry collection is controlled by the `SPE_COLLECT_TELEMETRY` environment variable and is
+**on by default**. The only telemetry this build emits is the static product `User-Agent`
+token (`spe-mcp-server/<version>`) stamped on outbound Graph/ARM requests for aggregate traffic
+attribution — there is no usage-analytics channel and no personal, tenant, or per-user data. To
+opt out, set `SPE_COLLECT_TELEMETRY=false` in your environment; the product token is then
+omitted from all outbound requests.
 
 ## Compliance responsibility
 

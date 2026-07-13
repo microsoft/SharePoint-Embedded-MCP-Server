@@ -26,7 +26,7 @@ import { initializeAuth, setAuthConfig } from "./auth.js";
 import { assertAzCli, getSignedInIdentity } from "./bootstrap.js";
 import { byoAppStartupNote, azLoginNotSignedInMessage } from "./onboarding-messages.js";
 import { readState } from "./state.js";
-import { USER_AGENT } from "./user-agent.js";
+import { productUserAgent } from "./user-agent.js";
 import { PACKAGE_VERSION } from "./version.js";
 import type { McpTool, ServerConfig } from "./types.js";
 import { createLogger } from "./logger.js";
@@ -409,9 +409,11 @@ export async function startServer(config: ServerConfig) {
 
   // Stamp outbound `az` / `azd` traffic for aggregate attribution. The Azure
   // CLI and Developer CLI append AZURE_HTTP_USER_AGENT to their User-Agent on
-  // every ARM request. Respect any value the user already set.
-  if (!process.env.AZURE_HTTP_USER_AGENT) {
-    process.env.AZURE_HTTP_USER_AGENT = USER_AGENT;
+  // every ARM request. Respect any value the user already set, and honor the
+  // `SPE_COLLECT_TELEMETRY` opt-out (productUserAgent() returns undefined then).
+  const armUserAgent = productUserAgent();
+  if (armUserAgent && !process.env.AZURE_HTTP_USER_AGENT) {
+    process.env.AZURE_HTTP_USER_AGENT = armUserAgent;
   }
 
   // Connect transport first so MCP `initialize` handshake works immediately

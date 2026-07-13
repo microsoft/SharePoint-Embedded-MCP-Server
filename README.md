@@ -192,6 +192,7 @@ The server accepts configuration via CLI flags or environment variables:
 | `--read-only` | `SPE_READ_ONLY` | Advertise/allow only read/list/get/search tools; reject mutating calls |
 | `--tools` | `SPE_TOOLS` | Restrict exposed tools to a profile (`readOnly`, `docsOnly`, `provisioning`, `content`, `admin`) or a comma-separated tool list |
 | `--data-dir` | `SPE_DATA_DIR` | Directory for the token cache + provisioning state (default `~/.spe-mcp`). Point each instance at a unique **absolute** path (or `~/...`; CWD-relative paths are rejected) to run multiple servers without clobbering state |
+| _(none)_ | `SPE_COLLECT_TELEMETRY` | Product `User-Agent` attribution token on outbound Graph/ARM requests. On by default; set to `false` to opt out (see [PRIVACY.md](PRIVACY.md)) |
 
 > The CLI flag wins when both a flag and its env var are set. Run
 > `spe-mcp start --help` to see the authoritative option list and descriptions.
@@ -381,7 +382,7 @@ src/
 ├── resources.ts            — MCP Resources (reference architectures)
 ├── reference-architectures.ts — Reference-architecture catalog (reads ../samples/)
 ├── elicitation.ts          — Interactive consent / step-up prompts
-├── user-agent.ts           — Product User-Agent string (no telemetry channel)
+├── user-agent.ts           — Product User-Agent token + SPE_COLLECT_TELEMETRY opt-out
 ├── types.ts                — Shared TypeScript types
 └── tools/                  — 31 tools across 28 modules (one McpTool per export)
     ├── status.ts                   — status_get
@@ -588,23 +589,26 @@ tenant/subscription.
 The server opens **no separate telemetry channel** and sends **no usage analytics** to
 Microsoft. Outbound Graph/ARM requests carry a **static product `User-Agent`**
 (`spe-mcp-server/<version>`) that contains **no personal, tenant, or usage data** and is
-used only for aggregate traffic attribution. Authentication tokens are cached locally with
-owner-only permissions (**SEC-003**). For details see [PRIVACY.md](PRIVACY.md) and
-[docs/DATA-FLOW.md](docs/DATA-FLOW.md); Microsoft's handling of data you send to its online
-services is described in the
+used only for aggregate traffic attribution. That attribution token is **on by default** and
+can be suppressed with `SPE_COLLECT_TELEMETRY=false` (see **Telemetry configuration** below).
+Authentication tokens are cached locally with owner-only permissions (**SEC-003**). For
+details see [PRIVACY.md](PRIVACY.md) and [docs/DATA-FLOW.md](docs/DATA-FLOW.md); Microsoft's
+handling of data you send to its online services is described in the
 [Microsoft Privacy Statement](https://privacy.microsoft.com/privacystatement).
 
 **Data collection (standard Microsoft notice).** The software may collect information about
 you and your use of the software and send it to Microsoft; Microsoft may use this information
 to provide and improve products and services, and your use of the software operates as your
 consent to these practices (full text in [NOTICE.md](NOTICE.md#data-collection)). **This
-build implements no such collection** — it opens no telemetry channel and sends no usage
-analytics.
+build opens no usage-analytics channel** — the only Microsoft-bound signal is the product
+`User-Agent` attribution token described above, which you can turn off with
+`SPE_COLLECT_TELEMETRY=false`.
 
-**Telemetry configuration.** Telemetry, if it is ever added, is gated by the
-`SPE_COLLECT_TELEMETRY` environment variable and would be disabled with
-`SPE_COLLECT_TELEMETRY=false`. Today there is no telemetry channel, so there is nothing to
-configure or opt out of.
+**Telemetry configuration.** Attribution is gated by the `SPE_COLLECT_TELEMETRY` environment
+variable and is **on by default**. The only telemetry emitted is the static product
+`User-Agent` token on outbound Graph/ARM requests (aggregate traffic attribution — no usage
+analytics, no personal/tenant/per-user data). Set `SPE_COLLECT_TELEMETRY=false` to omit the
+token from all outbound requests.
 
 ### Data residency and EU Data Boundary
 
