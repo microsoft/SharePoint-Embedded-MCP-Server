@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 📘 Support & documentation
+    url: https://github.com/microsoft/SharePoint-Embedded-MCP-Server/blob/main/SUPPORT.md
+    about: How to get help and where to find docs. Please search existing issues first.
+  - name: 🔑 Sign-in / AADSTS troubleshooting
+    url: https://github.com/microsoft/SharePoint-Embedded-MCP-Server/blob/main/docs/TROUBLESHOOTING.md#react-spa-sign-in-fails-with-aadsts9002326-redirect-uri-already-registered
+    about: Fixes for common sign-in errors (including AADSTS9002326) — often resolves the problem without filing.
+  - name: 🔒 Report a security vulnerability
+    url: https://github.com/microsoft/SharePoint-Embedded-MCP-Server/blob/main/SECURITY.md
+    about: Do NOT open a public issue for security problems — follow the private process described here.

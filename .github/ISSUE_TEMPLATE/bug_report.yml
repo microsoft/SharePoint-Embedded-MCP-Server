@@ -1,0 +1,93 @@
+name: 🐛 Bug report
+description: Report a defect in the SPE MCP server or its scaffolded samples.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! Please **search
+        [existing issues](https://github.com/microsoft/SharePoint-Embedded-MCP-Server/issues)**
+        first to avoid duplicates.
+
+        > 🔑 **Sign-in / `AADSTS…` error?** Use the dedicated
+        > **"Sign-in / AADSTS error"** template instead — it collects the exact
+        > diagnostics needed to root-cause auth failures.
+
+        > 🔒 **Never paste secrets** (client secrets, refresh/access tokens, `az`
+        > output containing credentials). Redact tenant/subscription GUIDs if you
+        > consider them sensitive.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, including the exact error text or the client-facing correlation ID.
+      placeholder: |
+        e.g. `container_create` returned "The tool failed. See server logs for details. (correlationId: a1b2c3d4)"
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The natural-language prompt(s) and/or tool calls that trigger the problem.
+      placeholder: |
+        1. Prompt the agent: "Create a trial SPE app and scaffold a React sample"
+        2. Run `project_run_local`
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: dropdown
+    id: mcp-client
+    attributes:
+      label: MCP client
+      options:
+        - VS Code (Copilot)
+        - Cursor
+        - Claude Desktop
+        - Azure AI Foundry
+        - MCP Inspector
+        - Other (describe below)
+    validations:
+      required: true
+  - type: input
+    id: server-version
+    attributes:
+      label: Server version
+      description: "`@microsoft/spe-mcp` version (e.g. 0.2.0-alpha.1), or the commit SHA if built from source."
+    validations:
+      required: true
+  - type: input
+    id: tool
+    attributes:
+      label: Tool(s) involved
+      description: Which MCP tool name(s), if known (e.g. `project_app_create`, `container_create`).
+  - type: input
+    id: env
+    attributes:
+      label: OS and Node.js version
+      placeholder: "e.g. Windows 11 / macOS 14; Node 22.11.0"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste the server stderr lines for the correlation ID (`grep <id> spe-mcp.log`). Redact any secrets.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: This is **not** a security vulnerability (those go through [SECURITY.md](https://github.com/microsoft/SharePoint-Embedded-MCP-Server/blob/main/SECURITY.md)).
+          required: true
+        - label: I removed all secrets/tokens from the details above.
+          required: true
