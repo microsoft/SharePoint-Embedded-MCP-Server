@@ -15,12 +15,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   tenants, or a published build alongside a local build) without clobbering
   shared state. Applies uniformly to `start`, `auth`, and `logout`. The default
   path is unchanged and byte-identical to prior releases.
-- **Guided issue reporting.** GitHub issue-form templates (a general **Bug
-  report** and a dedicated **Sign-in / AADSTS error** form that collects `.env`
-  vs. portal identity, `spa.redirectUris`, and the exact AADSTS code) plus a
-  **Report an SPE MCP issue** agent skill (`.github/skills/report-spe-mcp-issue`)
-  that gathers those diagnostics and drafts the issue. New
-  "React SPA sign-in fails with `AADSTS9002326`" troubleshooting section.
+- **Guided issue reporting.** A general **Bug report** GitHub issue form (for
+  tool failures, scaffolding/build/deploy, install/packaging, or unexpected
+  output) and a dedicated **Sign-in / AADSTS error** form for auth failures,
+  plus a **Report an SPE MCP issue** agent skill
+  (`.github/skills/report-spe-mcp-issue`) that picks the right form, gathers the
+  diagnostics, redacts secrets, and drafts the issue. New "React SPA sign-in
+  fails with `AADSTS9002326`" troubleshooting section.
 
 ### Fixed
 

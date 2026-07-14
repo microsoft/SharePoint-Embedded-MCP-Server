@@ -1,5 +1,5 @@
 name: 🐛 Bug report
-description: Report a defect in the SPE MCP server or its scaffolded samples.
+description: Report a defect in the SPE MCP server or a scaffolded sample — tool failures, scaffolding/build/deploy, install/packaging, or unexpected output.
 title: "[Bug]: "
 body:
   - type: markdown
@@ -16,6 +16,21 @@ body:
         > 🔒 **Never paste secrets** (client secrets, refresh/access tokens, `az`
         > output containing credentials). Redact tenant/subscription GUIDs if you
         > consider them sensitive.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the workflow is affected?
+      options:
+        - MCP tool call (server)
+        - Scaffolding / generated sample
+        - Local run / build (npm run dev, Vite)
+        - Deployment (Static Web Apps / Azure)
+        - Install / packaging (npx, npm i -g)
+        - Documentation
+        - Other
+    validations:
+      required: true
   - type: textarea
     id: what-happened
     attributes:
