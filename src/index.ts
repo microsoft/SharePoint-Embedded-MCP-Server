@@ -26,7 +26,7 @@ import { initializeAuth, setAuthConfig } from "./auth.js";
 import { assertAzCli, getSignedInIdentity } from "./bootstrap.js";
 import { byoAppStartupNote, azLoginNotSignedInMessage } from "./onboarding-messages.js";
 import { readState } from "./state.js";
-import { USER_AGENT } from "./user-agent.js";
+import { productUserAgent, isProductUserAgent } from "./user-agent.js";
 import { PACKAGE_VERSION } from "./version.js";
 import type { McpTool, ServerConfig } from "./types.js";
 import { createLogger } from "./logger.js";
@@ -409,9 +409,19 @@ export async function startServer(config: ServerConfig) {
 
   // Stamp outbound `az` / `azd` traffic for aggregate attribution. The Azure
   // CLI and Developer CLI append AZURE_HTTP_USER_AGENT to their User-Agent on
-  // every ARM request. Respect any value the user already set.
-  if (!process.env.AZURE_HTTP_USER_AGENT) {
-    process.env.AZURE_HTTP_USER_AGENT = USER_AGENT;
+  // every ARM request. Respect any value the user already set, and honor the
+  // `SPE_MCP_COLLECT_TELEMETRY` opt-out: when opted out, also strip a stale product
+  // token left in the environment by a prior (non-opted-out) run so the opt-out
+  // is reliably enforced.
+  const armUserAgent = productUserAgent();
+  if (armUserAgent) {
+    if (!process.env.AZURE_HTTP_USER_AGENT) {
+      process.env.AZURE_HTTP_USER_AGENT = armUserAgent;
+    }
+  } else if (isProductUserAgent(process.env.AZURE_HTTP_USER_AGENT)) {
+    // Only our own product token is removed; an unrelated value the user set for
+    // their own attribution is left untouched.
+    delete process.env.AZURE_HTTP_USER_AGENT;
   }
 
   // Connect transport first so MCP `initialize` handshake works immediately

@@ -9,8 +9,10 @@ organization's agreements with Microsoft.
 
 ## What the tool collects and sends
 
-**The tool does not collect telemetry or usage analytics, and it opens no dedicated channel
-to send data to Microsoft.** Specifically:
+**The tool opens no dedicated usage-analytics channel and sends no personal, tenant, or
+per-user data to Microsoft.** The only Microsoft-bound attribution signal is a static product
+`User-Agent` token, which is on by default and can be turned off (see
+[Turning it off](#turning-it-off)). Specifically:
 
 - **No telemetry channel.** The tool does not implement application telemetry and does not
   "phone home." Diagnostic logs are written to the local process's **stderr only**, with
@@ -28,10 +30,19 @@ to send data to Microsoft.** Specifically:
   `User-Agent` of the form `spe-mcp-server/<version>` (`src/user-agent.ts`). It contains
   **no personal, tenant, or usage information** and exists only so the service can measure
   aggregate traffic driven by this tool. It is a request header on calls you already make —
-  not a separate data feed.
+  not a separate data feed — and it is **on by default**; set `SPE_MCP_COLLECT_TELEMETRY=false`
+  to omit it (see [Turning it off](#turning-it-off)).
 
 See [docs/DATA-FLOW.md](docs/DATA-FLOW.md) for the full list of network endpoints and what
 travels to each.
+
+> **Standard Microsoft data-collection notice.** Microsoft's standard notice states that
+> software "may collect information about you and your use of the software and send it to
+> Microsoft" (full text in [NOTICE.md](NOTICE.md#data-collection)). It is reproduced for
+> completeness; **this build opens no usage-analytics channel** — the only Microsoft-bound
+> signal is the product `User-Agent` attribution token described above, which is on by default
+> and can be turned off (see [Turning it off](#turning-it-off) and the
+> [Telemetry configuration](NOTICE.md#telemetry-configuration) note).
 
 ## Service-side data handling
 
@@ -51,7 +62,14 @@ terms, which are outside the control of this project.
 
 ## Turning it off
 
-Because the tool has no telemetry channel, there is nothing to opt out of. To further limit
+The product `User-Agent` attribution token (`spe-mcp-server/<version>`) is the only
+Microsoft-bound telemetry signal, and it is **on by default**. To opt out, set
+`SPE_MCP_COLLECT_TELEMETRY=false` in your environment; the tool then omits the token from all
+outbound Graph and Azure Resource Manager requests. Those requests still go out — they simply
+carry the underlying tool's default `User-Agent` instead (e.g. the Azure CLI's own token for
+`az`/`azd`, or the Node runtime default for direct Graph calls), whose logging is governed by
+those services' own terms. To further limit
 outbound calls you can run with `--read-only` (no mutating operations) or `--tools` (restrict
 the exposed tool set, including the optional Microsoft Learn documentation lookup). See
-[docs/DATA-FLOW.md](docs/DATA-FLOW.md) and [docs/SECURITY-CONTROLS.md](docs/SECURITY-CONTROLS.md).
+[docs/DATA-FLOW.md](docs/DATA-FLOW.md), [docs/SECURITY-CONTROLS.md](docs/SECURITY-CONTROLS.md),
+and the consolidated [NOTICE.md](NOTICE.md).
