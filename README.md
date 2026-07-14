@@ -192,6 +192,7 @@ The server accepts configuration via CLI flags or environment variables:
 | `--read-only` | `SPE_READ_ONLY` | Advertise/allow only read/list/get/search tools; reject mutating calls |
 | `--tools` | `SPE_TOOLS` | Restrict exposed tools to a profile (`readOnly`, `docsOnly`, `provisioning`, `content`, `admin`) or a comma-separated tool list |
 | `--data-dir` | `SPE_DATA_DIR` | Directory for the token cache + provisioning state (default `~/.spe-mcp`). Point each instance at a unique **absolute** path (or `~/...`; CWD-relative paths are rejected) to run multiple servers without clobbering state |
+| _(none)_ | `SPE_MCP_COLLECT_TELEMETRY` | Product `User-Agent` attribution token on outbound Graph/ARM requests. On by default; set to `false` to opt out (see [PRIVACY.md](PRIVACY.md)) |
 
 > The CLI flag wins when both a flag and its env var are set. Run
 > `spe-mcp start --help` to see the authoritative option list and descriptions.
@@ -381,7 +382,7 @@ src/
 ├── resources.ts            — MCP Resources (reference architectures)
 ├── reference-architectures.ts — Reference-architecture catalog (reads ../samples/)
 ├── elicitation.ts          — Interactive consent / step-up prompts
-├── user-agent.ts           — Product User-Agent string (no telemetry channel)
+├── user-agent.ts           — Product User-Agent token + SPE_MCP_COLLECT_TELEMETRY opt-out
 ├── types.ts                — Shared TypeScript types
 └── tools/                  — 31 tools across 28 modules (one McpTool per export)
     ├── status.ts                   — status_get
@@ -540,17 +541,16 @@ Microsoft takes security seriously. If you believe you have found a security
 vulnerability, please report it privately as described in [SECURITY.md](SECURITY.md) —
 **do not** file a public GitHub issue.
 
-<!--
-  MCP notices. The standardized notice/disclaimer wording for Microsoft MCP servers is
-  owned by frontline CELA (CELA-only guidance: https://aka.ms/MCP4CELA). The text below is
-  a good-faith draft that covers the required topics; the exact MCP disclaimer wording is
-  pending frontline-CELA confirmation for Matter-0000001599.
--->
 ## Important notices
+
+The MCP-specific notices and disclaimers for this project are consolidated in
+[NOTICE.md](NOTICE.md); the key points are summarized below.
 
 > **Preview software.** `@microsoft/spe-mcp` is an early (alpha) preview released for
 > evaluation and feedback. It is provided **"as is"**, without warranty of any kind; see the
 > [MIT License](LICENSE). Tool names, options, and behavior may change without notice.
+> Microsoft shall not be liable for any damages arising from use, misuse, or misconfiguration
+> of this software.
 
 ### Autonomous and agent-invoked operations
 
@@ -589,11 +589,28 @@ tenant/subscription.
 The server opens **no separate telemetry channel** and sends **no usage analytics** to
 Microsoft. Outbound Graph/ARM requests carry a **static product `User-Agent`**
 (`spe-mcp-server/<version>`) that contains **no personal, tenant, or usage data** and is
-used only for aggregate traffic attribution. Authentication tokens are cached locally with
-owner-only permissions (**SEC-003**). For details see [PRIVACY.md](PRIVACY.md) and
-[docs/DATA-FLOW.md](docs/DATA-FLOW.md); Microsoft's handling of data you send to its online
-services is described in the
+used only for aggregate traffic attribution. That attribution token is **on by default** and
+can be suppressed with `SPE_MCP_COLLECT_TELEMETRY=false` (see **Telemetry configuration** below).
+Authentication tokens are cached locally with owner-only permissions (**SEC-003**). For
+details see [PRIVACY.md](PRIVACY.md) and [docs/DATA-FLOW.md](docs/DATA-FLOW.md); Microsoft's
+handling of data you send to its online services is described in the
 [Microsoft Privacy Statement](https://privacy.microsoft.com/privacystatement).
+
+**Data collection (standard Microsoft notice).** The software may collect information about
+you and your use of the software and send it to Microsoft; Microsoft may use this information
+to provide and improve products and services, and your use of the software operates as your
+consent to these practices (full text in [NOTICE.md](NOTICE.md#data-collection)). **This
+build opens no usage-analytics channel** — the only Microsoft-bound signal is the product
+`User-Agent` attribution token described above, which you can turn off with
+`SPE_MCP_COLLECT_TELEMETRY=false`.
+
+**Telemetry configuration.** Attribution is gated by the `SPE_MCP_COLLECT_TELEMETRY` environment
+variable and is **on by default**. The only telemetry emitted is the static product
+`User-Agent` token on outbound Graph/ARM requests (aggregate traffic attribution — no usage
+analytics, no personal/tenant/per-user data). Set `SPE_MCP_COLLECT_TELEMETRY=false` to omit the
+token from all outbound requests; those requests then fall back to the underlying tool's
+default `User-Agent` (the Azure CLI's own token for `az`/`azd`; the Node runtime default for
+direct Graph calls).
 
 ### Data residency and EU Data Boundary
 
@@ -606,6 +623,26 @@ documentation service (no authentication, no customer data; host-validated per *
 which can be disabled with `--tools`. All outbound calls target Microsoft-operated services;
 the server contacts **no non-Microsoft services**.
 
+### Compliance responsibility
+
+This MCP server may interact with clients and services outside Microsoft compliance
+boundaries — in particular, the third-party MCP client, host, or agent you choose to connect
+it to. You are responsible for ensuring that any integration complies with applicable
+organizational, regulatory, and contractual requirements.
+
+### Third-party components
+
+This MCP server may use or depend on third-party components, such as third-party MCP clients,
+hosts, agents, AI applications, and/or models. You are responsible for reviewing and
+complying with the licenses of any third-party components and vetting the security of any
+third-party components. The open-source libraries this server depends on directly are
+disclosed in [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES).
+
+### Export control
+
+Use of this software must comply with all applicable export laws and regulations, including
+U.S. Export Administration Regulations and local jurisdiction requirements.
+
 ### Product Terms
 
 SharePoint Embedded, Microsoft Graph, and other Microsoft Online Services accessed through
@@ -614,7 +651,9 @@ you obtained them — including the
 [Microsoft Product Terms](https://www.microsoft.com/licensing/terms/) and the
 [Microsoft Products and Services Data Protection Addendum (DPA)](https://www.microsoft.com/licensing/docs/view/Microsoft-Products-and-Services-Data-Protection-Addendum-DPA).
 This open-source tool grants no rights to any Microsoft Online Service and does not modify
-those terms.
+those terms. More generally, this server may provide access to underlying resources — tools,
+services, and/or data — and your use of any such underlying resource via this server is
+governed by that resource's own license terms.
 
 ## Trademarks
 
