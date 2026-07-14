@@ -112,9 +112,11 @@ describe("project_app_create — reuse/attach SPA self-repair", () => {
 
     expect(r.isError).toBeUndefined();
     expect(addSpaRedirectUrisMock).toHaveBeenCalledTimes(1);
+    // Confirmed on the app → NO action-needed warning is surfaced.
+    expect(r.content[0].text).not.toContain("Action needed");
   });
 
-  it("swallows a best-effort PATCH failure — the tool still succeeds", async () => {
+  it("surfaces a visible, copy-pasteable warning when the best-effort PATCH failed — the tool still succeeds", async () => {
     findApplicationByNameMock.mockResolvedValue(EXISTING_APP);
     // best-effort failure surfaces as undefined from the helper (it logs + swallows).
     addSpaRedirectUrisMock.mockResolvedValue(undefined);
@@ -123,6 +125,12 @@ describe("project_app_create — reuse/attach SPA self-repair", () => {
 
     expect(r.isError).toBeUndefined();
     expect(r.content[0].text).toContain("Owning App Found");
+    // The swallowed failure is now VISIBLE: a non-blocking, copy-pasteable fix
+    // naming the exact app (object id) and the manual az rest PATCH.
+    expect(r.content[0].text).toContain("Action needed");
+    expect(r.content[0].text).toContain(EXISTING_APP.objectId);
+    expect(r.content[0].text).toContain("az rest --method PATCH");
+    expect(r.content[0].text).toContain("AADSTS9002326");
   });
 
   it("does NOT self-repair on the fresh-create path (createApplication already sets spa)", async () => {

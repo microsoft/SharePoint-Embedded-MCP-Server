@@ -33,10 +33,11 @@ const pca = new PublicClientApplication({
 });
 
 // Turn a Microsoft Entra (AAD) sign-in error into clear, actionable guidance for
-// the SERVER-SIDE app-registration / redirect-URI failures (AADSTS9002326
-// cross-origin SPA token redemption, AADSTS50011 redirect URI mismatch) that
-// otherwise surface as an opaque 400. This is a byte-for-byte copy of the
-// canonical, unit-tested helper in the SPE Builder MCP
+// the app-registration / redirect-URI failures (AADSTS9002326 cross-origin SPA
+// token redemption, AADSTS50011 redirect URI mismatch) that otherwise surface as
+// an opaque 400 — almost always a config mismatch on the owning Entra app (often
+// a stale .env pointing at the wrong app), not a client bug. This is a
+// byte-for-byte copy of the canonical, unit-tested helper in the SPE Builder MCP
 // (src/auth-error-guidance.ts); auth-error-guidance.test.ts asserts this sample
 // stays in sync. Returns null for unrelated errors.
 function interpretAuthError(errorText: string, origin: string): string | null {
@@ -52,33 +53,39 @@ function interpretAuthError(errorText: string, origin: string): string | null {
   const azBody =
     '"{\\"spa\\":{\\"redirectUris\\":[\\"' + origin + '\\"]}}"';
   return [
-    "Sign-in failed because of a SERVER-SIDE Microsoft Entra app-registration issue.",
-    "",
-    "This is NOT a bug in this app and NOT a stale or not-reloaded dev server: the",
-    "owning Entra app registration is missing a Single-Page Application (SPA) redirect",
-    "URI for this app's origin, so re-running the same client build keeps failing.",
+    "Sign-in failed: Entra rejected this build's sign-in for its current origin.",
     "",
     cause,
     "",
-    "Fix: add this app's origin as a Single-page application (SPA) redirect URI on the",
-    "owning Entra app registration:",
+    "This is almost always a configuration mismatch on the owning Entra app-registration,",
+    "not a bug in this app's code. Check these two things, in order:",
+    "",
+    "1) Is this build signing in as the app you think it is? This SPA authenticates as the",
+    "   VITE_CLIENT_ID / VITE_TENANT_ID baked into its .env at build time. If those were",
+    "   hydrated from stale or mismatched state, you may have registered the redirect URI on",
+    "   a DIFFERENT app than the one signing in. Confirm they match the app you are viewing",
+    "   in the portal (Entra ID > App registrations > your app > Overview: Application",
+    "   (client) ID and Directory (tenant) ID). If you change .env, rebuild — Vite bakes",
+    "   these values in at build time, so a running dev server will not pick up an edit.",
+    "",
+    "2) Does THAT app list this exact origin as a Single-page application (SPA) redirect URI?",
+    "   Look the app up by client id (display names are not unique) and check its spa block:",
+    "     az rest --method GET --uri \"https://graph.microsoft.com/v1.0/applications?$filter=appId eq '<VITE_CLIENT_ID>'&$select=appId,spa\"",
+    "   If spa.redirectUris does not include the origin below, add it:",
     "",
     "    " + origin,
     "",
-    "How to apply it:",
-    "  - Newly provisioned apps: re-run provisioning / deploy — it now adds this SPA",
-    "    redirect URI automatically.",
-    "  - An app created before that fix (or a deployed origin not yet added): add it",
-    "    manually —",
-    "      Portal: Entra ID > App registrations > (this app) > Authentication >",
-    "        Add a platform > Single-page application > Redirect URI:",
-    "          " + origin,
-    "      or with Azure CLI (replace <objectId> with the app registration object id):",
-    "        az rest --method PATCH --uri \"https://graph.microsoft.com/v1.0/applications/<objectId>\" --headers \"Content-Type=application/json\" --body " +
+    "   Portal: Entra ID > App registrations > (this app) > Authentication >",
+    "     Add a platform > Single-page application > Redirect URI:",
+    "       " + origin,
+    "   or with Azure CLI (replace <objectId> with the app registration object id):",
+    "     az rest --method PATCH --uri \"https://graph.microsoft.com/v1.0/applications/<objectId>\" --headers \"Content-Type=application/json\" --body " +
       azBody,
     "",
-    "Entra app-registration changes are server-side: re-provision / redeploy to apply",
-    "them. They are NOT picked up by client hot-reload.",
+    "Newly provisioned apps get this SPA redirect URI automatically, so you can also just",
+    "re-run provisioning / deploy to (re)apply it. App-registration changes take effect on",
+    "the next sign-in but are not applied by client hot-reload, and a changed .env needs a",
+    "rebuild.",
   ].join("\n");
 }
 
