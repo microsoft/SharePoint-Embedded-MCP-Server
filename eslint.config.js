@@ -62,6 +62,7 @@ export default [
       'no-async-promise-executor': 'warn',
       'no-case-declarations': 'warn',
       'no-fallthrough': 'warn',
+      'preserve-caught-error': 'warn',
       'no-undef': 'off', // TypeScript handles undefined identifiers.
     },
   },
