@@ -132,7 +132,7 @@ function graphErrorForStatus(status: number, errorBody: string, retryAfter?: str
  *
  * By default the token comes from the MSAL provider (SPE owning-app token).
  * Pass `getToken` to use a different token source — e.g. the Azure CLI
- * bootstrap token for directory operations like creating the owning app.
+ * Azure CLI token for directory operations like creating the owning app.
  */
 async function graphRequest<T>(
   method: string,
@@ -232,7 +232,7 @@ function graphRequestBeta<T>(
   return graphRequest<T>(method, path, body, customHeaders, getToken, GRAPH_BETA_BASE);
 }
 
-// ─── Owning App (created via Azure CLI bootstrap token) ─────────────────────
+// ─── Owning App (created via Azure CLI control-plane token) ─────────────────────
 
 // Stable delegated permission GUIDs on Microsoft Graph. Include both
 // FileStorageContainer.Manage.All and Selected so the owning app can read
@@ -632,7 +632,7 @@ export async function addSpePermissions(
 /**
  * Resolve the signed-in user's directory object id (and UPN). Used to default
  * the container-type `owner` grant to the current user. Pass the Azure CLI
- * bootstrap token provider — the az client has User.Read so `/me` succeeds.
+ * Azure CLI token provider — the az client has User.Read so `/me` succeeds.
  *
  * `userType` ("Member" | "Guest") is included so callers can surface a clear,
  * NON-BLOCKING message that a guest (B2B) user cannot be a container-type owner
@@ -770,7 +770,7 @@ export async function registerContainerType(
   applicationPermissions?: string[],
 ): Promise<void> {
   // App-only (application) permissions default to ["none"] (PR #3 review). The
-  // full-setup path uses ONLY delegated tokens (an Azure CLI bootstrap token and
+  // full-setup path uses ONLY delegated tokens (an Azure CLI control-plane token and
   // an MSAL device-code token acquired AS the owning app); there is no app-only
   // token path, so the owning app needs no app-only grant. App-only permissions
   // are opt-in — for a separate daemon/app-only consumer — and passed explicitly.
@@ -1343,7 +1343,7 @@ export async function deleteContainerType(containerTypeId: string): Promise<void
   );
 }
 
-/** Delete an Entra app registration (bootstrap token). Used by cleanup. */
+/** Delete an Entra app registration (Azure CLI token). Used by cleanup. */
 export async function deleteApplication(
   appObjectId: string,
   getToken: () => Promise<string>,

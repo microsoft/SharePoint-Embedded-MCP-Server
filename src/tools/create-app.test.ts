@@ -12,7 +12,7 @@
  * …, { bestEffort: true }) — idempotently and without failing the tool when the
  * PATCH lacks permission.
  *
- * Graph / bootstrap / auth / state are mocked so nothing hits the network.
+ * Graph / Azure CLI token / auth / state are mocked so nothing hits the network.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -29,9 +29,9 @@ const setAuthConfigMock = vi.fn();
 const readStateMock = vi.fn();
 const writeStateMock = vi.fn();
 
-vi.mock("../bootstrap.js", () => ({
+vi.mock("../azure-cli-token.js", () => ({
   getSignedInIdentity: () => getSignedInIdentityMock(),
-  bootstrapTokenProvider: vi.fn(async () => "boot-token"),
+  azureCliTokenProvider: vi.fn(async () => "boot-token"),
 }));
 
 vi.mock("../graph-client.js", () => ({

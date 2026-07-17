@@ -40,8 +40,8 @@ vi.mock("../graph-client.js", () => ({
   getSignedInUser: vi.fn(async () => ({ id: "user-1", userPrincipalName: "admin@x.com" })),
   grantContainerTypeOwner: vi.fn(async () => ({ id: "perm-1", roles: ["owner"] })),
 }));
-vi.mock("../bootstrap.js", () => ({
-  bootstrapTokenProvider: vi.fn(async () => "boot"),
+vi.mock("../azure-cli-token.js", () => ({
+  azureCliTokenProvider: vi.fn(async () => "boot"),
   getSignedInIdentity: vi.fn(async () => ({ tenantId: "t-1", username: "dev@x.com" })),
 }));
 vi.mock("../azure-cli.js", async (importActual) => ({

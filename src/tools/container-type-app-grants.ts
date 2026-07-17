@@ -15,7 +15,7 @@
  * app's grant without disturbing the others — the supported way to authorize
  * ADDITIONAL apps on an existing container type registration.
  *
- * (Distinct from `container_type_grant_owner`, which manages the beta-only
+ * (Distinct from `container_type_owner_grant`, which manages the beta-only
  * `owner` role on the container type itself for public-client container creation.)
  */
 

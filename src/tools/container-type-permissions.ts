@@ -2,8 +2,8 @@
 // Licensed under the MIT license.
 
 /**
- * Tools: container_type_grant_owner / container_type_owners_list /
- * container_type_revoke_owner
+ * Tools: container_type_owner_grant / container_type_owners_list /
+ * container_type_owner_delete
  *
  * Manage the `permissions` (owner) collection on a fileStorageContainerType via
  * Microsoft Graph **beta**. Granting a USER the `owner` role lets that user
@@ -13,7 +13,7 @@
  * supported; max 3 owners per container type.
  */
 
-import { bootstrapTokenProvider } from "../bootstrap.js";
+import { azureCliTokenProvider } from "../azure-cli-token.js";
 import {
   getSignedInUser,
   grantContainerTypeOwner,
@@ -53,8 +53,8 @@ function isGuestOwnerRejection(e: unknown): boolean {
   return m.includes("guest") || m.includes("#ext#");
 }
 
-export const grantContainerTypeOwnerTool: McpTool = {
-  name: "container_type_grant_owner",
+export const ownerGrantContainerTypeTool: McpTool = {
+  name: "container_type_owner_grant",
   annotations: { plane: "control" },
   description:
     "Grant the `owner` role on a SharePoint Embedded container type to a user (Microsoft Graph beta). " +
@@ -91,7 +91,7 @@ export const grantContainerTypeOwnerTool: McpTool = {
       if (!userId) {
         let me: Awaited<ReturnType<typeof getSignedInUser>>;
         try {
-          me = await getSignedInUser(bootstrapTokenProvider);
+          me = await getSignedInUser(azureCliTokenProvider);
         } catch (e) {
           return err(`could not resolve the signed-in user — pass userId explicitly. ${reason(e)}`);
         }
@@ -175,8 +175,8 @@ export const listContainerTypeOwnersTool: McpTool = {
   },
 };
 
-export const revokeContainerTypeOwnerTool: McpTool = {
-  name: "container_type_revoke_owner",
+export const ownerDeleteContainerTypeTool: McpTool = {
+  name: "container_type_owner_delete",
   annotations: { destructive: true, plane: "control" },
   description: "Remove an owner permission from a SharePoint Embedded container type (Microsoft Graph beta).",
   inputSchema: {

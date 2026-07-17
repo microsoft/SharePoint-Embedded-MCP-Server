@@ -3,7 +3,7 @@
 
 /**
  * Unit tests for the container-type CRUD + owner-permission tools.
- * graph-client / auth / bootstrap / state are mocked so these run offline.
+ * graph-client / auth / Azure CLI token / state are mocked so these run offline.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -19,13 +19,13 @@ vi.mock("../graph-client.js", () => ({
   listContainerTypes: vi.fn(async () => [{ containerTypeId: "ct-1", owningAppId: "app-1", displayName: "CT", billingClassification: "trial" }]),
 }));
 vi.mock("../auth.js", () => ({ setAuthConfig: vi.fn() }));
-vi.mock("../bootstrap.js", () => ({ bootstrapTokenProvider: vi.fn(async () => "boot") }));
+vi.mock("../azure-cli-token.js", () => ({ azureCliTokenProvider: vi.fn(async () => "boot") }));
 
 const stateStore: Record<string, unknown> = {};
 vi.mock("../state.js", () => ({ readState: vi.fn(() => ({ ...stateStore })) }));
 
 import * as graph from "../graph-client.js";
-import { grantContainerTypeOwnerTool, listContainerTypeOwnersTool, revokeContainerTypeOwnerTool } from "../tools/container-type-permissions.js";
+import { ownerGrantContainerTypeTool, listContainerTypeOwnersTool, ownerDeleteContainerTypeTool } from "../tools/container-type-permissions.js";
 import { getContainerTypeTool, updateContainerTypeTool, deleteContainerTypeTool } from "../tools/container-type-crud.js";
 import { getSessionId } from "../session.js";
 
@@ -38,9 +38,9 @@ beforeEach(() => {
   Object.assign(stateStore, { appId: "app-1", tenantId: "t-1", containerTypeId: "ct-1", confirmedSessionId: getSessionId() });
 });
 
-describe("container_type_grant_owner", () => {
+describe("container_type_owner_grant", () => {
   it("grants owner to the signed-in user by default and reports PCA creation", async () => {
-    const r = await grantContainerTypeOwnerTool.handler({});
+    const r = await ownerGrantContainerTypeTool.handler({});
     expect(graph.getSignedInUser).toHaveBeenCalled();
     expect(graph.grantContainerTypeOwner).toHaveBeenCalledWith("ct-1", "user-1");
     expect(r.isError).toBeFalsy();
@@ -49,7 +49,7 @@ describe("container_type_grant_owner", () => {
   });
 
   it("uses an explicit userId without resolving the signed-in user", async () => {
-    await grantContainerTypeOwnerTool.handler({ userId: "user-2" });
+    await ownerGrantContainerTypeTool.handler({ userId: "user-2" });
     expect(graph.getSignedInUser).not.toHaveBeenCalled();
     expect(graph.grantContainerTypeOwner).toHaveBeenCalledWith("ct-1", "user-2");
   });
@@ -60,7 +60,7 @@ describe("container_type_grant_owner", () => {
       userPrincipalName: "admin@x.com",
       userType: "Member",
     });
-    const r = await grantContainerTypeOwnerTool.handler({});
+    const r = await ownerGrantContainerTypeTool.handler({});
     expect(graph.grantContainerTypeOwner).toHaveBeenCalledWith("ct-1", "user-1");
     expect(r.isError).toBeFalsy();
   });
@@ -72,7 +72,7 @@ describe("container_type_grant_owner", () => {
       userType: "Guest",
     });
 
-    const r = await grantContainerTypeOwnerTool.handler({});
+    const r = await ownerGrantContainerTypeTool.handler({});
 
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain("guest");
@@ -90,7 +90,7 @@ describe("container_type_grant_owner", () => {
       new Error("Guest users cannot be added as owners of a container type."),
     );
 
-    const r = await grantContainerTypeOwnerTool.handler({ userId: "guest-2" });
+    const r = await ownerGrantContainerTypeTool.handler({ userId: "guest-2" });
 
     expect(r.isError).toBe(true);
     // Raw reason, prefixed by the tool's own classifier.
@@ -114,7 +114,7 @@ describe("container_type_grant_owner", () => {
       new Error("Guest users cannot be added as owners of a container type."),
     );
 
-    const r = await grantContainerTypeOwnerTool.handler({});
+    const r = await ownerGrantContainerTypeTool.handler({});
 
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain("guest (B2B) users cannot be granted");
@@ -128,7 +128,7 @@ describe("container_type_grant_owner", () => {
       new Error("Too many owners (max 3)."),
     );
 
-    const r = await grantContainerTypeOwnerTool.handler({ userId: "user-3" });
+    const r = await ownerGrantContainerTypeTool.handler({ userId: "user-3" });
 
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain("granting owner");
@@ -137,7 +137,7 @@ describe("container_type_grant_owner", () => {
 
   it("errors when no container type is known", async () => {
     delete stateStore.containerTypeId;
-    const r = await grantContainerTypeOwnerTool.handler({});
+    const r = await ownerGrantContainerTypeTool.handler({});
     expect(r.isError).toBe(true);
     expect(graph.grantContainerTypeOwner).not.toHaveBeenCalled();
   });
@@ -151,13 +151,13 @@ describe("container_type_owners_list / revoke", () => {
   });
 
   it("revokes by permission id", async () => {
-    const r = await revokeContainerTypeOwnerTool.handler({ permissionId: "perm-1" });
+    const r = await ownerDeleteContainerTypeTool.handler({ permissionId: "perm-1" });
     expect(graph.revokeContainerTypePermission).toHaveBeenCalledWith("ct-1", "perm-1");
     expect(r.isError).toBeFalsy();
   });
 
   it("requires a permission id to revoke", async () => {
-    const r = await revokeContainerTypeOwnerTool.handler({});
+    const r = await ownerDeleteContainerTypeTool.handler({});
     expect(r.isError).toBe(true);
     expect(graph.revokeContainerTypePermission).not.toHaveBeenCalled();
   });

@@ -4,7 +4,7 @@
 /**
  * Unit tests for Phase 1 provisioning tools:
  * project_app_create, container_type_register, container_create.
- * Graph client, bootstrap, auth, and state are mocked so these run offline.
+ * Graph client, Azure CLI token, auth, and state are mocked so these run offline.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -19,8 +19,8 @@ vi.mock("../graph-client.js", () => ({
   createContainer: vi.fn(),
   activateContainer: vi.fn(),
 }));
-vi.mock("../bootstrap.js", () => ({
-  bootstrapTokenProvider: vi.fn(async () => "boot-token"),
+vi.mock("../azure-cli-token.js", () => ({
+  azureCliTokenProvider: vi.fn(async () => "boot-token"),
   getSignedInIdentity: vi.fn(),
 }));
 vi.mock("../auth.js", () => ({ setAuthConfig: vi.fn() }));
@@ -35,7 +35,7 @@ vi.mock("../state.js", () => ({
 }));
 
 import * as graph from "../graph-client.js";
-import * as bootstrap from "../bootstrap.js";
+import * as azureCliToken from "../azure-cli-token.js";
 import { setAuthConfig } from "../auth.js";
 import { createAppTool } from "../tools/create-app.js";
 import { registerContainerTypeTool } from "../tools/register-container-type.js";
@@ -51,7 +51,7 @@ beforeEach(() => {
 
 describe("project_app_create", () => {
   it("creates an owning app, adds permissions, persists state, points auth at it", async () => {
-    vi.mocked(bootstrap.getSignedInIdentity).mockResolvedValue({ tenantId: "t-1", username: "dev@x.com" });
+    vi.mocked(azureCliToken.getSignedInIdentity).mockResolvedValue({ tenantId: "t-1", username: "dev@x.com" });
     vi.mocked(graph.findApplicationByName).mockResolvedValue(null);
     vi.mocked(graph.createApplication).mockResolvedValue({ appId: "app-1", objectId: "obj-1", displayName: "My App" });
 
@@ -70,7 +70,7 @@ describe("project_app_create", () => {
     // the same result (the same owning app) WITHOUT creating a second/duplicate
     // app or erroring. Below, an app already exists by that name, so the tool
     // attaches to it (createApplication is never called).
-    vi.mocked(bootstrap.getSignedInIdentity).mockResolvedValue({ tenantId: "t-1", username: "dev@x.com" });
+    vi.mocked(azureCliToken.getSignedInIdentity).mockResolvedValue({ tenantId: "t-1", username: "dev@x.com" });
     vi.mocked(graph.findApplicationByName).mockResolvedValue({ appId: "app-9", objectId: "obj-9", displayName: "Existing" });
 
     const result = await createAppTool.handler({ displayName: "Existing" });
@@ -90,7 +90,7 @@ describe("project_app_create", () => {
     // so seed confirmedSessionId to exercise the post-confirmation behavior here.
     stateStore.appId = "persisted-app";
     stateStore.confirmedSessionId = getSessionId();
-    vi.mocked(bootstrap.getSignedInIdentity).mockResolvedValue({ tenantId: "t-1", username: "dev@x.com" });
+    vi.mocked(azureCliToken.getSignedInIdentity).mockResolvedValue({ tenantId: "t-1", username: "dev@x.com" });
     vi.mocked(graph.findApplicationByName).mockResolvedValue({ appId: "named-app", objectId: "obj-2", displayName: "Other App" });
 
     const result = await createAppTool.handler({ displayName: "Other App" });
@@ -105,7 +105,7 @@ describe("project_app_create", () => {
   it("asks before reusing a remembered app when no displayName/appSelection is given", async () => {
     stateStore.appId = "persisted-app";
     stateStore.appDisplayName = "Remembered App";
-    vi.mocked(bootstrap.getSignedInIdentity).mockResolvedValue({ tenantId: "t-1", username: "dev@x.com" });
+    vi.mocked(azureCliToken.getSignedInIdentity).mockResolvedValue({ tenantId: "t-1", username: "dev@x.com" });
 
     const result = await createAppTool.handler({});
 
@@ -123,7 +123,7 @@ describe("project_app_create", () => {
 
   it("resumes the persisted appId when reuse is chosen", async () => {
     stateStore.appId = "persisted-app";
-    vi.mocked(bootstrap.getSignedInIdentity).mockResolvedValue({ tenantId: "t-1", username: "dev@x.com" });
+    vi.mocked(azureCliToken.getSignedInIdentity).mockResolvedValue({ tenantId: "t-1", username: "dev@x.com" });
     vi.mocked(graph.findApplicationByAppId).mockResolvedValue({ appId: "persisted-app", objectId: "obj-3", displayName: "SPE Builder App" });
 
     const result = await createAppTool.handler({ appSelection: "reuse" });
@@ -135,7 +135,7 @@ describe("project_app_create", () => {
   });
 
   it("errors when not signed into az", async () => {
-    vi.mocked(bootstrap.getSignedInIdentity).mockResolvedValue(null);
+    vi.mocked(azureCliToken.getSignedInIdentity).mockResolvedValue(null);
 
     const result = await createAppTool.handler({});
 
@@ -146,10 +146,10 @@ describe("project_app_create", () => {
 
   it("surfaces Azure CLI *install* guidance when az is not installed", async () => {
     // When az is missing entirely, getSignedInIdentity throws the not-installed
-    // error (from bootstrap.ts) rather than returning null. The handler's catch
+    // error (from azureCliToken.ts) rather than returning null. The handler's catch
     // must propagate that guidance so the user is told HOW to install az — not
     // just told to `az login`. Assert the install URL reaches the client.
-    vi.mocked(bootstrap.getSignedInIdentity).mockRejectedValue(
+    vi.mocked(azureCliToken.getSignedInIdentity).mockRejectedValue(
       new Error(
         "Azure CLI ('az') is not installed. Install it from https://aka.ms/install-azure-cli, " +
           "then run `az login --allow-no-subscriptions`.",

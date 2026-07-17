@@ -40,8 +40,8 @@ const addSpaRedirectUrisMock = vi.fn();
 vi.mock("../graph-client.js", () => ({
   addSpaRedirectUris: (...args: unknown[]) => addSpaRedirectUrisMock(...args),
 }));
-vi.mock("../bootstrap.js", () => ({
-  bootstrapTokenProvider: vi.fn(async () => "boot-token"),
+vi.mock("../azure-cli-token.js", () => ({
+  azureCliTokenProvider: vi.fn(async () => "boot-token"),
 }));
 
 import { execFile } from "node:child_process";

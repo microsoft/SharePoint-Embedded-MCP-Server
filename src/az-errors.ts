@@ -5,7 +5,7 @@
  * Shared Azure CLI error classification for Conditional Access (CA) /
  * claims-challenge / interaction-required failures.
  *
- * Used by both the bootstrap token path (bootstrap.ts) and the ARM control-plane
+ * Used by both the Azure CLI token path (azure-cli-token.ts) and the ARM control-plane
  * operations (azure-cli.ts: Syntex provider registration + Microsoft.Syntex
  * billing-account create) so that a CA step-up failure surfaces a single,
  * actionable remediation instead of a generic "command failed" or the plain

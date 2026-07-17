@@ -81,7 +81,7 @@ export interface ServerConfig {
   /**
    * Owning Entra app client ID. OPTIONAL. When provided, the server runs in
    * pre-provisioned-app mode and initializes MSAL for that app. When omitted,
-   * the server runs in bootstrap mode (Azure CLI control plane) and provisions
+   * the server runs in Azure CLI token mode (Azure CLI control plane) and provisions
    * the owning app on demand.
    */
   clientId?: string;

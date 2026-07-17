@@ -14,8 +14,8 @@
  *      The app's SPE permissions still need an admin to consent; a Global Admin
  *      can grant tenant-wide with the link, and a non-admin can forward it.
  *   2. `byoAppStartupNote` — the startup line for the **bring-your-own-app**
- *      path (a pre-created owning app supplied via `--client-id`/`SPE_CLIENT_ID`).
- *   3. `azLoginNotSignedInMessage` — the bootstrap-mode "not signed in" line,
+ *      path (a pre-created owning app supplied via `--owning-app-client-id`/`SPE_CLIENT_ID`).
+ *   3. `azLoginNotSignedInMessage` — the Azure CLI token-mode "not signed in" line,
  *      which now tells the user to **restart** the server after `az login` so the
  *      new sign-in is picked up (auth/session is stamped at startup).
  *
@@ -96,7 +96,7 @@ export function adminConsentSection(clientId: string, tenantId?: string): string
 /**
  * Startup line for the **bring-your-own-app** path: the caller has already
  * pre-created an owning Entra application (its client id supplied via
- * `--client-id` / `SPE_CLIENT_ID`) and wants the server to sign in AS that app,
+ * `--owning-app-client-id` / `SPE_CLIENT_ID`) and wants the server to sign in AS that app,
  * so no owning app is provisioned. Emitted on stderr at startup.
  *
  * @param clientId The pre-created owning app's client id.
@@ -112,7 +112,7 @@ export function byoAppStartupNote(clientId: string, tenantId: string): string {
 }
 
 /**
- * Bootstrap-mode "Azure CLI installed but not signed in" line, extended with
+ * Azure CLI token-mode "Azure CLI installed but not signed in" line, extended with
  * restart guidance. Auth and session state are stamped at server startup, so
  * after `az login` completes the user must **restart** the MCP server for the
  * new sign-in to take effect — a restart begins a fresh session and re-primes

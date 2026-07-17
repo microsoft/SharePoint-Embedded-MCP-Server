@@ -23,7 +23,7 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { initializeAuth, setAuthConfig } from "./auth.js";
-import { assertAzCli, getSignedInIdentity } from "./bootstrap.js";
+import { assertAzCli, getSignedInIdentity } from "./azure-cli-token.js";
 import { byoAppStartupNote, azLoginNotSignedInMessage } from "./onboarding-messages.js";
 import { readState } from "./state.js";
 import { USER_AGENT } from "./user-agent.js";
@@ -49,7 +49,7 @@ import { listContainerTypesTool } from "./tools/list-container-types.js";
 import { createAppTool } from "./tools/create-app.js";
 import { registerContainerTypeTool } from "./tools/register-container-type.js";
 import { getContainerTypeTool, updateContainerTypeTool, deleteContainerTypeTool } from "./tools/container-type-crud.js";
-import { grantContainerTypeOwnerTool, listContainerTypeOwnersTool, revokeContainerTypeOwnerTool } from "./tools/container-type-permissions.js";
+import { ownerGrantContainerTypeTool, listContainerTypeOwnersTool, ownerDeleteContainerTypeTool } from "./tools/container-type-permissions.js";
 import { addContainerTypeAppGrantTool, listContainerTypeAppGrantsTool, removeContainerTypeAppGrantTool } from "./tools/container-type-app-grants.js";
 import {
   getContainerTypeRegistrationTool,
@@ -120,9 +120,9 @@ const TOOLS: McpTool[] = [
   updateContainerTypeTool,
   deleteContainerTypeTool,
   // Container Type permissions (owner role — beta; enables PCA container creation)
-  grantContainerTypeOwnerTool,
+  ownerGrantContainerTypeTool,
   listContainerTypeOwnersTool,
-  revokeContainerTypeOwnerTool,
+  ownerDeleteContainerTypeTool,
   // Container Type registration — application permission grants (v1.0; authorize consuming apps)
   addContainerTypeAppGrantTool,
   listContainerTypeAppGrantsTool,
@@ -429,8 +429,8 @@ export async function startServer(config: ServerConfig) {
 
   if (config.clientId) {
     // Bring-your-own-app mode: the caller has ALREADY pre-created an owning Entra
-    // application (its client id supplied via --client-id / SPE_CLIENT_ID) and
-    // wants the server to sign in AS that app. So we skip bootstrap app-creation
+    // application (its client id supplied via --owning-app-client-id / SPE_CLIENT_ID) and
+    // wants the server to sign in AS that app. So we skip Azure CLI token app-creation
     // entirely and go straight to MSAL. Resolve the tenant (discover from az when
     // not supplied) and initialize auth.
     let tenantId = config.tenantId;
@@ -452,10 +452,10 @@ export async function startServer(config: ServerConfig) {
       console.error("[SPE MCP Server] Auth failed at startup. Will retry when a tool is called.");
     }
   } else {
-    // Bootstrap mode (default): no owning app yet. Control-plane operations use
-    // the Azure CLI bootstrap token; SPE provisioning creates the owning app on
+    // Azure CLI token mode (default): no owning app yet. Control-plane operations use
+    // the Azure CLI control-plane token; SPE provisioning creates the owning app on
     // demand (Phase 1). Verify az is available and report the signed-in identity.
-    log("Bootstrap mode — no --client-id; using Azure CLI for the control plane");
+    log("Azure CLI token mode — no --owning-app-client-id; using Azure CLI for the control plane");
     // Prime MSAL auth from persisted provisioning state so owning-app SPE/Graph
     // calls work regardless of which tool runs first. Without this, read tools
     // that don't call setAuthConfig themselves (container_list, container_get,
@@ -474,7 +474,7 @@ export async function startServer(config: ServerConfig) {
       const identity = await getSignedInIdentity();
       if (identity) {
         console.error(
-          `[SPE MCP Server] Bootstrap ready — signed in as ${identity.username} (tenant ${identity.tenantId})`,
+          `[SPE MCP Server] Azure CLI token ready — signed in as ${identity.username} (tenant ${identity.tenantId})`,
         );
       } else {
         // Not signed in: tell the user to sign in AND to restart the server

@@ -332,7 +332,7 @@ describe("owning-app precondition guidance (UX)", () => {
     //   2. that it takes effect with no restart,
     expect(OWNING_APP_REQUIRED_MESSAGE).toMatch(/no restart/i);
     //   3. the alternative for an already-provisioned app — the CLI flags.
-    expect(OWNING_APP_REQUIRED_MESSAGE).toMatch(/--client-id/);
+    expect(OWNING_APP_REQUIRED_MESSAGE).toMatch(/--owning-app-client-id/);
     expect(OWNING_APP_REQUIRED_MESSAGE).toMatch(/--tenant-id/);
   });
 
