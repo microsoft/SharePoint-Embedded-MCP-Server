@@ -1,5 +1,42 @@
 # Troubleshooting
 
+## VS Code install error: `Cannot create property 'type' on string ...`
+
+If VS Code shows this error in Developer Tools after clicking an install badge:
+
+```text
+TypeError: Cannot create property 'type' on string 'SharePoint Embedded MCP Server'
+```
+
+the local MCP JSON is malformed. This is a config-shape issue, not a server runtime issue.
+
+Common causes:
+
+- `servers` contains a string value instead of a server object.
+- The entry is structured as `"servers": { "name": "...", "type": "...", ... }` (missing a server key like `"spe"`).
+- Markdown/link text was pasted into JSON args (for example `@microsoft/[spe-mcp...](vscode-file://...)`).
+
+Use this minimal valid shape instead:
+
+```json
+{
+  "servers": {
+    "spe": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@microsoft/spe-mcp", "start"]
+    }
+  }
+}
+```
+
+Recovery steps:
+
+1. Open your MCP config (`.vscode/mcp.json` or user-level MCP config).
+2. Remove malformed SPE entries and any markdown-style link text in `args`.
+3. Paste the valid shape above.
+4. Reload VS Code (`Developer: Reload Window`) and retry install.
+
 ## `az login` has not been run
 
 Most provisioning and billing flows start with `status_get`. If it reports no Azure CLI identity, run:
