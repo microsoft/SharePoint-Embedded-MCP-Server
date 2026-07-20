@@ -53,7 +53,7 @@
     "ci": "npm run typecheck && npm run build && npm run test"
   },
   "dependencies": {
-    "@azure/msal-node": "^2.6.0",
+    "@azure/msal-node": "^5.4.1",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "commander": "^15.0.0",
     "open": "^11.0.0",
