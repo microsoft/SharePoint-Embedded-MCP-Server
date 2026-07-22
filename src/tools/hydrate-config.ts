@@ -14,6 +14,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { buildAzureYaml, findArchitecture } from "../reference-architectures.js";
 import { readState } from "../state.js";
+import { LOCAL_SPA_REDIRECT_URI } from "../constants.js";
 import type { McpTool } from "../types.js";
 
 interface HydrateArgs {
@@ -56,6 +57,66 @@ function appSettings(s: ReturnType<typeof readState>): string {
     null,
     2,
   ) + "\n";
+}
+
+/**
+ * Offline, NON-BLOCKING sign-in warnings for the hydrated config.
+ *
+ * This tool is deterministic/offline (and its unit tests do not mock Graph), so
+ * it cannot read the live app registration back. It only flags what is checkable
+ * from state: a blank tenant id makes the SPA's MSAL authority
+ * (`https://login.microsoftonline.com/<tenant>`) invalid, so sign-in fails
+ * before any redirect-URI check. Returns human-readable lines; never throws.
+ */
+function signInConfigWarnings(s: ReturnType<typeof readState>): string[] {
+  const warnings: string[] = [];
+  if (!s.tenantId || s.tenantId.trim() === "") {
+    warnings.push(
+      "`TENANT_ID` / `VITE_TENANT_ID` is empty — MSAL builds its sign-in authority from the " +
+        "tenant id, so the SPA cannot sign in until a tenant is provisioned (`project_provision`).",
+    );
+  }
+  return warnings;
+}
+
+/**
+ * Persistent, copy-pasteable advisory appended to hydrate OUTPUT (never to
+ * `.env`) telling the user to confirm the emitted `VITE_CLIENT_ID` /
+ * `VITE_TENANT_ID` actually match the app registration they are looking at, and
+ * to verify that exact app lists the local SPA redirect URI.
+ *
+ * A stale/mismatched `.env` is the most common cause of `AADSTS9002326`
+ * ("I added the redirect URI and sign-in still fails" — it was added to a
+ * DIFFERENT app than the one baked into `.env`). Purely informational: it does
+ * not block, open a browser, or throw.
+ */
+function signInVerificationAdvisory(s: ReturnType<typeof readState>): string {
+  const clientId = s.appId ?? "";
+  const lookup = s.appObjectId
+    ? "applications/" + s.appObjectId + "?$select=appId,spa"
+    : "applications?$filter=appId eq '" + clientId + "'&$select=appId,spa";
+  return (
+    "\n\n> **Before you sign in — verify this `.env` targets the right app.** A stale or " +
+    "mismatched `VITE_CLIENT_ID` / `VITE_TENANT_ID` is the most common cause of the " +
+    "`AADSTS9002326` sign-in error: the SPA authenticates as the app baked into `.env`, which " +
+    "may be a *different* registration than the one you added the redirect URI to.\n>\n" +
+    "> 1. Confirm these match the app in the portal (Entra ID > App registrations > Overview): " +
+    "Application (client) ID `" +
+    clientId +
+    "`" +
+    (s.tenantId ? " and Directory (tenant) ID `" + s.tenantId + "`" : "") +
+    ".\n>\n" +
+    "> 2. Confirm that exact app lists `" +
+    LOCAL_SPA_REDIRECT_URI +
+    "` as a Single-page application (SPA) redirect URI:\n>\n" +
+    ">    ```bash\n" +
+    '>    az rest --method GET --uri "https://graph.microsoft.com/v1.0/' +
+    lookup +
+    '"\n' +
+    ">    ```\n>\n" +
+    "> If it is missing, re-run `project_app_create` / `project_provision` (which self-repairs " +
+    "it) or add it in the portal. Vite bakes `.env` in at build time, so rebuild after any change."
+  );
 }
 
 /**
@@ -237,6 +298,7 @@ export const hydrateConfigTool: McpTool = {
         }
       }
 
+      const warnings = signInConfigWarnings(state);
       const output =
         "## Config Hydrated\n\n" +
         `Wrote ${written.length} file(s) to \`${dir}\`:\n\n` +
@@ -245,7 +307,13 @@ export const hydrateConfigTool: McpTool = {
         `| TENANT_ID | \`${state.tenantId ?? ""}\` |\n` +
         `| CLIENT_ID | \`${state.appId}\` |\n` +
         `| CONTAINER_TYPE_ID | \`${state.containerTypeId}\` |\n` +
-        `| CONTAINER_ID | \`${state.containerId ?? "(pending)"}\` |\n`;
+        `| CONTAINER_ID | \`${state.containerId ?? "(pending)"}\` |\n` +
+        (warnings.length
+          ? "\n### ⚠️ Config warnings\n\n" + warnings.map((w) => `- ${w}`).join("\n") + "\n"
+          : "") +
+        // The sign-in verification advisory is about the SPA's `.env`, so only
+        // append it when `.env` was actually written. Offline/non-blocking.
+        (written.includes(".env") ? signInVerificationAdvisory(state) : "");
 
       return { content: [{ type: "text" as const, text: output }] };
     } catch (error) {

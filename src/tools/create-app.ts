@@ -37,6 +37,10 @@ import { LOCAL_SPA_REDIRECT_URI } from "../constants.js";
 import { setAuthConfig } from "../auth.js";
 import { guestSignInAdvisory } from "../guest-advisory.js";
 import { adminConsentSection } from "../onboarding-messages.js";
+import {
+  isSpaRedirectConfirmed,
+  spaRedirectUnconfirmedWarning,
+} from "../spa-redirect-advisory.js";
 import { clientSafeMessage } from "../errors.js";
 import { elicitChoice, elicitText } from "../elicitation.js";
 import { isContextConfirmedThisSession, stampContextConfirmed } from "../session.js";
@@ -184,6 +188,10 @@ export const createAppTool: McpTool = {
           ? await findApplicationByAppId(persisted.appId as string, getToken)
           : await findApplicationByName(displayName, getToken);
       let reused = false;
+      // NON-BLOCKING warning appended to output when the reuse-path SPA
+      // self-repair could not be confirmed (best-effort PATCH swallowed). Empty
+      // on the fresh-create path and when the origin is confirmed on the app.
+      let spaRedirectWarning = "";
       if (app) {
         reused = true;
         // Attach/reuse path: adding permissions is best-effort and non-blocking.
@@ -197,9 +205,16 @@ export const createAppTool: McpTool = {
         // present) and best-effort (a missing Application.ReadWrite grant must
         // not fail app reuse — mirrors addSpePermissions above). Only on the
         // reuse path: createApplication already sets `spa` at create time.
-        await addSpaRedirectUris(app.objectId, [LOCAL_SPA_REDIRECT_URI], getToken, {
+        const spaResult = await addSpaRedirectUris(app.objectId, [LOCAL_SPA_REDIRECT_URI], getToken, {
           bestEffort: true,
         });
+        // If the best-effort add was swallowed (undefined) the app was NOT
+        // repaired, so surface a visible, copy-pasteable fix instead of letting
+        // the SPA fail sign-in later with an unexplained AADSTS9002326. The tool
+        // still succeeds — this is a heads-up, not a failure.
+        if (!isSpaRedirectConfirmed(spaResult)) {
+          spaRedirectWarning = spaRedirectUnconfirmedWarning(app.appId, app.objectId);
+        }
       } else {
         app = await createApplication(displayName, getToken);
         // Create path: permissions are required, so errors propagate.
@@ -260,7 +275,11 @@ export const createAppTool: McpTool = {
         // NON-BLOCKING heads-up appended for a B2B guest identity (guests often
         // lack permission to create Entra apps / own container types). Empty for
         // a member; never blocks the operation. (PR #3 review.)
-        guestSignInAdvisory(identity.username);
+        guestSignInAdvisory(identity.username) +
+        // NON-BLOCKING heads-up appended when the reuse-path SPA self-repair
+        // could not be confirmed (best-effort PATCH swallowed). Empty on
+        // create and when the local origin is confirmed on the reused app.
+        spaRedirectWarning;
 
       return { content: [{ type: "text" as const, text: output }] };
     } catch (error) {

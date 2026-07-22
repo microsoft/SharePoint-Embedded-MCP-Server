@@ -5,7 +5,7 @@
  * Unit tests for the React SPA sign-in guidance.
  *
  * Focus: the `interpretAuthError` helper that turns an opaque Microsoft Entra
- * sign-in failure into clear, actionable guidance for the SERVER-SIDE
+ * sign-in failure into clear, actionable guidance for the Entra
  * app-registration / redirect-URI errors (AADSTS9002326 cross-origin SPA token
  * redemption, AADSTS50011 redirect URI mismatch), plus a drift guard asserting
  * the runnable React sample (`samples/react-spa-functions`) embeds the same
@@ -32,15 +32,14 @@ describe("interpretAuthError — AADSTS9002326 (cross-origin SPA token redemptio
     expect(msg).not.toBeNull();
   });
 
-  it("identifies it as a server-side Entra app-registration issue", () => {
-    expect(msg).toContain("SERVER-SIDE");
+  it("identifies it as an Entra app-registration configuration issue", () => {
     expect(msg).toContain("app-registration");
   });
 
-  it("makes clear it is not a client bug or a stale dev server", () => {
-    expect(msg).toContain("NOT a bug in this app");
-    expect(msg).toContain("NOT a stale");
-    expect(msg).toContain("hot-reload");
+  it("leads with confirming the build signs in as the right app (stale .env / rebuild)", () => {
+    expect(msg).toContain("VITE_CLIENT_ID");
+    expect(msg).toContain("VITE_TENANT_ID");
+    expect(msg).toContain("rebuild");
   });
 
   it("states the concrete fix: register the origin as a SPA redirect URI", () => {
@@ -76,8 +75,7 @@ describe("interpretAuthError — AADSTS50011 (redirect URI mismatch)", () => {
     expect(msg).not.toBeNull();
   });
 
-  it("identifies it as a server-side app-registration / redirect-URI issue", () => {
-    expect(msg).toContain("SERVER-SIDE");
+  it("identifies it as an app-registration / redirect-URI issue", () => {
     expect(msg).toContain("app-registration");
     expect(msg).toContain("redirect URI");
   });
@@ -117,7 +115,7 @@ describe("the react-spa-functions sample embeds the interpreter and wires it int
   it("interprets the same AAD error codes the unit tests cover", () => {
     expect(app).toContain("AADSTS9002326");
     expect(app).toContain("AADSTS50011");
-    expect(app).toContain("SERVER-SIDE");
+    expect(app).toContain("VITE_CLIENT_ID");
   });
 
   it("uses window.location.origin so the message shows the running origin", () => {
