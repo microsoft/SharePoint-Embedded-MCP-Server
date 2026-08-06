@@ -283,10 +283,13 @@ export const runLocalTool: McpTool = {
         `→ ${project.url}\n\n` +
         "> The dev server is running in the background. Open the URL above.\n\n" +
         "> Sign-in note: if sign-in fails with `AADSTS9002326` (cross-origin SPA token " +
-        "redemption) or `AADSTS50011` (redirect URI mismatch), that is a **server-side " +
-        "Entra app-registration** change — the owning app must list this origin as a " +
-        "Single-page application (SPA) redirect URI. Re-provision/redeploy (`project_deploy`) " +
-        "to apply it; app-registration changes are **not** picked up by client hot-reload.";
+        "redemption) or `AADSTS50011` (redirect URI mismatch), it is almost always an Entra " +
+        "app-registration config issue. First confirm this build's `.env` (`VITE_CLIENT_ID` / " +
+        "`VITE_TENANT_ID`) points at the SAME app registration you added the redirect URI to — " +
+        "a stale `.env` means you may have edited a different app (rebuild after changing `.env`). " +
+        "Then make sure that app lists this origin as a Single-page application (SPA) redirect " +
+        "URI. Re-provision/redeploy (`project_deploy`) self-repairs it; app-registration changes " +
+        "are **not** picked up by client hot-reload.";
       return { content: [{ type: "text" as const, text: output }] };
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Unknown error";
