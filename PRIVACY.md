@@ -29,6 +29,10 @@ to send data to Microsoft.** Specifically:
   **no personal, tenant, or usage information** and exists only so the service can measure
   aggregate traffic driven by this tool. It is a request header on calls you already make —
   not a separate data feed.
+- **Agent Plugin package retrieval.** The optional Agent Plugins 1.0 pilot launches an exact
+  pinned version through `npx -y`. If the package is not cached, npm sends the package name,
+  version, and standard request metadata to your configured npm registry. It does not send
+  tenant data, credentials used by this server, MCP prompts, or tool results to the registry.
 
 See [docs/DATA-FLOW.md](docs/DATA-FLOW.md) for the full list of network endpoints and what
 travels to each.

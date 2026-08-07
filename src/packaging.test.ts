@@ -80,6 +80,14 @@ describe("packaging: complete metadata", () => {
     expect(pkg.repository.url.length).toBeGreaterThan(0);
   });
 
+  describe("packaging: release version synchronization", () => {
+    it("runs plugin synchronization during npm version and checks it before packing", () => {
+      expect(pkg.scripts?.version).toContain("sync-plugin-version.mjs");
+      expect(pkg.scripts?.prepack).toBe("node scripts/sync-plugin-version.mjs --check");
+      expect(pkg.files).toContain("scripts/sync-plugin-version.mjs");
+    });
+  });
+
   it("has bugs, homepage and author", () => {
     expect(pkg.bugs?.url ?? pkg.bugs).toBeTruthy();
     expect(pkg.homepage).toBeTruthy();

@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 
 const pkgRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const outFile = join(pkgRoot, "THIRD-PARTY-NOTICES");
+const agentPluginsLicense = join(pkgRoot, "schemas", "agent-plugins", "LICENSE-Apache-2.0.txt");
 
 const LICENSE_FILE_RE = /^(LICENSE|LICENCE|COPYING|NOTICE)(\.|$)/i;
 
@@ -154,6 +155,19 @@ const blocks = packages.map((p, i) => {
   return lines.join("\n");
 });
 
-const body = `${header}\n${blocks.join("\n")}\n${SEP}\n`;
+const vendoredBlocks = [];
+if (existsSync(agentPluginsLicense)) {
+  vendoredBlocks.push([
+    SEP,
+    "",
+    `${packages.length + 1}. Agent Plugins 1.0 JSON schemas (Apache-2.0)`,
+    "https://github.com/agentplugins/agent-plugins-spec",
+    "",
+    readFileSync(agentPluginsLicense, "utf8").trim(),
+    "",
+  ].join("\n"));
+}
+
+const body = `${header}\n${blocks.concat(vendoredBlocks).join("\n")}\n${SEP}\n`;
 writeFileSync(outFile, body, "utf8");
 console.log(`Wrote ${outFile} with ${packages.length} third-party packages.`);

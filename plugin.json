@@ -1,0 +1,18 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "sharepoint-embedded-mcp",
+  "version": "0.2.0-alpha.1",
+  "description": "Read-only SharePoint Embedded MCP server for Agent Plugins 1.0 clients.",
+  "author": {
+    "name": "Microsoft Corporation",
+    "url": "https://www.microsoft.com"
+  },
+  "homepage": "https://learn.microsoft.com/sharepoint/dev/embedded/getting-started/spe-mcp-server",
+  "repository": "https://github.com/microsoft/SharePoint-Embedded-MCP-Server",
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "sharepoint-embedded",
+    "agent-plugins"
+  ]
+}

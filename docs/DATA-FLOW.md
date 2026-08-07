@@ -8,11 +8,16 @@ travels there, and how that maps to Microsoft compliance boundaries. It backs th
 ## Topology
 
 ```
-MCP client  <--stdio-->  spe-mcp-server (local process)  <--HTTPS-->  Microsoft endpoints
+Agent Plugin client --HTTPS--> npm registry
+        |
+        +--stdio--> spe-mcp-server (local process) --HTTPS--> Microsoft endpoints
 ```
 
 - The server is a **local** process. It talks to your MCP client over **stdio**; it opens no
   network socket for the client connection.
+- The Agent Plugin pilot launches the pinned package with `npx -y`. On first use, npm may
+  retrieve that package and its dependencies from the configured npm registry before the
+  local process starts. No tenant data or MCP prompts are sent to the registry.
 - Every outbound network call is HTTPS to a **Microsoft-operated** endpoint, made **on your
   behalf**, using **your** credentials, into **your** tenant and subscription.
 
@@ -24,10 +29,13 @@ MCP client  <--stdio-->  spe-mcp-server (local process)  <--HTTPS-->  Microsoft 
 | Microsoft Graph (`graph.microsoft.com`) | Create/manage app registrations, container types, containers, and content | Your delegated token | The requests you invoke, in your tenant | Microsoft first-party, in-tenant |
 | Azure Resource Manager (`management.azure.com`) | Register the `Microsoft.Syntex` provider and wire SPE billing to your subscription | Your Azure token | ARM requests in your subscription | Microsoft first-party, in-subscription |
 | Microsoft Learn MCP (`learn.microsoft.com/api/mcp`) | Read-only public documentation lookup (`docs_search`) | **None** | Documentation queries only — **no customer data** | Microsoft first-party, public docs |
+| Configured npm registry (Agent Plugin pilot only) | Retrieve the exact pinned `@microsoft/spe-mcp` package and dependencies for local execution | npm client configuration | Package name/version and standard npm request metadata; no tenant data or MCP prompts | External software-supply-chain boundary |
 
-The server contacts **no non-Microsoft services**. The Microsoft Learn documentation lookup
-is the only unauthenticated, out-of-tenant call; it carries no customer data, is host-
-validated before use (control **SEC-007**), and can be disabled with `--tools`.
+The running server contacts no non-Microsoft services. Before startup, the Agent Plugin's
+`npx` launcher may contact the user's configured npm registry to retrieve the pinned package.
+The Microsoft Learn documentation lookup is the only unauthenticated, out-of-tenant server
+call; it carries no customer data, is host-validated before use (control **SEC-007**), and
+can be disabled with `--tools`.
 
 ## Local artifacts
 

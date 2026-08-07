@@ -25,5 +25,12 @@ that maps each code to a human-readable name and a one-line description.
 | SEC-003 | Secure filesystem (owner-only) | Credential and state files (token cache, server state) are written owner-only (POSIX `0o600`; ACL-governed on Windows). |
 | SEC-007 | Docs endpoint validation | The Microsoft Learn MCP endpoint is resolved and validated before use to prevent redirection to an untrusted host. |
 
+## Agent Plugin trust boundary
+
+The optional Agent Plugins 1.0 pilot launches an immutable package version with `npx -y`.
+This creates a software-supply-chain boundary with the user's configured npm registry before
+the local stdio server starts. Users should verify the package publisher and pinned version;
+the pilot then confines state to `${PLUGIN_DATA}` and starts the server in read-only mode.
+
 > Adding a new safeguard? Give it the next code in its family and add a row here
 > so code comments and tests have a lookup.

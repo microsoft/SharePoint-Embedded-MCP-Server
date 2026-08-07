@@ -1,0 +1,18 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "sharepoint-embedded": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@microsoft/spe-mcp@0.2.0-alpha.1",
+        "start",
+        "--read-only",
+        "--data-dir",
+        "${PLUGIN_DATA}"
+      ],
+      "cwd": "${PLUGIN_DATA}"
+    }
+  }
+}
