@@ -54,6 +54,7 @@ describe("MCP protocol-level e2e (spawned dist/cli.js start)", () => {
   let client: Client;
   let transport: StdioClientTransport;
   let isolatedHome: string;
+  let serverStderr = "";
 
   beforeAll(async () => {
     // Self-build guard: this suite drives the *built* server (dist/cli.js). The
@@ -85,11 +86,15 @@ describe("MCP protocol-level e2e (spawned dist/cli.js start)", () => {
       args: [CLI_ENTRY, "start"],
       env,
       cwd: REPO_ROOT,
-      // Swallow the server's stderr diagnostics so they don't pollute test output.
-      stderr: "ignore",
+      // Capture diagnostics without printing them so the real initialize-driven
+      // agent-host classification can be asserted over the wire.
+      stderr: "pipe",
+    });
+    transport.stderr?.on("data", (chunk) => {
+      serverStderr += String(chunk);
     });
 
-    client = new Client({ name: "spe-mcp-e2e-test", version: "0.0.0" }, {});
+    client = new Client({ name: "Visual Studio Code", version: "0.0.0-test" }, {});
     // connect() performs the MCP `initialize` handshake.
     await client.connect(transport);
   }, 90000);
@@ -119,6 +124,19 @@ describe("MCP protocol-level e2e (spawned dist/cli.js start)", () => {
     expect(info?.name).toBe("spe-mcp-server");
     // Capabilities negotiated during initialize should advertise tools.
     expect(client.getServerCapabilities()?.tools).toBeDefined();
+  });
+
+  it("classifies clientInfo after the initialized notification", async () => {
+    const deadline = Date.now() + 2000;
+    while (
+      !serverStderr.includes("Agent host attribution: vscode") &&
+      Date.now() < deadline
+    ) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+    }
+    expect(serverStderr).toContain(
+      "Agent host attribution: vscode (self-reported MCP clientInfo)",
+    );
   });
 
   // (a2) The `initialize` result carries the server `instructions` primer over

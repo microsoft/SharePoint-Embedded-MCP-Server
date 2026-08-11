@@ -15,7 +15,7 @@ import { LOCAL_SPA_REDIRECT_URI } from "./constants.js";
 import { AppError } from "./errors.js";
 import { parseRetryAfterMs } from "./http-client.js";
 import { readState, writeState } from "./state.js";
-import { USER_AGENT } from "./user-agent.js";
+import { getUserAgent } from "./user-agent.js";
 import type {
   ApplicationPermissionGrant,
   Container,
@@ -150,7 +150,7 @@ async function graphRequest<T>(
     const headers: Record<string, string> = {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
-      "User-Agent": USER_AGENT,
+      "User-Agent": getUserAgent(),
       ...customHeaders,
     };
 

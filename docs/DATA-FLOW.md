@@ -48,6 +48,11 @@ These never leave your machine:
 
 ## Telemetry
 
-The server opens **no telemetry channel** and sends **no usage analytics**. Outbound requests
-carry only a static product `User-Agent` (`spe-mcp-server/<version>`) with no personal,
-tenant, or usage data. See [PRIVACY.md](../PRIVACY.md) for details.
+The server opens **no separate telemetry channel**. Each authenticated Graph/ARM request
+carries a product `User-Agent` (`spe-mcp-server/<version>`). Install configurations can
+add bounded source, content, and campaign labels to that request header. The labels contain
+no personal or tenant identifiers. The MCP handshake's self-reported client name is also
+mapped to a bounded agent-host label; the raw name and client version are not transmitted
+in the request metadata. Microsoft services can associate these labels with the authenticated
+request in normal service logs. Users can omit all attribution labels with
+`--no-install-attribution`. See [PRIVACY.md](../PRIVACY.md) for details.

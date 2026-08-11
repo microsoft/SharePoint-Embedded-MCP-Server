@@ -12,6 +12,7 @@ import type {
   FileStorageContainer,
   Permission as GraphPermission,
 } from "@microsoft/microsoft-graph-types";
+import type { InstallAttribution } from "./user-agent.js";
 // The SPE container-type CONTROL-PLANE contracts are Microsoft Graph **beta**
 // APIs, so their official types come from `@microsoft/microsoft-graph-types-beta`
 // — also a types-only `.d.ts` package pinned in devDependencies (zero runtime).
@@ -104,6 +105,10 @@ export interface ServerConfig {
    * to see the profile list and description.
    */
   tools?: string;
+  /** Optional, bounded install-source metadata added to existing Graph/ARM requests. */
+  installAttribution?: InstallAttribution;
+  /** Whether install-source and self-reported agent-host attribution are enabled. */
+  attributionEnabled?: boolean;
 }
 
 // ─── Auth Config ─────────────────────────────────────────────────────────────

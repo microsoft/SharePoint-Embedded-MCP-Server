@@ -78,25 +78,39 @@ describe("project_deploy", () => {
   it("runs azd up --no-prompt with env wired from state and returns the endpoint", async () => {
     stateStore.azureSubscriptionId = "sub-123";
     stateStore.containerTypeId = "ct-456";
+    const previousAzdUserAgent = process.env.AZURE_DEV_USER_AGENT;
+    process.env.AZURE_DEV_USER_AGENT =
+      "spe-mcp-server/test spe-install-source/github-readme";
 
-    const r = await deployAzureTool.handler({ projectDir: "/proj", environmentName: "spe-demo", location: "eastus" });
+    try {
+      const r = await deployAzureTool.handler({ projectDir: "/proj", environmentName: "spe-demo", location: "eastus" });
 
-    expect(r.isError).toBeFalsy();
-    expect(execFile).toHaveBeenCalledTimes(1);
-    const [cmd, args, opts] = vi.mocked(execFile).mock.calls[0] as unknown as [
-      string,
-      string[],
-      { env?: NodeJS.ProcessEnv },
-    ];
-    expect(cmd).toBe("azd");
-    expect(args).toEqual(["up", "--no-prompt", "--environment", "spe-demo"]);
-    expect(opts.env?.AZURE_ENV_NAME).toBe("spe-demo");
-    expect(opts.env?.AZURE_LOCATION).toBe("eastus");
-    expect(opts.env?.AZURE_SUBSCRIPTION_ID).toBe("sub-123");
-    expect(opts.env?.SPE_CONTAINER_TYPE_ID).toBe("ct-456");
+      expect(r.isError).toBeFalsy();
+      expect(execFile).toHaveBeenCalledTimes(1);
+      const [cmd, args, opts] = vi.mocked(execFile).mock.calls[0] as unknown as [
+        string,
+        string[],
+        { env?: NodeJS.ProcessEnv },
+      ];
+      expect(cmd).toBe("azd");
+      expect(args).toEqual(["up", "--no-prompt", "--environment", "spe-demo"]);
+      expect(opts.env?.AZURE_ENV_NAME).toBe("spe-demo");
+      expect(opts.env?.AZURE_LOCATION).toBe("eastus");
+      expect(opts.env?.AZURE_SUBSCRIPTION_ID).toBe("sub-123");
+      expect(opts.env?.SPE_CONTAINER_TYPE_ID).toBe("ct-456");
+      expect(opts.env?.AZURE_DEV_USER_AGENT).toBe(
+        "spe-mcp-server/test spe-install-source/github-readme",
+      );
 
-    expect(r.content[0].text).toContain("https://demo.happyrock-1.eastus.azurecontainerapps.io/");
-    expect(r.content[0].text).toContain("subscription-scoped");
+      expect(r.content[0].text).toContain("https://demo.happyrock-1.eastus.azurecontainerapps.io/");
+      expect(r.content[0].text).toContain("subscription-scoped");
+    } finally {
+      if (previousAzdUserAgent === undefined) {
+        delete process.env.AZURE_DEV_USER_AGENT;
+      } else {
+        process.env.AZURE_DEV_USER_AGENT = previousAzdUserAgent;
+      }
+    }
   });
 
   it("retries the deploy alone when azd up loses the Resource Graph indexing race", async () => {

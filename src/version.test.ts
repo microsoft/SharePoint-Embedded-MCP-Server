@@ -17,7 +17,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PACKAGE_VERSION } from "./version.js";
-import { USER_AGENT } from "./user-agent.js";
+import { USER_AGENT, getUserAgent } from "./user-agent.js";
 
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const pkgVersion = (
@@ -31,5 +31,6 @@ describe("version: single source of truth", () => {
 
   it("derives USER_AGENT from package.json in the spe-mcp-server/<version> format", () => {
     expect(USER_AGENT).toBe(`spe-mcp-server/${pkgVersion}`);
+    expect(getUserAgent()).toBe(USER_AGENT);
   });
 });

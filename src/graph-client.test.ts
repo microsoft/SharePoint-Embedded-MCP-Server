@@ -25,6 +25,12 @@ import {
   desiredGraphResourceAccess,
   LOCAL_SPA_REDIRECT_URI,
 } from "./graph-client.js";
+import {
+  __testing as userAgentTesting,
+  resolveInstallAttribution,
+  setAgentHostAttribution,
+  setInstallAttribution,
+} from "./user-agent.js";
 
 // updateContainerType uses the default getAccessToken (MSAL); mock it so the
 // container-type update tests run fully offline. The other tests here pass an
@@ -112,11 +118,40 @@ beforeEach(() => {
   for (const key of Object.keys(stateStore)) delete stateStore[key];
   readStateMock.mockClear();
   writeStateMock.mockClear();
+  userAgentTesting.reset();
 });
 
 afterEach(() => {
+  userAgentTesting.reset();
   vi.restoreAllMocks(); // restores the console.error spy
   globalThis.fetch = realFetch; // restore the directly-mutated global fetch
+});
+
+describe("request attribution", () => {
+  it("adds configured install attribution to Graph requests", async () => {
+    fetchMock.mockResolvedValueOnce(
+      okResponse({
+        id: "object-id",
+        appId: "client-id",
+        displayName: "Test App",
+      }),
+    );
+    setInstallAttribution(
+      resolveInstallAttribution({
+        source: "microsoft-learn",
+        content: "sharepoint-embedded-mcp-server",
+        campaign: "docs-install-buttons",
+      }),
+    );
+    setAgentHostAttribution("vscode");
+
+    await createApplication("Test App", getToken);
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect((init.headers as Record<string, string>)["User-Agent"]).toMatch(
+      /spe-mcp-server\/\S+ spe-install-source\/microsoft-learn spe-install-content\/sharepoint-embedded-mcp-server spe-install-campaign\/docs-install-buttons spe-agent-host\/vscode/,
+    );
+  });
 });
 
 /** Parse the requiredResourceAccess PATCH body from the Nth fetch call. */
@@ -751,4 +786,3 @@ describe("getSignedInUser — /me select includes userType (guest handling, PR #
     expect(me.id).toBe("user-1");
   });
 });
-

@@ -9,8 +9,7 @@ organization's agreements with Microsoft.
 
 ## What the tool collects and sends
 
-**The tool does not collect telemetry or usage analytics, and it opens no dedicated channel
-to send data to Microsoft.** Specifically:
+**The tool opens no dedicated telemetry channel to send data to Microsoft.** Specifically:
 
 - **No telemetry channel.** The tool does not implement application telemetry and does not
   "phone home." Diagnostic logs are written to the local process's **stderr only**, with
@@ -24,11 +23,15 @@ to send data to Microsoft.** Specifically:
   endpoints — Microsoft Graph and Azure Resource Manager — **on your behalf**, in **your**
   tenant and subscription. The content and directory data involved flow between your machine
   and those Microsoft services; the tool adds no additional recipients.
-- **Product `User-Agent`.** Outbound Graph/ARM requests are stamped with a static
-  `User-Agent` of the form `spe-mcp-server/<version>` (`src/user-agent.ts`). It contains
-  **no personal, tenant, or usage information** and exists only so the service can measure
-  aggregate traffic driven by this tool. It is a request header on calls you already make —
-  not a separate data feed.
+- **Product and install-source `User-Agent`.** Outbound Graph/ARM requests are stamped
+  with `spe-mcp-server/<version>` (`src/user-agent.ts`). Install links can also configure
+  bounded source, content, and campaign labels such as `microsoft-learn` and an article
+  slug. The MCP handshake's self-reported client name is mapped to a bounded agent-host
+  label; the raw name and client version are not transmitted in the request metadata.
+  These labels contain **no personal or tenant identifiers**, but they accompany each
+  authenticated request and Microsoft services can associate them with that request in
+  normal service logs. They exist so the service can measure aggregate traffic driven by
+  published install surfaces and agent hosts; they are not a separate data feed.
 
 See [docs/DATA-FLOW.md](docs/DATA-FLOW.md) for the full list of network endpoints and what
 travels to each.
@@ -51,7 +54,12 @@ terms, which are outside the control of this project.
 
 ## Turning it off
 
-Because the tool has no telemetry channel, there is nothing to opt out of. To further limit
-outbound calls you can run with `--read-only` (no mutating operations) or `--tools` (restrict
-the exposed tool set, including the optional Microsoft Learn documentation lookup). See
-[docs/DATA-FLOW.md](docs/DATA-FLOW.md) and [docs/SECURITY-CONTROLS.md](docs/SECURITY-CONTROLS.md).
+Because the tool has no telemetry channel, there is no separate telemetry stream to opt out
+of. To omit install-source labels from existing API requests, remove the
+`--install-source`, `--install-content`, and `--install-campaign` arguments from the MCP
+client configuration. To omit both install-source and agent-host labels, add
+`--no-install-attribution`. To further limit outbound calls,
+run with `--read-only` (no mutating operations) or `--tools` (restrict the exposed tool
+set, including the optional Microsoft Learn documentation lookup). See
+[docs/DATA-FLOW.md](docs/DATA-FLOW.md) and
+[docs/SECURITY-CONTROLS.md](docs/SECURITY-CONTROLS.md).
