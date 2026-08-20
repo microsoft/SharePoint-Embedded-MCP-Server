@@ -15,12 +15,12 @@
  * the SPE container type id) from the recorded provisioning state.
  */
 
-import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { bootstrapTokenProvider } from "../bootstrap.js";
 import { addSpaRedirectUris } from "../graph-client.js";
 import { readState } from "../state.js";
+import { runCommand } from "../proc-exec.js";
 import type { McpTool } from "../types.js";
 
 interface DeployArgs {
@@ -46,19 +46,6 @@ const DEPLOY_RETRY_DELAY_MS = 15_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve_) => setTimeout(resolve_, ms));
-}
-
-function execFileAsync(
-  cmd: string,
-  args: string[],
-  opts: { timeout: number; cwd: string; shell?: boolean; env?: NodeJS.ProcessEnv },
-): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve_, reject) => {
-    execFile(cmd, args, opts, (err, stdout, stderr) => {
-      if (err) reject(Object.assign(err, { stdout, stderr }));
-      else resolve_({ stdout, stderr });
-    });
-  });
 }
 
 /** Extract the deployed app endpoint azd prints. */
@@ -139,18 +126,18 @@ async function deployWithArgLagRetry(
   dir: string,
   env: NodeJS.ProcessEnv,
 ): Promise<{ stdout: string; stderr: string }> {
-  const opts = { timeout: AZD_TIMEOUT_MS, cwd: dir, shell: process.platform === "win32", env };
+  const opts = { timeout: AZD_TIMEOUT_MS, cwd: dir, env };
   const argLag = (err: { stdout?: string; stderr?: string }) =>
     ARG_LAG_PATTERN.test([err.stdout, err.stderr].filter(Boolean).join("\n"));
   try {
-    return await execFileAsync("azd", ["up", "--no-prompt", "--environment", environmentName], opts);
+    return await runCommand("azd", ["up", "--no-prompt", "--environment", environmentName], opts);
   } catch (error) {
     if (!argLag(error as { stdout?: string; stderr?: string })) throw error;
     let lastError: unknown = error;
     for (let attempt = 1; attempt <= DEPLOY_RETRY_ATTEMPTS; attempt++) {
       await sleep(DEPLOY_RETRY_DELAY_MS);
       try {
-        return await execFileAsync("azd", ["deploy", "--no-prompt", "--environment", environmentName], opts);
+        return await runCommand("azd", ["deploy", "--no-prompt", "--environment", environmentName], opts);
       } catch (retryError) {
         lastError = retryError;
         // A different failure means retrying will not help — surface it now.
@@ -221,10 +208,9 @@ export const deployAzureTool: McpTool = {
     let subscriptionId = state.azureSubscriptionId;
     if (!subscriptionId) {
       try {
-        const { stdout } = await execFileAsync("az", ["account", "show", "--query", "id", "--output", "tsv"], {
+        const { stdout } = await runCommand("az", ["account", "show", "--query", "id", "--output", "tsv"], {
           timeout: 30_000,
           cwd: dir,
-          shell: process.platform === "win32",
           env: childEnv,
         });
         subscriptionId = stdout.trim() || undefined;

@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file. The format
 is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-alpha.2]
+
+### Security
+
+- **Process-invocation hardening.** All Azure CLI (`az`), Azure Developer CLI
+  (`azd`), and local dev-server child processes are now launched through a single
+  shared, shell-free process launcher that resolves platform executable shims
+  (including Windows `.cmd`/`.bat`) without spawning a command interpreter. Command
+  arguments are never routed through a shell, so shell metacharacters in
+  user-influenced values (for example subscription IDs and resource-group names)
+  can no longer alter the executed command line. In addition, Azure subscription
+  IDs and resource-group names are now strictly validated against an allowlist at
+  the tool boundary and re-asserted at the process-invocation boundary as
+  defense-in-depth. Valid inputs and existing behavior are unchanged.
+
 ## [0.2.0-alpha.1]
 
 ### Added
