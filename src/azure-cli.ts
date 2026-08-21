@@ -11,12 +11,16 @@
  * first-party app or pre-authorization required.
  */
 
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getSignedInIdentity } from "./bootstrap.js";
+import { runCommand } from "./proc-exec.js";
+import {
+  assertAzureSubscriptionId,
+  assertAzureResourceGroupName,
+} from "./validation.js";
 import {
   isConditionalAccessOrClaimsError,
   asConditionalAccessError,
@@ -24,10 +28,6 @@ import {
 } from "./az-errors.js";
 
 const AZ_TIMEOUT_MS = 30_000;
-
-function azNeedsShell(): boolean {
-  return process.platform === "win32";
-}
 
 /**
  * Best-effort tenant id from the current `az` sign-in, used to interpolate the
@@ -56,25 +56,11 @@ function isNotInstalled(message: string): boolean {
 const NOT_INSTALLED_MSG =
   "Azure CLI ('az') is not installed. Install it from https://aka.ms/install-azure-cli, then run `az login --allow-no-subscriptions`.";
 
-function execFileAsync(
-  cmd: string,
-  args: string[],
-  opts: { timeout: number; shell?: boolean },
-): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    execFile(cmd, args, opts, (err, stdout, stderr) => {
-      if (err) reject(err);
-      else resolve({ stdout, stderr });
-    });
-  });
-}
-
 /** Run an `az` command with `--output json` appended and parse the result. */
 export async function azJson<T>(args: string[]): Promise<T> {
   try {
-    const { stdout } = await execFileAsync("az", [...args, "--output", "json"], {
+    const { stdout } = await runCommand("az", [...args, "--output", "json"], {
       timeout: AZ_TIMEOUT_MS,
-      shell: azNeedsShell(),
     });
     return JSON.parse(stdout) as T;
   } catch (error) {
@@ -123,9 +109,8 @@ export async function listSubscriptions(): Promise<AzureSubscription[]> {
  */
 export async function isSignedIn(): Promise<boolean> {
   try {
-    await execFileAsync("az", ["account", "show", "--output", "json"], {
+    await runCommand("az", ["account", "show", "--output", "json"], {
       timeout: AZ_TIMEOUT_MS,
-      shell: azNeedsShell(),
     });
     return true;
   } catch (error) {
@@ -141,6 +126,7 @@ export async function isSignedIn(): Promise<boolean> {
 
 /** List resource groups in a subscription. */
 export async function listResourceGroups(subscriptionId: string): Promise<AzureResourceGroup[]> {
+  assertAzureSubscriptionId(subscriptionId);
   return azJson<AzureResourceGroup[]>(["group", "list", "--subscription", subscriptionId]);
 }
 
@@ -163,10 +149,12 @@ export async function resourceGroupExists(
   subscriptionId: string,
 ): Promise<boolean | undefined> {
   try {
-    await execFileAsync(
+    assertAzureResourceGroupName(name);
+    assertAzureSubscriptionId(subscriptionId);
+    await runCommand(
       "az",
       ["group", "show", "--name", name, "--subscription", subscriptionId, "--output", "json"],
-      { timeout: AZ_TIMEOUT_MS, shell: azNeedsShell() },
+      { timeout: AZ_TIMEOUT_MS },
     );
     return true;
   } catch (error) {
@@ -206,6 +194,7 @@ function defaultSleep(ms: number): Promise<void> {
 export async function showSyntexProvider(
   subscriptionId: string,
 ): Promise<ProviderRegistration | null> {
+  assertAzureSubscriptionId(subscriptionId);
   return azJson<ProviderRegistration>([
     "provider", "show", "--namespace", SYNTEX_NAMESPACE, "--subscription", subscriptionId,
   ]).catch(() => null);
@@ -214,10 +203,11 @@ export async function showSyntexProvider(
 /** Trigger registration of the Syntex RP (async on the Azure side). */
 export async function registerSyntexProvider(subscriptionId: string): Promise<void> {
   try {
-    await execFileAsync(
+    assertAzureSubscriptionId(subscriptionId);
+    await runCommand(
       "az",
       ["provider", "register", "--namespace", SYNTEX_NAMESPACE, "--subscription", subscriptionId],
-      { timeout: AZ_TIMEOUT_MS, shell: azNeedsShell() },
+      { timeout: AZ_TIMEOUT_MS },
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -406,9 +396,8 @@ interface SyntexAccountRequestBody {
 /** Run `az rest ... --output json` and parse the response body. */
 async function azRestJson<T>(args: string[]): Promise<T> {
   try {
-    const { stdout } = await execFileAsync("az", ["rest", ...args, "--output", "json"], {
+    const { stdout } = await runCommand("az", ["rest", ...args, "--output", "json"], {
       timeout: AZ_TIMEOUT_MS,
-      shell: azNeedsShell(),
     });
     const out = stdout.trim();
     return (out ? JSON.parse(out) : {}) as T;
@@ -436,7 +425,7 @@ async function putSyntexAccountViaAz(
   const bodyFile = join(dir, "account.json");
   try {
     writeFileSync(bodyFile, JSON.stringify(body), "utf-8");
-    const { stdout } = await execFileAsync(
+    const { stdout } = await runCommand(
       "az",
       [
         "rest",
@@ -446,7 +435,7 @@ async function putSyntexAccountViaAz(
         "--body", `@${bodyFile}`,
         "--output", "json",
       ],
-      { timeout: AZ_TIMEOUT_MS, shell: azNeedsShell() },
+      { timeout: AZ_TIMEOUT_MS },
     );
     const out = stdout.trim();
     return (out ? JSON.parse(out) : { id: "" }) as SyntexAccount;
@@ -476,6 +465,8 @@ export async function getSyntexAccounts(
   subscriptionId: string,
   resourceGroup: string,
 ): Promise<SyntexAccount[]> {
+  assertAzureSubscriptionId(subscriptionId);
+  assertAzureResourceGroupName(resourceGroup);
   const url =
     `${ARM_BASE}/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}` +
     `/providers/Microsoft.Syntex/accounts?api-version=${SYNTEX_ACCOUNT_API_VERSION}`;
@@ -486,10 +477,10 @@ export async function getSyntexAccounts(
 /** Delete a Microsoft.Syntex account by its ARM resource id (partial-account cleanup). */
 export async function deleteSyntexAccount(resourceId: string): Promise<void> {
   try {
-    await execFileAsync(
+    await runCommand(
       "az",
       ["rest", "--method", "delete", "--url", `${ARM_BASE}${resourceId}?api-version=${SYNTEX_ACCOUNT_API_VERSION}`],
-      { timeout: AZ_TIMEOUT_MS, shell: azNeedsShell() },
+      { timeout: AZ_TIMEOUT_MS },
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

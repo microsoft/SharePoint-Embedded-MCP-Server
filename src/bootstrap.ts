@@ -13,10 +13,10 @@
  * The SECOND token (SPE-scoped, acquired via MSAL device-code AS the
  * newly-created owning app) lives in auth.ts and is wired in Phase 1.
  *
- * Cross-platform: shells out to `az`, which is available on Windows/macOS/Linux.
+ * Cross-platform: invokes `az`, which is available on Windows/macOS/Linux.
  */
 
-import { execFile } from "node:child_process";
+import { runCommand } from "./proc-exec.js";
 import {
   isConditionalAccessOrClaimsError,
   asConditionalAccessError,
@@ -32,24 +32,6 @@ function log(message: string, data?: unknown): void {
   } else {
     console.error(line);
   }
-}
-
-function execFileAsync(
-  cmd: string,
-  args: string[],
-  opts: { timeout: number; shell?: boolean },
-): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    execFile(cmd, args, opts, (err, stdout, stderr) => {
-      if (err) reject(err);
-      else resolve({ stdout, stderr });
-    });
-  });
-}
-
-/** True on Windows, where `az` is a `.cmd` shim that needs a shell to resolve. */
-function azNeedsShell(): boolean {
-  return process.platform === "win32";
 }
 
 function isNotInstalledError(message: string): boolean {
@@ -93,9 +75,8 @@ export interface BootstrapToken {
  */
 export async function assertAzCli(): Promise<void> {
   try {
-    await execFileAsync("az", ["version", "--output", "json"], {
+    await runCommand("az", ["version", "--output", "json"], {
       timeout: AZ_TIMEOUT_MS,
-      shell: azNeedsShell(),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -112,12 +93,8 @@ export async function assertAzCli(): Promise<void> {
  */
 export async function getSignedInIdentity(): Promise<SignedInIdentity | null> {
   try {
-    // NOTE: do NOT use `--query` here. On Windows `az` is a `.cmd` shim that
-    // requires shell:true, and a `--query` value containing spaces/braces gets
-    // word-split by the shell. Fetch the full JSON and parse it in JS instead.
-    const { stdout } = await execFileAsync("az", ["account", "show", "--output", "json"], {
+    const { stdout } = await runCommand("az", ["account", "show", "--output", "json"], {
       timeout: AZ_TIMEOUT_MS,
-      shell: azNeedsShell(),
     });
     const parsed = JSON.parse(stdout) as {
       tenantId?: string;
@@ -158,10 +135,10 @@ async function resolveTenantIdBestEffort(): Promise<string | undefined> {
 export async function getBootstrapToken(resource: string = GRAPH_RESOURCE): Promise<BootstrapToken> {
   log(`Acquiring bootstrap token for ${resource}`);
   try {
-    const { stdout } = await execFileAsync(
+    const { stdout } = await runCommand(
       "az",
       ["account", "get-access-token", "--resource", resource, "--output", "json"],
-      { timeout: AZ_TIMEOUT_MS, shell: azNeedsShell() },
+      { timeout: AZ_TIMEOUT_MS },
     );
     const parsed = JSON.parse(stdout) as {
       accessToken?: string;

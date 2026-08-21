@@ -10,6 +10,7 @@
  */
 
 import { isSignedIn, listResourceGroups, listSubscriptions } from "../azure-cli.js";
+import { requireAzureSubscriptionId } from "../validation.js";
 import type { McpTool } from "../types.js";
 
 export const listSubscriptionsTool: McpTool = {
@@ -73,10 +74,9 @@ export const listResourceGroupsTool: McpTool = {
     required: ["subscriptionId"],
   },
   handler: async (args) => {
-    const subscriptionId = (args.subscriptionId as string | undefined)?.trim();
-    if (!subscriptionId) {
-      return { content: [{ type: "text" as const, text: "Error: subscriptionId is required" }], isError: true };
-    }
+    const parsed = requireAzureSubscriptionId(args.subscriptionId);
+    if (!parsed.ok) return parsed.error;
+    const subscriptionId = parsed.value;
     try {
       const groups = await listResourceGroups(subscriptionId);
       if (groups.length === 0) {

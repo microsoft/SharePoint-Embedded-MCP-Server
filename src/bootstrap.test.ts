@@ -3,29 +3,22 @@
 
 /**
  * Unit tests for the Azure CLI bootstrap module.
- * `node:child_process.execFile` is mocked so these run offline.
+ * The shared shell-free launcher (`./proc-exec.js` `runCommand`) is mocked so
+ * these run offline.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("node:child_process", () => ({ execFile: vi.fn() }));
+vi.mock("./proc-exec.js", () => ({ runCommand: vi.fn() }));
 
-import { execFile } from "node:child_process";
+import { runCommand } from "./proc-exec.js";
 import { assertAzCli, getSignedInIdentity, getBootstrapToken } from "./bootstrap.js";
 
-type ExecCb = (err: Error | null, stdout: string, stderr: string) => void;
-
 function mockExec(result: { stdout?: string; error?: Error }): void {
-  vi.mocked(execFile).mockImplementation(((
-    _cmd: string,
-    _args: string[],
-    _opts: unknown,
-    cb: ExecCb,
-  ) => {
-    if (result.error) cb(result.error, "", "");
-    else cb(null, result.stdout ?? "", "");
-    return {} as never;
-  }) as never);
+  vi.mocked(runCommand).mockImplementation(async () => {
+    if (result.error) throw result.error;
+    return { stdout: result.stdout ?? "", stderr: "" };
+  });
 }
 
 beforeEach(() => {
@@ -110,21 +103,19 @@ describe("getBootstrapToken", () => {
   });
 });
 
-describe("cross-platform az invocation", () => {
-  // `az` is a native binary on macOS/Linux but a `.cmd` shim on Windows that
-  // must be resolved through a shell. bootstrap.ts sets `shell: true` only on
-  // win32; this asserts the invocation adapts to the current platform so the
-  // command works on both Windows and Linux.
-  it("passes shell:true on Windows and falsy elsewhere", async () => {
+describe("shell-free az invocation", () => {
+  // `az` is a native binary on macOS/Linux but a `.cmd` shim on Windows. It is
+  // launched through the shared shell-free launcher (`./proc-exec.js`), which
+  // never routes arguments through a shell on any platform — so shell
+  // metacharacters in values are passed through literally, not interpreted.
+  it("invokes az through the launcher without any shell option", async () => {
     mockExec({ stdout: '{"azure-cli":"2.60.0"}' });
     await assertAzCli();
 
-    const opts = vi.mocked(execFile).mock.calls[0]?.[2] as { shell?: boolean };
-    if (process.platform === "win32") {
-      expect(opts.shell).toBe(true);
-    } else {
-      expect(opts.shell).toBeFalsy();
-    }
+    const call = vi.mocked(runCommand).mock.calls[0] as unknown as [string, string[], Record<string, unknown>?];
+    const opts = call[2] ?? {};
+    // The launcher takes no `shell` option — args are never shell-interpreted.
+    expect(opts).not.toHaveProperty("shell");
   });
 
   // Regardless of platform, args are passed as an array (never a concatenated
@@ -133,7 +124,7 @@ describe("cross-platform az invocation", () => {
     mockExec({ stdout: '{"azure-cli":"2.60.0"}' });
     await assertAzCli();
 
-    const [cmd, args] = vi.mocked(execFile).mock.calls[0] as unknown as [string, string[]];
+    const [cmd, args] = vi.mocked(runCommand).mock.calls[0] as unknown as [string, string[]];
     expect(cmd).toBe("az");
     expect(Array.isArray(args)).toBe(true);
     expect(args).toContain("version");

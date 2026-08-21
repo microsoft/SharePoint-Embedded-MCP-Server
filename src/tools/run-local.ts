@@ -17,11 +17,11 @@
  * accepting connections — never a URL that refuses.
  */
 
-import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { LOCAL_DEV_PORT } from "../constants.js";
 import { waitForServerReady } from "../server-readiness.js";
+import { spawnProcess } from "../proc-exec.js";
 import type { McpTool } from "../types.js";
 
 interface RunLocalArgs {
@@ -84,16 +84,16 @@ interface SpawnOutcome {
 /**
  * Spawn a detached process and resolve with its immediate launch outcome:
  * `ok:false` if the OS could not start it (e.g. ENOENT for a missing command)
- * OR if it exits with a non-zero code within the grace window (the win32
- * `shell:true` case, where a missing toolchain spawns cmd.exe and only the shell
- * exit code reveals the failure); `ok:true` once it has spawned and survived the
- * grace window without an early non-zero exit. Resolves optimistically after the
- * short grace period so we never block the MCP server.
+ * OR if it exits with a non-zero code within the grace window (a missing
+ * toolchain can surface only via an early non-zero exit code); `ok:true` once it
+ * has spawned and survived the grace window without an early non-zero exit.
+ * Resolves optimistically after the short grace period so we never block the MCP
+ * server.
  *
  * Note: we deliberately do NOT resolve success on `'spawn'` alone — `'spawn'`
- * only means the OS created the process (or the shell), not that the underlying
- * command exists. We wait out the grace window so an early non-zero exit can
- * still flip the outcome to failure.
+ * only means the OS created the process, not that the underlying command
+ * exists. We wait out the grace window so an early non-zero exit can still flip
+ * the outcome to failure.
  */
 function startDetached(command: string, args: string[], cwd: string): Promise<SpawnOutcome> {
   return new Promise((resolveOutcome) => {
@@ -107,11 +107,10 @@ function startDetached(command: string, args: string[], cwd: string): Promise<Sp
 
     let child;
     try {
-      child = spawn(command, args, {
+      child = spawnProcess(command, args, {
         cwd,
         detached: true,
         stdio: "ignore",
-        shell: process.platform === "win32",
       });
     } catch (error) {
       finish({ ok: false, error: error instanceof Error ? error.message : String(error) });
@@ -136,7 +135,7 @@ function startDetached(command: string, args: string[], cwd: string): Promise<Sp
     });
 
     // A non-zero exit/close within the grace window means the launch failed
-    // (the primary win32 shell:true false-success path). A clean (code 0) or
+    // (the primary launch false-success path). A clean (code 0) or
     // signal-terminated early exit is unusual for a dev server but not an error
     // we can attribute, so we let the grace timer resolve optimistically.
     const onEarlyExit = (code: number | null): void => {
@@ -182,10 +181,9 @@ function runToCompletion(command: string, args: string[], cwd: string): Promise<
 
     let child;
     try {
-      child = spawn(command, args, {
+      child = spawnProcess(command, args, {
         cwd,
         stdio: "ignore",
-        shell: process.platform === "win32",
       });
     } catch (error) {
       finish({ ok: false, error: error instanceof Error ? error.message : String(error) });

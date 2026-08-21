@@ -20,7 +20,7 @@ vi.mock("../azure-cli.js", () => ({
 }));
 
 import * as azureCli from "../azure-cli.js";
-import { listSubscriptionsTool } from "../tools/list-azure.js";
+import { listSubscriptionsTool, listResourceGroupsTool } from "../tools/list-azure.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -72,5 +72,43 @@ describe("azure_subscriptions_list", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("az not installed");
+  });
+});
+
+describe("azure_resource_groups_list — subscriptionId validation", () => {
+  it("rejects a missing subscriptionId before invoking the CLI", async () => {
+    const result = await listResourceGroupsTool.handler({});
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("subscriptionId is required");
+    expect(azureCli.listResourceGroups).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "3fa85f64-5717-4562-b3fc-2c963f66afa6 &",
+    "sub-1 |",
+    "$()",
+    "``",
+    "--query",
+    "not-a-guid",
+  ])("rejects an invalid / injection subscriptionId (%s) before invoking the CLI", async (value) => {
+    const result = await listResourceGroupsTool.handler({ subscriptionId: value });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("valid Azure subscription ID");
+    expect(azureCli.listResourceGroups).not.toHaveBeenCalled();
+  });
+
+  it("accepts a valid subscription GUID and forwards it to the CLI", async () => {
+    const validId = "3fa85f64-5717-4562-b3fc-2c963f66afa6";
+    vi.mocked(azureCli.listResourceGroups).mockResolvedValue([
+      { name: "rg-spe-demo", location: "eastus", id: "/subscriptions/x/resourceGroups/rg-spe-demo" },
+    ]);
+
+    const result = await listResourceGroupsTool.handler({ subscriptionId: validId });
+
+    expect(result.isError).toBeFalsy();
+    expect(azureCli.listResourceGroups).toHaveBeenCalledWith(validId);
+    expect(result.content[0].text).toContain("rg-spe-demo");
   });
 });

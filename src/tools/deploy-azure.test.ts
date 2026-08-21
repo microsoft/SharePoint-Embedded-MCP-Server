@@ -12,23 +12,22 @@
  *   - extracts the live endpoint and reports the managed-identity infra,
  *   - surfaces a friendly message when `azd` is not installed.
  *
- * node:child_process, node:fs and state are mocked so nothing actually runs.
+ * node:fs, the shared shell-free launcher (`../proc-exec.js` `runCommand`) and
+ * state are mocked so nothing actually runs.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 let azureYamlExists = true;
-type ExecCb = (err: (Error & { code?: string }) | null, stdout: string, stderr: string) => void;
-let execImpl: (cmd: string, args: string[], opts: { env?: NodeJS.ProcessEnv }, cb: ExecCb) => void;
+type RunResult = { stdout: string; stderr: string };
+let runImpl: (cmd: string, args: string[], opts: { env?: NodeJS.ProcessEnv }) => Promise<RunResult>;
 
 vi.mock("node:fs", () => ({
   existsSync: vi.fn((p: string) => (String(p).endsWith("azure.yaml") ? azureYamlExists : true)),
 }));
 
-vi.mock("node:child_process", () => ({
-  execFile: vi.fn((cmd: string, args: string[], opts: { env?: NodeJS.ProcessEnv }, cb: ExecCb) =>
-    execImpl(cmd, args, opts, cb),
-  ),
+vi.mock("../proc-exec.js", () => ({
+  runCommand: vi.fn((cmd: string, args: string[], opts: { env?: NodeJS.ProcessEnv }) => runImpl(cmd, args, opts)),
 }));
 
 const stateStore: Record<string, unknown> = {};
@@ -44,16 +43,27 @@ vi.mock("../bootstrap.js", () => ({
   bootstrapTokenProvider: vi.fn(async () => "boot-token"),
 }));
 
-import { execFile } from "node:child_process";
+import { runCommand } from "../proc-exec.js";
 import { deployAzureTool } from "../tools/deploy-azure.js";
+
+/** Build a rejected-launcher error carrying the same `.stdout`/`.stderr`/`.code` shape runCommand attaches. */
+function runError(message: string, extra: { stdout?: string; stderr?: string; code?: string } = {}): Error {
+  return Object.assign(new Error(message), {
+    stdout: extra.stdout ?? "",
+    stderr: extra.stderr ?? "",
+    code: extra.code,
+  });
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
   azureYamlExists = true;
   for (const k of Object.keys(stateStore)) delete stateStore[k];
   // Default: a successful azd up that prints a live endpoint.
-  execImpl = (_cmd, _args, _opts, cb) =>
-    cb(null, "Deploying service web\n  - Endpoint: https://demo.happyrock-1.eastus.azurecontainerapps.io/\n", "");
+  runImpl = async () => ({
+    stdout: "Deploying service web\n  - Endpoint: https://demo.happyrock-1.eastus.azurecontainerapps.io/\n",
+    stderr: "",
+  });
   // Default SPA patch: origin newly added.
   addSpaRedirectUrisMock.mockResolvedValue({ added: ["x"], redirectUris: ["x"] });
 });
@@ -64,7 +74,7 @@ describe("project_deploy", () => {
     const r = await deployAzureTool.handler({ projectDir: "/proj", location: "eastus" });
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain("no `azure.yaml`");
-    expect(execFile).not.toHaveBeenCalled();
+    expect(runCommand).not.toHaveBeenCalled();
   });
 
   it("errors when no region is supplied (subscription-scoped template needs one)", async () => {
@@ -72,7 +82,7 @@ describe("project_deploy", () => {
     const r = await deployAzureTool.handler({ projectDir: "/proj" });
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain("no Azure region");
-    expect(execFile).not.toHaveBeenCalled();
+    expect(runCommand).not.toHaveBeenCalled();
   });
 
   it("runs azd up --no-prompt with env wired from state and returns the endpoint", async () => {
@@ -82,8 +92,8 @@ describe("project_deploy", () => {
     const r = await deployAzureTool.handler({ projectDir: "/proj", environmentName: "spe-demo", location: "eastus" });
 
     expect(r.isError).toBeFalsy();
-    expect(execFile).toHaveBeenCalledTimes(1);
-    const [cmd, args, opts] = vi.mocked(execFile).mock.calls[0] as unknown as [
+    expect(runCommand).toHaveBeenCalledTimes(1);
+    const [cmd, args, opts] = vi.mocked(runCommand).mock.calls[0] as unknown as [
       string,
       string[],
       { env?: NodeJS.ProcessEnv },
@@ -99,21 +109,45 @@ describe("project_deploy", () => {
     expect(r.content[0].text).toContain("subscription-scoped");
   });
 
+  it("passes a punctuation-heavy environment name to azd as one discrete argv element", async () => {
+    // An azd environment name is not the validated az subscription/RG boundary,
+    // so a punctuation-bearing value flows through to azd. It must still reach
+    // the process as a SINGLE argv element (defended by the shell-free launcher),
+    // never split into multiple arguments or interpreted by a shell.
+    const packed = "spe & | ; $()";
+
+    stateStore.azureSubscriptionId = "sub-123";
+    stateStore.containerTypeId = "ct-456";
+
+    const r = await deployAzureTool.handler({ projectDir: "/proj", environmentName: packed, location: "eastus" });
+
+    expect(r.isError).toBeFalsy();
+    expect(runCommand).toHaveBeenCalledTimes(1);
+    const [cmd, args, opts] = vi.mocked(runCommand).mock.calls[0] as unknown as [
+      string,
+      string[],
+      { env?: NodeJS.ProcessEnv },
+    ];
+    expect(cmd).toBe("azd");
+    expect(args).toEqual(["up", "--no-prompt", "--environment", packed]);
+    expect(args[3]).toBe(packed); // one discrete element, unmodified
+    expect(opts.env?.AZURE_ENV_NAME).toBe(packed);
+    expect(opts).not.toHaveProperty("shell");
+  });
+
   it("retries the deploy alone when azd up loses the Resource Graph indexing race", async () => {
     vi.useFakeTimers();
-    execImpl = (_cmd, args, _opts, cb) => {
+    runImpl = async (_cmd, args) => {
       if (args[0] === "up") {
         // Provisioned, but the publish step could not find the freshly-created
         // resource by its azd-service-name tag yet (ARG indexing lag).
-        cb(
-          new Error("exit status 1"),
-          "(done) Static Web App\nERROR: publishing service web: getting target resource: resource not found: unable to find a resource tagged with 'azd-service-name: web'",
-          "",
-        );
-      } else {
-        // azd deploy retry succeeds once ARG has caught up.
-        cb(null, "web: Done\n- Endpoint: https://retried-app.7.azurestaticapps.net/\n", "");
+        throw runError("exit status 1", {
+          stdout:
+            "(done) Static Web App\nERROR: publishing service web: getting target resource: resource not found: unable to find a resource tagged with 'azd-service-name: web'",
+        });
       }
+      // azd deploy retry succeeds once ARG has caught up.
+      return { stdout: "web: Done\n- Endpoint: https://retried-app.7.azurestaticapps.net/\n", stderr: "" };
     };
 
     const pending = deployAzureTool.handler({ projectDir: "/proj", location: "eastus" });
@@ -123,29 +157,29 @@ describe("project_deploy", () => {
 
     expect(r.isError).toBeFalsy();
     expect(r.content[0].text).toContain("https://retried-app.7.azurestaticapps.net/");
-    const calls = vi.mocked(execFile).mock.calls as unknown as [string, string[]][];
+    const calls = vi.mocked(runCommand).mock.calls as unknown as [string, string[]][];
     expect(calls.some((c) => c[1][0] === "up")).toBe(true);
     expect(calls.some((c) => c[1][0] === "deploy")).toBe(true);
   });
 
   it("does not retry (and surfaces the error) when azd up fails for a non-indexing reason", async () => {
-    execImpl = (_cmd, args, _opts, cb) => {
+    runImpl = async (_cmd, args) => {
       if (args[0] === "up") {
-        cb(new Error("exit status 1"), "ERROR: deployment failed: InvalidTemplate — bad bicep", "");
-      } else {
-        cb(null, "should not be called", "");
+        throw runError("exit status 1", { stdout: "ERROR: deployment failed: InvalidTemplate — bad bicep" });
       }
+      return { stdout: "should not be called", stderr: "" };
     };
     const r = await deployAzureTool.handler({ projectDir: "/proj", location: "eastus" });
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain("InvalidTemplate");
-    const calls = vi.mocked(execFile).mock.calls as unknown as [string, string[]][];
+    const calls = vi.mocked(runCommand).mock.calls as unknown as [string, string[]][];
     expect(calls.some((c) => c[1][0] === "deploy")).toBe(false);
   });
 
   it("reports a friendly message when azd is not installed", async () => {
-    execImpl = (_cmd, _args, _opts, cb) =>
-      cb(Object.assign(new Error("spawn azd ENOENT"), { code: "ENOENT" }), "", "");
+    runImpl = async () => {
+      throw runError("spawn azd ENOENT", { code: "ENOENT" });
+    };
     const r = await deployAzureTool.handler({ projectDir: "/proj", location: "eastus" });
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toContain("Azure Developer CLI (`azd`) is not installed");
@@ -154,8 +188,7 @@ describe("project_deploy", () => {
   it("auto-registers the deployed origin as a SPA redirect URI on the owning app", async () => {
     stateStore.appObjectId = "obj-owning";
     stateStore.appId = "app-owning";
-    execImpl = (_cmd, _args, _opts, cb) =>
-      cb(null, "web\n  - Endpoint: https://my-spa-123.7.azurestaticapps.net/\n", "");
+    runImpl = async () => ({ stdout: "web\n  - Endpoint: https://my-spa-123.7.azurestaticapps.net/\n", stderr: "" });
 
     const r = await deployAzureTool.handler({ projectDir: "/proj", location: "eastus" });
 
@@ -172,8 +205,7 @@ describe("project_deploy", () => {
 
   it("emits manual SPA-redirect guidance when no owning app is recorded in state", async () => {
     // No appObjectId in state → cannot auto-patch.
-    execImpl = (_cmd, _args, _opts, cb) =>
-      cb(null, "web\n  - Endpoint: https://no-owner.7.azurestaticapps.net/\n", "");
+    runImpl = async () => ({ stdout: "web\n  - Endpoint: https://no-owner.7.azurestaticapps.net/\n", stderr: "" });
 
     const r = await deployAzureTool.handler({ projectDir: "/proj", location: "eastus" });
 
@@ -186,8 +218,7 @@ describe("project_deploy", () => {
     stateStore.appObjectId = "obj-owning";
     stateStore.appId = "app-owning";
     addSpaRedirectUrisMock.mockResolvedValue(undefined); // best-effort failure
-    execImpl = (_cmd, _args, _opts, cb) =>
-      cb(null, "web\n  - Endpoint: https://patch-fail.7.azurestaticapps.net/\n", "");
+    runImpl = async () => ({ stdout: "web\n  - Endpoint: https://patch-fail.7.azurestaticapps.net/\n", stderr: "" });
 
     const r = await deployAzureTool.handler({ projectDir: "/proj", location: "eastus" });
 
