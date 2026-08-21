@@ -23,7 +23,10 @@ consent to these practices.
 > (`spe-mcp-server/<version>`) attached to the Microsoft Graph and Azure Resource Manager
 > requests you already make on your own behalf; it carries no personal, tenant, or usage
 > data and is used only for aggregate traffic attribution. It is **on by default** and can be
-> suppressed with `SPE_MCP_COLLECT_TELEMETRY=false` (see below). See [PRIVACY.md](PRIVACY.md) and
+> suppressed with `SPE_MCP_COLLECT_TELEMETRY=false` (see below). Separately from anything sent
+> to Microsoft, a default-on update check contacts the public npm registry — see
+> [Third-party services contacted](#third-party-services-contacted) below. See
+> [PRIVACY.md](PRIVACY.md) and
 > [docs/DATA-FLOW.md](docs/DATA-FLOW.md) for the full data-flow description.
 
 ## Telemetry configuration
@@ -34,6 +37,40 @@ token (`spe-mcp-server/<version>`) stamped on outbound Graph/ARM requests for ag
 attribution — there is no usage-analytics channel and no personal, tenant, or per-user data. To
 opt out, set `SPE_MCP_COLLECT_TELEMETRY=false` in your environment; the product token is then
 omitted from all outbound requests.
+
+## Third-party services contacted
+
+Beyond the Microsoft services you explicitly configure (Microsoft Graph, Azure Resource Manager,
+and Microsoft Entra ID), this build contacts **one non-Microsoft service by default**.
+
+**Public npm registry — `https://registry.npmjs.org` (npm, Inc., a GitHub company).**
+
+- **Purpose.** After the server connects, it makes a single fire-and-forget request to read the
+  published version list (`dist-tags`) for `@microsoft/spe-mcp`, so it can tell you in a tool
+  result when a newer release exists.
+- **What is sent.** The request is **unauthenticated and carries no user identifier**. No
+  credentials, tokens, cookies, account, tenant, machine, session, install, or customer data are
+  sent. The only application-supplied values are the package name in the request path and a
+  static product `User-Agent` (`spe-mcp-server/<version>`), which is omitted entirely when
+  telemetry is disabled — and in that case no request is made at all.
+- **What the endpoint can observe.** As with any HTTPS request, the operator can see your
+  **source IP address**, the requested **package path**, the static **`User-Agent`**, and
+  standard **TLS/HTTP connection metadata** (TLS handshake details, timestamps, request size).
+- **Compliance boundary.** npm and GitHub are **not Microsoft 365 or Azure Online Services**.
+  This endpoint sits **outside the Microsoft 365 / Azure compliance boundary** and is **not**
+  covered by the Microsoft Product Terms, the Microsoft Products and Services Data Protection
+  Addendum (DPA), or the EU Data Boundary. Data handling is governed by the applicable
+  **GitHub/npm privacy statements**, not by your Microsoft agreements.
+- **Nothing is downloaded or installed.** The check reads version metadata only. This build
+  never downloads, installs, executes, or self-updates anything. Acting on a notice is a human
+  decision.
+- **Local retention.** The result is cached in a local file under the server data directory
+  until you delete it (`spe-mcp logout` and `spe-mcp auth --reset` remove it).
+- **How to turn it off (no request is made).** `--no-update-check`,
+  `SPE_MCP_UPDATE_CHECK=false` (preferred), `SPE_NO_UPDATE_CHECK` (legacy alias),
+  `NO_UPDATE_NOTIFIER`, `SPE_MCP_COLLECT_TELEMETRY=false`, or any recognized CI environment.
+
+See [PRIVACY.md](PRIVACY.md) and [docs/DATA-FLOW.md](docs/DATA-FLOW.md) for the full disclosure.
 
 ## Compliance responsibility
 

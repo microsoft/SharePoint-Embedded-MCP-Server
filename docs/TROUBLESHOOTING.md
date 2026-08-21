@@ -89,6 +89,44 @@ content_access_grant confirm=true
 
 Access can be disabled later with `content_access_revoke`.
 
+## Update notice: missing, stale, or registry unreachable
+
+The server checks the public npm registry at most once every 24 hours and, if a newer release
+exists, appends a one-line `Update available: …` notice to a single tool result. It never
+blocks, never retries in-band, and **never updates itself** — there is no auto-update.
+
+Common situations:
+
+- **No notice appears, but a newer version exists.** The check is skipped by design when
+  running from a source checkout, in CI (`CI`, `GITHUB_ACTIONS`, `TF_BUILD`, …), or when any
+  opt-out is set: `SPE_MCP_UPDATE_CHECK=false` (preferred), `--no-update-check`,
+  `SPE_NO_UPDATE_CHECK=1` (legacy alias), `NO_UPDATE_NOTIFIER=1`, or
+  `SPE_MCP_COLLECT_TELEMETRY=false` (the telemetry opt-out suppresses the registry request
+  entirely; it does not merely omit the `User-Agent`). The notice is also shown only once per detected version
+  per cache. Run `status_get` to see the **Update check** row, which reports the exact state
+  and skip reason. When skipped, **no network request, stderr notice, or cache write occurs**.
+- **Offline, proxied, or firewalled registry.** The lookup has a 2-second timeout and fails
+  silently; the failure is cached so the server does not retry on every call. `status_get`
+  reports `— unavailable (registry not reachable)`. This is harmless — no functionality
+  depends on it.
+- **The check never succeeds behind an egress proxy.** Node's built-in `fetch` does **not**
+  honour `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY`, so the request cannot be routed through a
+  proxy. It fails closed — nothing leaves by another route. Adding proxy support would require
+  a new runtime dependency, which this project avoids; this is an open, unresolved tradeoff.
+  In proxy-only environments, disable the check with `SPE_MCP_UPDATE_CHECK=false`.
+- **Internal/mirror registry.** Set `SPE_NPM_REGISTRY` to your mirror. It must be an `https:`
+  URL with no embedded credentials, query string, or fragment; anything else is ignored and
+  the check is disabled for that run. Redirects and cross-host responses are rejected.
+- **A one-time stderr notice appeared at startup.** Before the first registry request, the
+  server prints a single collection notice to **stderr** naming the endpoint
+  (`registry.npmjs.org`, npm, Inc./GitHub — **outside the Microsoft 365 / Azure compliance
+  boundary**) and the opt-out. It is informational; stdout is never written to. Set any opt-out
+  above to suppress it entirely.
+- **Delete the cached update state.** The cache lives at `<data dir>/update-check.json` (path
+  shown by `status_get`), contains **no identifier**, and is retained until removed. Delete it
+  with `spe-mcp logout`, `spe-mcp auth --reset`, or by removing the file manually. Deleting it
+  also forces a re-check on the next start.
+
 ## Correlation IDs
 
 When a tool fails, the client-facing error carries a short **correlation ID**,
