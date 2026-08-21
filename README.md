@@ -16,7 +16,7 @@ Prefer the command line? Run `claude mcp add spe -- npx -y @microsoft/spe-mcp st
 
 - **Get started on Microsoft Learn:** [SharePoint Embedded MCP server](https://learn.microsoft.com/sharepoint/dev/embedded/getting-started/spe-mcp-server)
 - **SharePoint Embedded product docs:** <https://learn.microsoft.com/sharepoint/dev/embedded/>
-- **In this repo:** [Available Tools](#available-tools) · [Configuration](#configuration) · [Security controls](docs/SECURITY-CONTROLS.md) · [Troubleshooting](docs/TROUBLESHOOTING.md)
+- **In this repo:** [Available Tools](#available-tools) · [Configuration](#configuration) · [Security controls](docs/SECURITY-CONTROLS.md) · [Security audit](docs/SECURITY-AUDIT.md) · [Troubleshooting](docs/TROUBLESHOOTING.md)
 
 ## Available Tools
 
@@ -546,6 +546,11 @@ comments.
 Microsoft takes security seriously. If you believe you have found a security
 vulnerability, please report it privately as described in [SECURITY.md](SECURITY.md) —
 **do not** file a public GitHub issue.
+
+This repository runs a scheduled weekly security audit (CodeQL, dependency audit, secret
+scanning, and action-pin enforcement, plus an optional model-assisted review layer). See
+[docs/SECURITY-AUDIT.md](docs/SECURITY-AUDIT.md) for how to run it, how to triage results,
+and the administrative steps required to enable the model-assisted layer.
 
 ## Important notices
 

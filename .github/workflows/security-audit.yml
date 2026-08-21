@@ -1,0 +1,693 @@
+name: Security audit
+
+# Deliberately scheduled + manual only.
+#
+# There is NO `pull_request` and NO `pull_request_target` trigger. The
+# model-assisted job reads repository source as untrusted input; running it on
+# fork-controlled refs would let a contributor choose the audited content and
+# steer the prompt. `security.yml` remains the per-PR security gate.
+on:
+  schedule:
+    # Mondays, 06:17 UTC. Offset from the hour to avoid the scheduler stampede.
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Full 40-character commit SHA to audit. Must be reachable from main. Defaults to the main branch tip.'
+        required: false
+        type: string
+      scope:
+        description: 'Which part of the tree the model-assisted pass reads.'
+        required: false
+        default: server-core
+        type: choice
+        options:
+          - server-core
+          - tools
+          - workflows
+          - full
+      model:
+        description: 'Model used for the advisory pass.'
+        required: false
+        default: claude-opus-5
+        type: choice
+        # Exactly one entry for the MVP: every model family carries a different
+        # provider/subprocessor chain, and this is the only chain in scope for
+        # the pending CELA and Privacy determinations. Adding a choice requires
+        # a fresh determination and a matching update to ALLOWED_MODELS in
+        # scripts/security-audit/lib/constants.mjs.
+        options:
+          - claude-opus-5
+      dry_run:
+        description: 'Exercise the schema and redaction path with a synthetic response. No credential is used, no inference is performed and nothing is reported.'
+        required: false
+        default: false
+        type: boolean
+
+# Deny by default. Every job re-declares only what it needs.
+permissions: {}
+
+concurrency:
+  group: security-audit-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  NODE_VERSION: '24.x'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Validates and normalises every operator-supplied input before it reaches a
+  # job that checks out code. Rejects anything that is not an allowlisted value
+  # or a 40-hex SHA reachable from main.
+  # ---------------------------------------------------------------------------
+  validate-inputs:
+    name: Validate inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      target_sha: ${{ steps.validate.outputs.target_sha }}
+      # The protected branch the target must be reachable from. Emitted as a
+      # constant by validate-target.mjs so it cannot be influenced by inputs.
+      target_ref: ${{ steps.validate.outputs.target_ref }}
+      # 'true' only when the validated target is the *current* origin/main tip.
+      # Findings are never published to code scanning, so nothing is gated on
+      # this value: private reports name the audited commit in their own summary
+      # and therefore cannot be mis-attributed. Retained as an audit signal.
+      is_main_tip: ${{ steps.validate.outputs.is_main_tip }}
+      # The validated origin/main tip. Every job that runs audit helper scripts
+      # pins its *controller* checkout to this commit, so the trusted code is
+      # always the protected-main version — never the event-selected branch (a
+      # workflow_dispatch can be started from any ref) and never the target
+      # commit (an older reachable ancestor may not contain the helpers at all).
+      controller_sha: ${{ steps.validate.outputs.controller_sha }}
+      model: ${{ steps.validate.outputs.model }}
+      scope: ${{ steps.validate.outputs.scope }}
+      dry_run: ${{ steps.validate.outputs.dry_run }}
+    steps:
+      # This job resolves `controller_sha`, so it cannot consume it. The
+      # protected branch name is used instead: actions/checkout resolves it
+      # server-side to the current main tip, which is the same commit the
+      # validator then reports as `controller_sha`. It can never resolve to the
+      # ref a workflow_dispatch was started from.
+      - name: Checkout controller scripts from main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # Inputs are passed through `env`, never interpolated into the command
+      # line, so a crafted value cannot break out into the shell.
+      #
+      # `schedule` supplies no inputs at all, so INPUT_REF is empty on the
+      # weekly run. validate-target.mjs resolves an empty ref to the current
+      # origin/main tip and then applies the *same* full-SHA and
+      # reachable-from-main checks to it — a default, never a bypass.
+      #
+      # The script also refuses to run when GITHUB_EVENT_NAME is set and
+      # GITHUB_REF is not refs/heads/main, so a dispatch from an unprotected
+      # branch is rejected before any input is parsed. Both variables are
+      # default runner environment variables, so no `env:` entry is needed.
+      # This is defence in depth: the substantive control is that every
+      # controller checkout below pins to `controller_sha`.
+      - name: Validate target ref and options
+        id: validate
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+          INPUT_SCOPE: ${{ inputs.scope }}
+          INPUT_MODEL: ${{ inputs.model }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          node scripts/security-audit/validate-target.mjs \
+            --ref "${INPUT_REF:-}" \
+            --scope "${INPUT_SCOPE:-server-core}" \
+            --model "${INPUT_MODEL:-claude-opus-5}" \
+            --dry-run "${INPUT_DRY_RUN:-false}"
+
+  # ---------------------------------------------------------------------------
+  # Deterministic check 1: dependency audit.
+  #
+  # `npm audit --json` embeds the dependency graph and every advisory URL names
+  # a vulnerable package and version range, so neither the raw report nor the
+  # advisory list is ever published. The sanitizer reduces the report to
+  # severity counts, which are consumed only by the fail gate in this job.
+  # Nothing is echoed, summarised or uploaded: a maintainer reproduces the
+  # finding locally (see docs/SECURITY-AUDIT.md).
+  # ---------------------------------------------------------------------------
+  dependency-audit:
+    name: Dependency audit
+    needs: validate-inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      # Controller checkout: trusted helper scripts pinned to `controller_sha`,
+      # the commit validate-inputs resolved for the protected default branch —
+      # never the event-selected ref and never the audited commit. Must come
+      # first — actions/checkout runs `git clean -ffdx` in its destination, so a
+      # root checkout performed after a `target/` checkout would delete it.
+      - name: Checkout controller scripts from main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate-inputs.outputs.controller_sha }}
+          persist-credentials: false
+
+      - name: Checkout target commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate-inputs.outputs.target_sha }}
+          path: target
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # `--ignore-scripts`: the audit path must never execute repository or
+      # dependency lifecycle scripts from the commit under audit.
+      - name: Install dependencies without lifecycle scripts
+        working-directory: target
+        run: npm ci --ignore-scripts
+
+      # The report is written to the controller-owned workspace root so the
+      # sanitizer never reads from, or writes into, the audited tree. `--json`
+      # output is redirected to a file and never to the console: the raw report
+      # names vulnerable packages and versions. The exit status is captured by
+      # `continue-on-error` and re-raised by the fail gate below.
+      - name: Run npm audit
+        id: audit
+        working-directory: target
+        run: |
+          set -uo pipefail
+          mkdir -p "${GITHUB_WORKSPACE}/.security-audit"
+          npm audit --audit-level=high --json > "${GITHUB_WORKSPACE}/.security-audit/npm-audit.json"
+        continue-on-error: true
+
+      # The sanitized summary holds severity counts only. It is consumed by the
+      # fail gate and is neither echoed, written to a job summary nor uploaded.
+      - name: Reduce report to sanitized counts
+        run: |
+          set -euo pipefail
+          node scripts/security-audit/sanitize-findings.mjs \
+            --kind npm-audit \
+            --in .security-audit/npm-audit.json \
+            --out .security-audit/npm-audit-summary.json
+          rm -f .security-audit/npm-audit.json
+
+      # Generic failure only. Package names, versions, advisory identifiers and
+      # counts stay out of the log; maintainers reproduce locally.
+      - name: Fail if npm audit reported high or critical advisories
+        if: steps.audit.outcome == 'failure'
+        run: |
+          echo "Security audit: FAIL — details were reported privately to maintainers." >&2
+          exit 1
+
+  # ---------------------------------------------------------------------------
+  # Deterministic check 2: secret scanning that actually runs.
+  #
+  # Replaces the previous licence-gated, continue-on-error step which could
+  # report green without scanning. The Gitleaks CLI is MIT licensed and needs no
+  # licence key; only the marketplace action does. The binary is pinned by
+  # version and verified by SHA-256 before execution.
+  # ---------------------------------------------------------------------------
+  secret-scan:
+    name: Secret scan (gitleaks)
+    needs: validate-inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      GITLEAKS_VERSION: '8.30.1'
+      # Provenance: taken from the upstream release artifact
+      # gitleaks_8.30.1_checksums.txt published at
+      # https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_checksums.txt
+      # (goreleaser-generated, published alongside the binaries). Re-verify this
+      # value against that file whenever GITLEAKS_VERSION is bumped.
+      GITLEAKS_SHA256: '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb'
+    steps:
+      # Controller checkout first (see the dependency-audit job for the
+      # `git clean -ffdx` ordering constraint).
+      - name: Checkout controller scripts from main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate-inputs.outputs.controller_sha }}
+          persist-credentials: false
+
+      - name: Checkout target commit with full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate-inputs.outputs.target_sha }}
+          path: target
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Download and verify gitleaks
+        run: |
+          set -euo pipefail
+          asset="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${asset}"
+          curl --fail --silent --show-error --location --retry 3 --output "$asset" "$url"
+          echo "${GITLEAKS_SHA256}  ${asset}" | sha256sum --check --strict
+          tar -xzf "$asset" gitleaks
+          chmod +x gitleaks
+          ./gitleaks version
+
+      # `--exit-code 2` distinguishes "leaks found" from an operational failure,
+      # so a crashed scanner is never mistaken for a clean scan. The exit code is
+      # re-raised as the step status; it is not swallowed by a trailing command.
+      # The scan target is the separate `target/` checkout; the binary and the
+      # report both live in the controller-owned workspace root.
+      # Console output is redirected and discarded unread: gitleaks prints one
+      # block per finding carrying file path, line, commit, author and e-mail.
+      # `--redact` masks only the secret value, not that metadata, and Actions
+      # logs are world-readable on a public repository.
+      - name: Scan repository history
+        id: scan
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          mkdir -p .security-audit
+          ./gitleaks git target \
+            --report-format json \
+            --report-path .security-audit/gitleaks.json \
+            --redact \
+            --exit-code 2 \
+            --no-banner \
+            > .security-audit/gitleaks-console.log 2>&1
+          status=$?
+          rm -f .security-audit/gitleaks-console.log
+          exit "${status}"
+
+      # The raw report contains the match context, commit metadata, rule
+      # identifiers and file paths. Everything that locates a finding is
+      # dropped: the sanitized summary carries counts only, is consumed solely
+      # by the fail gate below, and the raw report is deleted immediately.
+      # Nothing here is echoed, written to a job summary or uploaded. Actions
+      # logs and artifacts on a public repository are world-readable, so the
+      # scanner's console output is discarded in the scan step rather than used
+      # for triage. Triage is a restricted local `gitleaks git .` run by a
+      # maintainer on a workstation checked out at the target SHA this run
+      # audited; rule identifiers and paths stay on that workstation until the
+      # credential has been rotated. See docs/SECURITY-AUDIT.md.
+      - name: Reduce report to sanitized counts
+        run: |
+          set -euo pipefail
+          [ -f .security-audit/gitleaks.json ] || echo '[]' > .security-audit/gitleaks.json
+          node scripts/security-audit/sanitize-findings.mjs \
+            --kind gitleaks \
+            --in .security-audit/gitleaks.json \
+            --out .security-audit/gitleaks-summary.json
+          rm -f .security-audit/gitleaks.json
+
+      # Generic failure only. Counts, rules and paths stay out of the log.
+      - name: Fail if secrets were detected
+        if: steps.scan.outcome == 'failure'
+        run: |
+          echo "Security audit: FAIL — details were reported privately to maintainers." >&2
+          exit 1
+
+  # ---------------------------------------------------------------------------
+  # Deterministic check 3: every action in every workflow is pinned to a
+  # 40-character commit SHA.
+  # ---------------------------------------------------------------------------
+  action-pins:
+    name: Action pinning
+    needs: validate-inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      # Controller checkout first (see the dependency-audit job for the
+      # `git clean -ffdx` ordering constraint).
+      - name: Checkout controller scripts from main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate-inputs.outputs.controller_sha }}
+          persist-credentials: false
+
+      - name: Checkout target commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate-inputs.outputs.target_sha }}
+          path: target
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # The checker itself comes from the controller checkout; only the scanned
+      # workflow and composite-action trees come from the audited commit.
+      - name: Verify action pinning
+        run: |
+          node scripts/security-audit/check-action-pins.mjs \
+            --dir target/.github/workflows \
+            --root target
+
+  # ---------------------------------------------------------------------------
+  # Model-assisted advisory pass (credentialed).
+  #
+  # Gated on TWO repository variables: `SECURITY_AUDIT_AI_ENABLED` enables the
+  # model layer, and `SECURITY_AUDIT_PRIVATE_REPORTING_ENABLED` asserts that
+  # GitHub Private Vulnerability Reporting is switched on for this repository
+  # and that the protected `security-audit-private-report` environment holds a
+  # working advisory credential. Both must be `true`.
+  #
+  # The `secrets` context is not readable from a job-level `if`, but `vars` is —
+  # and gating on the variables means the `security-audit-private-report`
+  # environment is never referenced until an administrator has created and
+  # protected it. Referencing an environment that does not exist would cause
+  # GitHub to create it implicitly and unprotected, which is why the guard is
+  # required.
+  #
+  # Disclosure policy: model findings are NEVER published. This job uploads no
+  # artifact, writes no job summary, emits no SARIF, opens no issue and holds no
+  # `security-events` permission. The single egress for a validated finding is
+  # `POST /repos/{owner}/{repo}/security-advisories/reports` — GitHub Private
+  # Vulnerability Reporting — which is visible to repository maintainers only.
+  # Submission happens inside this job, immediately after the tool-less model
+  # process has exited and the response has been validated and redacted, because
+  # findings must not cross a job boundary through artifacts or job outputs.
+  #
+  # Until the variables and the environment exist this job is skipped and the
+  # summary reports `AI NOT_CONFIGURED`. It never reports a pass.
+  # ---------------------------------------------------------------------------
+  model-audit:
+    name: Model-assisted review
+    # `secret-scan` is a hard predecessor, not an ordering preference: it is the
+    # gate that must pass before any repository source leaves the runner. If the
+    # tree still contains a live credential, sending the corpus to the model
+    # provider would export that credential to a third party. A failed or
+    # cancelled secret scan therefore skips this job entirely.
+    needs:
+      - validate-inputs
+      - secret-scan
+    if: ${{ vars.SECURITY_AUDIT_AI_ENABLED == 'true' && vars.SECURITY_AUDIT_PRIVATE_REPORTING_ENABLED == 'true' && needs.validate-inputs.outputs.dry_run != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: security-audit-private-report
+    # No `security-events: write`: model findings never reach code scanning.
+    # No `issues`, `pull-requests` or `contents: write`: there is no public
+    # disclosure surface and no fallback channel of any kind.
+    permissions:
+      contents: read
+    steps:
+      # Controller checkout first (see the dependency-audit job for the
+      # `git clean -ffdx` ordering constraint).
+      - name: Checkout controller scripts from main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate-inputs.outputs.controller_sha }}
+          persist-credentials: false
+
+      - name: Checkout target commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate-inputs.outputs.target_sha }}
+          path: target
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # Fail closed: an environment that exists but holds no credential must not
+      # silently degrade into a green run. Both credentials are checked here,
+      # before any repository source is assembled, because a run that could
+      # produce findings it cannot report privately must not start at all.
+      # Presence only is tested; neither value is printed.
+      - name: Require credentials
+        env:
+          COPILOT_PAT: ${{ secrets.COPILOT_PAT }}
+          SECURITY_ADVISORY_TOKEN: ${{ secrets.SECURITY_ADVISORY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${COPILOT_PAT}" ]; then
+            echo "COPILOT_PAT is not set in the security-audit-private-report environment" >&2
+            exit 1
+          fi
+          if [ -z "${SECURITY_ADVISORY_TOKEN}" ]; then
+            echo "SECURITY_ADVISORY_TOKEN is not set in the security-audit-private-report environment" >&2
+            exit 1
+          fi
+
+      # Runner debug logging (`ACTIONS_STEP_DEBUG` / `ACTIONS_RUNNER_DEBUG`, or
+      # the "Enable debug logging" re-run toggle that sets `runner.debug`) makes
+      # the runner echo step inputs, environment and command output verbatim.
+      # That would flush the assembled corpus, the prompt and the raw model
+      # response into the Actions log, which is world-readable on a public
+      # repository. There is no way to opt a single job out of that behaviour,
+      # so the job refuses to run instead. This guard sits before corpus
+      # collection so nothing is even assembled under debug logging, and it
+      # tests the flags rather than printing them.
+      - name: Refuse to run under debug logging
+        env:
+          STEP_DEBUG: ${{ secrets.ACTIONS_STEP_DEBUG }}
+          RUNNER_DEBUG_SECRET: ${{ secrets.ACTIONS_RUNNER_DEBUG }}
+          RUNNER_DEBUG_CONTEXT: ${{ runner.debug }}
+        run: |
+          set -euo pipefail
+          for flag in "${STEP_DEBUG:-}" "${RUNNER_DEBUG_SECRET:-}" "${RUNNER_DEBUG_CONTEXT:-}" "${RUNNER_DEBUG:-}"; do
+            case "$(printf '%s' "${flag}" | tr '[:upper:]' '[:lower:]')" in
+              true|1|yes|on)
+                echo "::error::Debug logging is enabled; refusing to send repository source to the model." >&2
+                exit 1
+                ;;
+            esac
+          done
+          echo "Debug logging is off; continuing."
+
+      # Collects an allowlisted, size-capped corpus. Every file body is wrapped
+      # in per-run, nonce-bearing untrusted-content delimiters so instructions
+      # embedded in repository source are presented as data, not as directives.
+      # Any occurrence of the static sentinel inside a file body is neutralised,
+      # and collection aborts outright if a body ever contains the run nonce.
+      - name: Collect corpus
+        env:
+          AUDIT_SCOPE: ${{ needs.validate-inputs.outputs.scope }}
+        run: |
+          set -euo pipefail
+          node scripts/security-audit/collect-corpus.mjs \
+            --scope "${AUDIT_SCOPE}" \
+            --repo-root target \
+            --out .security-audit/model
+
+      # actions/ai-inference concatenates the system prompt and the user prompt
+      # into a single Copilot CLI invocation, so `system-prompt-file` is NOT a
+      # separate privileged channel. build-prompt.mjs therefore renders the
+      # instructions twice: once as a preamble (system.txt) and once as a
+      # trusted suffix appended *after* the corpus (inside prompt.txt), so the
+      # immutable output contract is the last thing the model reads. It also
+      # injects the run nonce and the schema vocabulary from lib/constants.mjs,
+      # making prompt/validator drift structurally impossible.
+      #
+      # None of this is a security boundary on its own: validate-response.mjs
+      # is the enforceable boundary. See docs/SECURITY-AUDIT.md.
+      - name: Build prompt
+        run: |
+          set -euo pipefail
+          node scripts/security-audit/build-prompt.mjs \
+            --corpus .security-audit/model \
+            --out .security-audit/model
+
+      # actions/ai-inference v3 shells out to the GitHub Copilot CLI, which must
+      # already be present on the runner. `npm install -g <pkg>@<version>` pins
+      # only the top-level package: transitive versions are resolved at install
+      # time, so the bytes executed here would be decided by the registry rather
+      # than by this repository. The CLI is therefore installed from the
+      # committed manifest + lockfile in tools/copilot-cli, which comes from the
+      # trusted controller checkout at the workspace root, never from target/.
+      # `--ignore-scripts` is safe: @github/copilot declares no `scripts` field,
+      # so nothing legitimate is skipped and install-time code cannot run.
+      # The lockfile is an activation prerequisite (see tools/copilot-cli/README.md);
+      # if it is missing this step fails closed rather than falling back to a
+      # floating install.
+      - name: Install Copilot CLI
+        run: |
+          set -euo pipefail
+          if [ ! -f tools/copilot-cli/package-lock.json ]; then
+            echo "::error::tools/copilot-cli/package-lock.json is missing. Generate it on a host with direct registry.npmjs.org access (see tools/copilot-cli/README.md) before enabling the model-assisted audit."
+            exit 1
+          fi
+          ( cd tools/copilot-cli && npm ci --ignore-scripts )
+          test -x tools/copilot-cli/node_modules/.bin/copilot
+
+      # `copilot-allow-tools` is deliberately unset: the action passes no
+      # `--allow-tool` flags when it is empty, so the model runs tool-less with
+      # no MCP servers, no shell and no write access.
+      - name: Run model-assisted review
+        id: inference
+        uses: actions/ai-inference@2c43c91ae16266ca159d311430343c67a5ffa222 # v3
+        with:
+          model: ${{ needs.validate-inputs.outputs.model }}
+          system-prompt-file: .security-audit/model/system.txt
+          prompt-file: .security-audit/model/prompt.txt
+          copilot-cli-path: tools/copilot-cli/node_modules/.bin/copilot
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_PAT }}
+
+      # The response is read from a file by path. It is never interpolated into
+      # a `run:` block, because `${{ }}` substitution happens before the shell
+      # sees the script and would allow command injection from model output.
+      - name: Validate and redact response
+        env:
+          RESPONSE_FILE: ${{ steps.inference.outputs.response-file }}
+        run: |
+          set -euo pipefail
+          node scripts/security-audit/validate-response.mjs \
+            --response "${RESPONSE_FILE}" \
+            --manifest .security-audit/model/corpus-manifest.json \
+            --out .security-audit/model/report.json
+
+      # The single egress for a validated model finding: GitHub Private
+      # Vulnerability Reporting. One aggregate report per audited commit, whose
+      # summary carries the first twelve hex characters of the target SHA so
+      # historical audits are self-attributing and cannot be confused with an
+      # audit of the current tip. Reports are visible to repository maintainers
+      # only; there is no artifact, no SARIF, no job summary, no issue and no
+      # external tracker in this path, and no fallback if it fails.
+      #
+      # The advisory credential is scoped to THIS STEP ONLY. It is deliberately
+      # absent from the inference step above, so the model provider never sees a
+      # token that can write to the repository's security advisories.
+      #
+      # The script prints exactly one line — `report: submitted|existing|none|
+      # failed` — and never an advisory identifier, URL, status code or body.
+      - name: Submit private vulnerability report
+        env:
+          SECURITY_ADVISORY_TOKEN: ${{ secrets.SECURITY_ADVISORY_TOKEN }}
+          TARGET_SHA: ${{ needs.validate-inputs.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          node scripts/security-audit/submit-report.mjs \
+            --report .security-audit/model/report.json \
+            --sha "${TARGET_SHA}" \
+            --repo "${GITHUB_REPOSITORY}"
+
+  # ---------------------------------------------------------------------------
+  # Credential-free rehearsal of the untrusted-output path.
+  #
+  # Exercises corpus collection, schema validation, rejection and redaction
+  # against a synthetic response. No environment, no secret, no network egress,
+  # and no publication of any kind — a synthetic result must never be mistaken
+  # for a real one, and the dry run has no private reporting path either.
+  # ---------------------------------------------------------------------------
+  model-audit-dry-run:
+    name: Model-assisted review (dry run)
+    needs: validate-inputs
+    if: ${{ needs.validate-inputs.outputs.dry_run == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      # Controller checkout first (see the dependency-audit job for the
+      # `git clean -ffdx` ordering constraint).
+      - name: Checkout controller scripts from main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate-inputs.outputs.controller_sha }}
+          persist-credentials: false
+
+      - name: Checkout target commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate-inputs.outputs.target_sha }}
+          path: target
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Run synthetic dry run
+        env:
+          AUDIT_SCOPE: ${{ needs.validate-inputs.outputs.scope }}
+        run: |
+          set -euo pipefail
+          node scripts/security-audit/dry-run.mjs \
+            --scope "${AUDIT_SCOPE}" \
+            --repo-root target
+
+      - name: Run script test suite
+        run: npm run security:audit:test
+
+  # ---------------------------------------------------------------------------
+  # Reports the outcome. Deterministic failures fail the run; the model layer is
+  # advisory and its absence is stated explicitly rather than implied to pass.
+  #
+  # The rendered summary is deliberately generic — `Security audit: PASS` or
+  # `Security audit: FAIL — details were reported privately to maintainers.` —
+  # and names no scanner, path, rule, count, advisory or commit.
+  # ---------------------------------------------------------------------------
+  summary:
+    name: Summary
+    needs:
+      - validate-inputs
+      - dependency-audit
+      - secret-scan
+      - action-pins
+      - model-audit
+      - model-audit-dry-run
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      # This job runs with `if: always()`, so validate-inputs may have failed and
+      # `needs.validate-inputs.outputs.controller_sha` may be empty. An empty
+      # `ref` makes actions/checkout fall back to the event-selected ref, which
+      # is exactly the input this workflow refuses to trust, so the protected
+      # branch name is used directly: it always resolves to the main tip and can
+      # never resolve to an attacker-selected branch.
+      - name: Checkout controller scripts from main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Render summary
+        env:
+          DEPENDENCY_RESULT: ${{ needs.dependency-audit.result }}
+          SECRET_RESULT: ${{ needs.secret-scan.result }}
+          PINS_RESULT: ${{ needs.action-pins.result }}
+          MODEL_RESULT: ${{ needs.model-audit.result }}
+          DRY_RUN: ${{ needs.validate-inputs.outputs.dry_run }}
+        run: |
+          set -euo pipefail
+          node scripts/security-audit/summarize.mjs \
+            --dependency-audit "${DEPENDENCY_RESULT}" \
+            --secret-scan "${SECRET_RESULT}" \
+            --action-pins "${PINS_RESULT}" \
+            --model "${MODEL_RESULT}" \
+            --dry-run "${DRY_RUN:-false}"

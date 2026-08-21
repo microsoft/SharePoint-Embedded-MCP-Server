@@ -1,0 +1,10 @@
+{
+  "name": "@internal/security-audit-copilot-cli",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pinned manifest for the GitHub Copilot CLI used by .github/workflows/security-audit.yml. Not published; not part of the npm tarball.",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@github/copilot": "1.0.80-1"
+  }
+}

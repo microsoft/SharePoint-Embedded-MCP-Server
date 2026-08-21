@@ -1,2 +1,13 @@
-# <!-- The @microsoft/sharepoint-embedded team handle must be confirmed by the repo owner. -->
-* @microsoft/sharepoint-embedded
+# Code owners for microsoft/SharePoint-Embedded-MCP-Server.
+#
+# Entries must resolve to accounts or teams with write access to this
+# repository, otherwise GitHub silently drops the rule and no review is ever
+# requested. The previous `@microsoft/sharepoint-embedded` team handle did not
+# resolve, so CODEOWNERS was effectively inert; these are direct collaborators.
+* @dluces @marcwindle @pemtaira-msft
+
+# Security-sensitive surfaces: workflows, audit tooling and control docs.
+/.github/ @dluces @marcwindle @pemtaira-msft
+/scripts/security-audit/ @dluces @marcwindle @pemtaira-msft
+/docs/SECURITY-CONTROLS.md @dluces @marcwindle @pemtaira-msft
+/docs/SECURITY-AUDIT.md @dluces @marcwindle @pemtaira-msft

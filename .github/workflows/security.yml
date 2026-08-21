@@ -14,32 +14,146 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.x
           cache: npm
-      - run: npm ci
-      - run: npm audit --audit-level=high
+      # `--ignore-scripts` keeps dependency lifecycle scripts (install/postinstall)
+      # from executing on a runner whose only job is to read the lockfile. `npm
+      # audit` resolves advisories from package-lock.json and does not need a
+      # built dependency tree, so nothing here depends on those scripts running.
+      - run: npm ci --ignore-scripts
+      # `npm audit` prints advisory titles, severities, package names, versions
+      # and GHSA advisory URLs. On a public repository the Actions log is
+      # world-readable, so that output would publish a machine-readable list of
+      # exploitable dependency paths before a fix exists. The JSON report is
+      # written to a file, reduced to counts by the sanitizer, and the raw report
+      # is deleted; the console never sees it.
+      - name: Run npm audit
+        id: audit
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p .security-audit
+          npm audit --audit-level=high --json > .security-audit/npm-audit.json 2>/dev/null
+          exit $?
 
+      - name: Reduce report to sanitized counts
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -f .security-audit/npm-audit.json ] || echo '{}' > .security-audit/npm-audit.json
+          node scripts/security-audit/sanitize-findings.mjs \
+            --kind npm-audit \
+            --in .security-audit/npm-audit.json \
+            --out .security-audit/npm-audit-summary.json
+          rm -f .security-audit/npm-audit.json
+
+      # Generic by design: no package, version, advisory identifier or URL. A
+      # maintainer reproduces locally with `npm audit --audit-level=high`.
+      - name: Fail if vulnerable dependencies were detected
+        if: steps.audit.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "Security audit: FAIL — details were reported privately to maintainers." >&2
+          exit 1
+
+  # Secret scanning that actually scans.
+  #
+  # The previous implementation used gitleaks/gitleaks-action gated on a
+  # GITLEAKS_LICENSE secret that was never provisioned, and additionally set
+  # continue-on-error, so the job could only ever report green without scanning
+  # anything. The Gitleaks CLI itself is MIT licensed and needs no licence key —
+  # only the marketplace action does — so the CLI is used directly, pinned by
+  # version and verified by SHA-256 before it is executed.
   secrets:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
-      GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+      GITLEAKS_VERSION: '8.30.1'
+      # Provenance: taken from the upstream release artifact
+      # gitleaks_8.30.1_checksums.txt published at
+      # https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_checksums.txt
+      # (goreleaser-generated, published alongside the binaries). Re-verify this
+      # value against that file whenever GITLEAKS_VERSION is bumped.
+      GITLEAKS_SHA256: '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb'
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      # gitleaks-action@v2 requires a GITLEAKS_LICENSE when run under a GitHub
-      # organization (free only for personal accounts). Until the owner
-      # provisions the secret, this step is skipped so the workflow stays green;
-      # it is also continue-on-error as a belt-and-suspenders. Owner action:
-      # add GITLEAKS_LICENSE (or switch to GitHub Advanced Security secret
-      # scanning, which is available org-wide) — see SECURITY.md.
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+
+      - name: Download and verify gitleaks
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${asset}"
+          curl --fail --silent --show-error --location --retry 3 --output "$asset" "$url"
+          echo "${GITLEAKS_SHA256}  ${asset}" | sha256sum --check --strict
+          tar -xzf "$asset" gitleaks
+          chmod +x gitleaks
+          ./gitleaks version
+
+      # `--exit-code 2` separates "leaks found" from an operational failure, so a
+      # crashed scanner can never be mistaken for a clean scan. The exit status is
+      # re-raised explicitly; it must not be swallowed by a trailing command.
+      # Console output is redirected and discarded unread: gitleaks prints one
+      # block per finding carrying file path, line, commit, author and e-mail.
+      # `--redact` masks only the secret value, not that metadata, and Actions
+      # logs are world-readable on a public repository.
       - name: Scan for secrets (gitleaks)
-        if: ${{ env.GITLEAKS_LICENSE != '' }}
+        id: scan
         continue-on-error: true
-        uses: gitleaks/gitleaks-action@v3
-        env:
-          GITLEAKS_ENABLE_COMMENTS: "false"
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p .security-audit
+          ./gitleaks git . \
+            --report-format json \
+            --report-path .security-audit/gitleaks.json \
+            --redact \
+            --exit-code 2 \
+            --no-banner \
+            > .security-audit/gitleaks-console.log 2>&1
+          status=$?
+          rm -f .security-audit/gitleaks-console.log
+          exit "${status}"
+
+      # The raw report carries match context and commit metadata, so it is reduced
+      # to counts only — no rule identifiers, no file paths — and the original is
+      # deleted. See scripts/security-audit/sanitize-findings.mjs.
+      #
+      # The counts are NOT written to the job summary: a job summary on a public
+      # repository is world-readable, and a non-zero count is itself a public
+      # signal that an unfixed secret exists in this history.
+      - name: Reduce report to sanitized counts
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -f .security-audit/gitleaks.json ] || echo '[]' > .security-audit/gitleaks.json
+          node scripts/security-audit/sanitize-findings.mjs \
+            --kind gitleaks \
+            --in .security-audit/gitleaks.json \
+            --out .security-audit/gitleaks-summary.json
+          rm -f .security-audit/gitleaks.json
+
+      # Generic by design. A maintainer reproduces locally with
+      # `gitleaks git . --redact --no-banner`; rotate any exposed credential
+      # before removing it from history.
+      - name: Fail if secrets were detected
+        if: steps.scan.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "Security audit: FAIL — details were reported privately to maintainers." >&2
+          exit 1

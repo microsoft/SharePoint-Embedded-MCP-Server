@@ -49,6 +49,9 @@
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "notices": "node scripts/generate-third-party-notices.mjs",
+    "security:audit:dry-run": "node scripts/security-audit/dry-run.mjs",
+    "security:audit:test": "node --test \"scripts/security-audit/tests/*.test.mjs\"",
+    "security:audit:pins": "node scripts/security-audit/check-action-pins.mjs",
     "prepublishOnly": "npm run build",
     "ci": "npm run typecheck && npm run build && npm run test"
   },

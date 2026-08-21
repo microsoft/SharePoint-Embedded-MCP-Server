@@ -1,0 +1,10 @@
+{
+  "scope": "fixture",
+  "fileCount": 2,
+  "totalBytes": 2048,
+  "files": {
+    "src/example.ts": { "bytes": 1024, "lines": 120 },
+    "src/tools/example-tool.ts": { "bytes": 1024, "lines": 80 }
+  },
+  "skipped": []
+}
