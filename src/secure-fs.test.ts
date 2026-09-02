@@ -14,7 +14,13 @@ import {
 } from "node:fs";
 import { tmpdir, platform } from "node:os";
 import { join } from "node:path";
-import { ensureSecureDir, writeSecureFile, readSecureFile } from "./secure-fs.js";
+import {
+  ensureSecureDir,
+  writeSecureFile,
+  readSecureFile,
+  tryCreateSecureFileExclusive,
+  writeSecureFileAtomic,
+} from "./secure-fs.js";
 
 // POSIX permission bits under test, named for readability (see secure-fs.ts).
 //   0o700 = rwx------ (owner-only, directories)   0o600 = rw------- (owner-only, files)
@@ -58,6 +64,21 @@ describe("secure-fs (SEC-003 owner-only credential/state files)", () => {
     writeSecureFile(file, "first");
     expect(() => writeSecureFile(file, "second")).not.toThrow();
     expect(existsSync(file)).toBe(true);
+  });
+
+  it("creates an exclusive file once without overwriting it (cross-platform)", () => {
+    const file = join(dir, "refresh.lock");
+    expect(tryCreateSecureFileExclusive(file, "first")).toBe(true);
+    expect(tryCreateSecureFileExclusive(file, "second")).toBe(false);
+    expect(readFileSync(file, "utf-8")).toBe("first");
+  });
+
+  it("atomically creates and replaces a state file (cross-platform)", () => {
+    const file = join(dir, "update-check.json");
+    writeSecureFileAtomic(file, "first");
+    expect(readFileSync(file, "utf-8")).toBe("first");
+    writeSecureFileAtomic(file, "second");
+    expect(readFileSync(file, "utf-8")).toBe("second");
   });
 
   it.runIf(isPosix)("writes the file with owner-only (0o600) permissions", () => {
