@@ -1,0 +1,10 @@
+{
+  "name": "@internal/security-audit-copilot-cli",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Proposed GitHub Copilot CLI manifest for the hard-disabled security-audit scaffold. Not approved, published, or part of the npm tarball.",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@github/copilot": "1.0.80-1"
+  }
+}

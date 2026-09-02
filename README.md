@@ -16,7 +16,7 @@ Prefer the command line? Run `claude mcp add spe -- npx -y @microsoft/spe-mcp st
 
 - **Get started on Microsoft Learn:** [SharePoint Embedded MCP server](https://learn.microsoft.com/sharepoint/dev/embedded/getting-started/spe-mcp-server)
 - **SharePoint Embedded product docs:** <https://learn.microsoft.com/sharepoint/dev/embedded/>
-- **In this repo:** [Available Tools](#available-tools) · [Configuration](#configuration) · [Security controls](docs/SECURITY-CONTROLS.md) · [Troubleshooting](docs/TROUBLESHOOTING.md)
+- **In this repo:** [Available Tools](#available-tools) · [Configuration](#configuration) · [Security controls](docs/SECURITY-CONTROLS.md) · [Security audit](docs/SECURITY-AUDIT.md) · [Troubleshooting](docs/TROUBLESHOOTING.md)
 
 ## Available Tools
 
@@ -546,6 +546,15 @@ comments.
 Microsoft takes security seriously. If you believe you have found a security
 vulnerability, please report it privately as described in [SECURITY.md](SECURITY.md) —
 **do not** file a public GitHub issue.
+
+This repository includes security-audit workflow scaffolding and credential-free local checks.
+The complete public weekly workflow is hard-disabled and is **not activation-ready**: every job
+has a literal `false` guard and one generic public display name, and there is no result summary.
+Its proposed model runtime package is not yet approved or reproducible from the public npm registry,
+so no lockfile is committed. Repository variables, secrets, and payloads cannot enable it. There is
+no claim that a production weekly audit is active. See
+[docs/SECURITY-AUDIT.md](docs/SECURITY-AUDIT.md) for safe local validation and the prerequisites
+that remain open.
 
 ## Important notices
 
