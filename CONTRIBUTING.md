@@ -38,6 +38,52 @@ For more information see the
 [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or
 comments.
 
+## Optional model-assisted security analysis
+
+**This feature is disabled by default.** The complete weekly workflow is hard-disabled in code and
+is not activation-ready. It is documented here so contributors know what a future, separately
+reviewed version could do.
+
+The repository contains security-audit workflow scaffolding with a declared weekly schedule; there
+is no claim that a production schedule is active. No workflow job can run.
+A future approved implementation may send a bounded selection of **already-public,
+git-tracked source files from `main`** to **GitHub Copilot**, which relays them to a
+**third-party model provider** for advisory security analysis.
+
+What this stage does and does not do:
+
+- **Only public, tracked source.** The corpus is limited to an allowlist of source file extensions
+  from committed files on `main`, under a hard file-count and byte cap. Untracked files, local
+  working-tree changes, build output and dependencies are never included.
+- **No separate repository or activity data.** The corpus does not query issues, pull requests,
+  discussions, commit messages, author records, CI logs or the runner environment. It does include
+  each selected file's repository-relative path, line count and public source content, which may
+  itself contain names, identifiers, credential-shaped strings or environment-variable references.
+- **No tools, no writes.** The model runs without tools, without MCP servers, without shell access
+  and without any write permission. It cannot open issues, comment, push, or change settings.
+- **Advisory and redacted.** Output is schema-validated and redacted before use, is advisory only,
+  and is never a required check for merging a pull request.
+- **Never published or signaled.** Validated findings have exactly one designed egress:
+  **GitHub Private Vulnerability Reporting**, where they are visible to repository maintainers
+  alone. Finding existence, scanner identity, counts, paths, private-submission outcome, and exploit
+  detail never appear in or influence public job/step names, conclusions, logs, artifacts, summaries,
+  pull request annotations, code scanning / SARIF, public issues, Azure DevOps, or IcM. There is no
+  fallback surface.
+- **Never triggered by contributions.** The workflow has no `pull_request` or
+  `pull_request_target` trigger. Opening or updating a pull request never sends anything anywhere.
+
+The complete weekly workflow is intentionally inactive. Every job has a literal `false` activation
+guard and the same generic public display name; it produces no audit summary. Repository variables,
+secrets, or dispatch payloads cannot activate it. A future activation requires a reviewed code
+change plus Private Vulnerability Reporting, a private operational-failure channel, public outcome
+invariance, a protected environment, managed credentials, and all legal/privacy approvals.
+
+The full design, boundaries and blocked prerequisites are documented in
+[docs/SECURITY-AUDIT.md](docs/SECURITY-AUDIT.md).
+
+If you have concerns about this feature as it relates to your contribution, please open a GitHub
+discussion or a non-security issue and a maintainer will discuss it with you.
+
 ## Reporting security issues
 
 Please report security issues privately as described in [SECURITY.md](SECURITY.md). Do

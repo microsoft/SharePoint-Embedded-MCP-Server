@@ -15,3 +15,14 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: ci
+
+  # Pinned GitHub Copilot CLI used by the model-assisted security audit job.
+  # Kept out of the root manifest so it is never installed for normal builds
+  # and never published (root package.json "files" excludes tools/).
+  - package-ecosystem: npm
+    directory: /tools/copilot-cli
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps

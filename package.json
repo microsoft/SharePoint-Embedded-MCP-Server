@@ -49,6 +49,10 @@
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "notices": "node scripts/generate-third-party-notices.mjs",
+    "security:audit:dry-run": "node scripts/security-audit/dry-run.mjs",
+    "security:audit:ci": "node scripts/security-audit/ci-contracts.mjs",
+    "security:audit:test": "node --test \"scripts/security-audit/tests/*.test.mjs\"",
+    "security:audit:pins": "node scripts/security-audit/check-action-pins.mjs",
     "prepublishOnly": "npm run build",
     "ci": "npm run typecheck && npm run build && npm run test"
   },
@@ -72,7 +76,8 @@
     "@vitest/coverage-v8": "^4.1.10",
     "eslint": "^10.7.0",
     "typescript": "^5.3.0",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "yaml": "^2.9.0"
   },
   "engines": {
     "node": "^22.0.0 || ^24.0.0 || ^26.0.0"

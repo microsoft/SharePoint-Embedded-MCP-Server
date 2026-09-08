@@ -1,7 +1,14 @@
 name: Security
 
 on:
-  pull_request:
+  # This event loads the workflow definition from the protected base branch.
+  # The pull-request checkout below is data-only: no helper or project script is
+  # ever executed from it.
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
   push:
     branches:
       - main
@@ -14,32 +21,201 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - name: Checkout controller scripts from protected main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Checkout audited commit as data
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: target
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24.x
-          cache: npm
-      - run: npm ci
-      - run: npm audit --audit-level=high
 
+      # The audited checkout controls `.npmrc` and every non-manifest project
+      # file. Copy only the package manifests to a runner-owned directory and
+      # use empty runner-owned config files plus an explicit registry. The
+      # trusted validator rejects unsupported source forms before npm runs, and
+      # the audit stays lockfile-only: no target-controlled tarball is ever
+      # installed in this privileged job.
+      - name: Prepare isolated dependency workspace
+        env:
+          AUDIT_NPM_DIR: ${{ runner.temp }}/security-audit-npm
+          NPM_USER_CONFIG: ${{ runner.temp }}/security-audit-npm/user.npmrc
+          NPM_GLOBAL_CONFIG: ${{ runner.temp }}/security-audit-npm/global.npmrc
+        run: |
+          set -euo pipefail
+          rm -rf "${AUDIT_NPM_DIR}"
+          mkdir -p "${AUDIT_NPM_DIR}"
+          cp target/package.json target/package-lock.json "${AUDIT_NPM_DIR}/"
+          : > "${NPM_USER_CONFIG}"
+          : > "${NPM_GLOBAL_CONFIG}"
+
+      # `npm audit` prints advisory titles, severities, package names, versions
+      # and GHSA advisory URLs. On a public repository the Actions log and check
+      # result are world-readable. The trusted sanitizer validates the JSON and
+      # the reports are deleted unread. Exit 0 and 1 are then normalized to the
+      # same public result: npm uses 1 for findings, and exposing that result would
+      # disclose advisory existence. Invalid output and unexpected scanner exits
+      # still fail as operational errors.
+      - name: Run npm audit
+        shell: bash
+        working-directory: ${{ runner.temp }}/security-audit-npm
+        env:
+          NPM_USER_CONFIG: ${{ runner.temp }}/security-audit-npm/user.npmrc
+          NPM_GLOBAL_CONFIG: ${{ runner.temp }}/security-audit-npm/global.npmrc
+        run: |
+          set -uo pipefail
+          mkdir -p "${GITHUB_WORKSPACE}/.security-audit"
+          validate_status=0
+          node "${GITHUB_WORKSPACE}/scripts/security-audit/validate-npm-audit-inputs.mjs" \
+            --dir . \
+            > "${GITHUB_WORKSPACE}/.security-audit/npm-audit-inputs.log" 2>&1 ||
+            validate_status=$?
+          rm -f "${GITHUB_WORKSPACE}/.security-audit/npm-audit-inputs.log"
+          [ "${validate_status}" -eq 0 ] || exit 1
+          npm audit \
+            --package-lock-only \
+            --audit-level=high \
+            --json \
+            --registry=https://registry.npmjs.org/ \
+            --userconfig="${NPM_USER_CONFIG}" \
+            --globalconfig="${NPM_GLOBAL_CONFIG}" \
+            > "${GITHUB_WORKSPACE}/.security-audit/npm-audit.json" 2>/dev/null
+          status=$?
+          [ -f "${GITHUB_WORKSPACE}/.security-audit/npm-audit.json" ] ||
+            echo '{}' > "${GITHUB_WORKSPACE}/.security-audit/npm-audit.json"
+          sanitize_status=0
+          node "${GITHUB_WORKSPACE}/scripts/security-audit/sanitize-findings.mjs" \
+            --kind npm-audit \
+            --in "${GITHUB_WORKSPACE}/.security-audit/npm-audit.json" \
+            --out "${GITHUB_WORKSPACE}/.security-audit/npm-audit-summary.json" ||
+            sanitize_status=$?
+          rm -f \
+            "${GITHUB_WORKSPACE}/.security-audit/npm-audit.json" \
+            "${GITHUB_WORKSPACE}/.security-audit/npm-audit-summary.json"
+          [ "${sanitize_status}" -eq 0 ] || exit 1
+          if [ "${status}" -ne 0 ] && [ "${status}" -ne 1 ]; then
+            exit 1
+          fi
+          exit 0
+
+      - name: Discard dependency audit workspace
+        if: ${{ always() }}
+        env:
+          AUDIT_NPM_DIR: ${{ runner.temp }}/security-audit-npm
+        run: |
+          rm -rf "${AUDIT_NPM_DIR}"
+          rm -f .security-audit/npm-audit.json .security-audit/npm-audit-summary.json
+
+  # Secret scanning that actually scans.
+  #
+  # The previous implementation used gitleaks/gitleaks-action gated on a
+  # GITLEAKS_LICENSE secret that was never provisioned, and additionally set
+  # continue-on-error, so the job could only ever report green without scanning
+  # anything. The Gitleaks CLI itself is MIT licensed and needs no licence key —
+  # only the marketplace action does — so the CLI is used directly, pinned by
+  # version and verified by SHA-256 before it is executed.
   secrets:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
-      GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+      GITLEAKS_VERSION: '8.30.1'
+      # Provenance: taken from the upstream release artifact
+      # gitleaks_8.30.1_checksums.txt published at
+      # https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_checksums.txt
+      # (goreleaser-generated, published alongside the binaries). Re-verify this
+      # value against that file whenever GITLEAKS_VERSION is bumped.
+      GITLEAKS_SHA256: '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb'
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout controller scripts from protected main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Checkout audited commit as data with full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: target
           fetch-depth: 0
-      # gitleaks-action@v2 requires a GITLEAKS_LICENSE when run under a GitHub
-      # organization (free only for personal accounts). Until the owner
-      # provisions the secret, this step is skipped so the workflow stays green;
-      # it is also continue-on-error as a belt-and-suspenders. Owner action:
-      # add GITLEAKS_LICENSE (or switch to GitHub Advanced Security secret
-      # scanning, which is available org-wide) — see SECURITY.md.
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.x
+
+      - name: Download and verify gitleaks
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${asset}"
+          curl --fail --silent --show-error --location --retry 3 --output "$asset" "$url"
+          echo "${GITLEAKS_SHA256}  ${asset}" | sha256sum --check --strict
+          tar -xzf "$asset" gitleaks
+          chmod +x gitleaks
+          ./gitleaks version
+
+      # `--exit-code 2` separates "leaks found" from an operational failure. A
+      # trusted sanitizer validates the report and all report files are deleted
+      # unread. Exit 0 and 2 are normalized to the same public result so the check
+      # cannot disclose finding existence; any other exit remains an operational
+      # failure.
+      # Console output is redirected and discarded unread: gitleaks prints one
+      # block per finding carrying file path, line, commit, author and e-mail.
+      # `--redact` masks only the secret value, not that metadata, and Actions
+      # logs are world-readable on a public repository.
       - name: Scan for secrets (gitleaks)
-        if: ${{ env.GITLEAKS_LICENSE != '' }}
-        continue-on-error: true
-        uses: gitleaks/gitleaks-action@v3
-        env:
-          GITLEAKS_ENABLE_COMMENTS: "false"
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p .security-audit
+          # Gitleaks otherwise auto-loads configuration, ignore fingerprints,
+          # and inline allow comments from the scan target. Remove target-owned
+          # policy files and force the protected controller policy explicitly.
+          rm -rf -- target/.gitleaks.toml target/.gitleaksignore
+          ./gitleaks git target \
+            --config scripts/security-audit/gitleaks-controller.toml \
+            --gitleaks-ignore-path scripts/security-audit/gitleaks-controller-ignore \
+            --ignore-gitleaks-allow \
+            --report-format json \
+            --report-path .security-audit/gitleaks.json \
+            --redact \
+            --exit-code 2 \
+            --no-banner \
+            > .security-audit/gitleaks-console.log 2>&1
+          status=$?
+          rm -f .security-audit/gitleaks-console.log
+          [ -f .security-audit/gitleaks.json ] || echo '[]' > .security-audit/gitleaks.json
+          sanitize_status=0
+          node scripts/security-audit/sanitize-findings.mjs \
+            --kind gitleaks \
+            --in .security-audit/gitleaks.json \
+            --out .security-audit/gitleaks-summary.json ||
+            sanitize_status=$?
+          rm -f .security-audit/gitleaks.json .security-audit/gitleaks-summary.json
+          [ "${sanitize_status}" -eq 0 ] || exit 1
+          case "${status}" in
+            0|2) exit 0 ;;
+            *) exit 1 ;;
+          esac
+
+      - name: Discard secret scan reports
+        if: ${{ always() }}
+        run: |
+          rm -f \
+            .security-audit/gitleaks.json \
+            .security-audit/gitleaks-summary.json \
+            .security-audit/gitleaks-console.log

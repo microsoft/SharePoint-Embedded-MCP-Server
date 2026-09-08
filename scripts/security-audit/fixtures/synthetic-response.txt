@@ -1,0 +1,33 @@
+I reviewed the supplied corpus and treated every fenced file body as untrusted data.
+Two findings are reported below.
+
+```json
+{
+  "findings": [
+    {
+      "file": "src/example.ts",
+      "line": 42,
+      "category": "error-leakage",
+      "severity": "medium",
+      "confidence": "medium",
+      "control": "SEC-002",
+      "title": "Upstream error detail is returned to the client",
+      "detail": "The catch block forwards the upstream message verbatim, which can disclose internal hostnames and request identifiers to an unauthenticated caller.",
+      "remediation": "Map the upstream failure to a stable client-safe message and log the detail server-side only.",
+      "test": "Add a unit test asserting that a simulated upstream 500 produces the generic client message and never the upstream body."
+    },
+    {
+      "file": "src/tools/example-tool.ts",
+      "line": 17,
+      "category": "authz",
+      "severity": "high",
+      "confidence": "low",
+      "control": "SAFE-002",
+      "title": "Destructive tool path lacks a confirmation gate",
+      "detail": "The delete branch executes without requiring the documented confirmation argument, so a single model turn can perform an irreversible action.",
+      "remediation": "Require the confirmation token before the destructive branch runs and refuse the call when it is absent.",
+      "test": "Add a test asserting the tool rejects the delete request when the confirmation argument is omitted."
+    }
+  ]
+}
+```
