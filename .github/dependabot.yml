@@ -5,6 +5,15 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      vitest:
+        patterns:
+          - vitest
+          - "@vitest/*"
+        update-types:
+          - major
+          - minor
+          - patch
     commit-message:
       prefix: deps
 
@@ -15,5 +24,3 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: ci
-    cooldown:
-      default-days: 7
