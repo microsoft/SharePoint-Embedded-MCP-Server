@@ -179,3 +179,38 @@ describe("project_hydrate_config formats validation", () => {
     expect(existsSync(join(dir, "azure.yaml"))).toBe(true);
   });
 });
+
+describe("project_hydrate_config sign-in verification advisory", () => {
+  it("appends a copy-pasteable verify-the-right-app advisory when writing .env", async () => {
+    const result = await hydrateConfigTool.handler({ targetDir: dir, formats: ["env"] });
+
+    expect(result.isError).toBeFalsy();
+    const text = result.content[0].text;
+    // Leads the user to confirm .env matches the app they see + verify the SPA URI.
+    expect(text).toContain("verify this `.env` targets the right app");
+    expect(text).toContain("AADSTS9002326");
+    expect(text).toContain("VITE_CLIENT_ID");
+    expect(text).toContain("az rest --method GET");
+    expect(text).toContain("$select=appId,spa");
+    // Looks the app up by the emitted client id (display names are not unique).
+    expect(text).toContain("appId eq 'app-1'");
+  });
+
+  it("warns (non-blocking) when the tenant id is empty — MSAL authority would be invalid", async () => {
+    stateStore.tenantId = "";
+
+    const result = await hydrateConfigTool.handler({ targetDir: dir, formats: ["env"] });
+
+    expect(result.isError).toBeFalsy();
+    const text = result.content[0].text;
+    expect(text).toContain("Config warnings");
+    expect(text).toContain("`TENANT_ID` / `VITE_TENANT_ID` is empty");
+  });
+
+  it("does NOT append the .env sign-in advisory when only azure.yaml is written", async () => {
+    const result = await hydrateConfigTool.handler({ targetDir: dir, formats: ["azureyaml"] });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).not.toContain("verify this `.env` targets the right app");
+  });
+});
