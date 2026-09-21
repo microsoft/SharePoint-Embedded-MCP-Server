@@ -33,6 +33,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   chmodSync,
   closeSync,
@@ -42,9 +43,12 @@ import {
   fstatSync,
   ftruncateSync,
   lstatSync,
+  linkSync,
   mkdirSync,
   openSync,
   readFileSync,
+  renameSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -230,6 +234,100 @@ export function writeSecureFile(path: string, data: string): void {
     writeFileSync(fd, data, "utf-8");
   } finally {
     closeSync(fd);
+  }
+}
+
+/**
+ * Atomically replace an owner-only state file.
+ *
+ * The complete new payload is first written and fd-validated at a random path
+ * in the same secure directory, then renamed over the destination. A process
+ * exit can therefore leave either the complete old file or the complete new
+ * file — never a truncated intermediate value. The existing destination is
+ * validated before replacement so this retains {@link writeSecureFile}'s
+ * fail-closed behavior for hostile final components.
+ */
+export function writeSecureFileAtomic(path: string, data: string): void {
+  const temp = `${path}.tmp-${randomUUID()}`;
+  try {
+    writeSecureFile(temp, data);
+    // Validate an existing destination without following a final symlink. A
+    // missing destination is the normal first-write case.
+    readSecureFile(path);
+    renameSync(temp, path);
+  } finally {
+    try {
+      unlinkSync(temp);
+    } catch {
+      // The rename normally consumed it. If writing/renaming failed, cleanup is
+      // best-effort; the owner-only random temp file contains the same local
+      // state payload as the destination.
+    }
+  }
+}
+
+/**
+ * Atomically create a new owner-only file, returning `false` when the path
+ * already exists.
+ *
+ * This is the secure-fs equivalent of `open(..., "wx")`: `O_EXCL` supplies the
+ * cross-process create-if-absent primitive while the same `O_NOFOLLOW`, fd
+ * ownership/type validation, and owner-only permissions as {@link
+ * writeSecureFile} keep caller-controlled data directories fail-closed.
+ *
+ * The parent directory must already have been validated with
+ * {@link ensureSecureDir}. Any error other than an existing path is thrown so
+ * callers can fail closed rather than mistaking an insecure/unwritable path for
+ * lock contention.
+ */
+export function tryCreateSecureFileExclusive(path: string, data: string): boolean {
+  // Publish a fully written inode with an atomic hard-link create. Opening the
+  // final path with O_EXCL and then writing would leave a short (or, if the
+  // process is paused, unbounded) interval where another process can observe a
+  // malformed/empty lock and mistake it for abandoned state.
+  const temp = `${path}.tmp-${randomUUID()}`;
+  const flags =
+    fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | O_NOFOLLOW;
+  try {
+    let fd: number;
+    try {
+      fd = openSync(temp, flags, OWNER_RW);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === "ELOOP") {
+        throw insecureFile(temp, "it is a symlink");
+      }
+      throw err;
+    }
+
+    try {
+      if (IS_POSIX) {
+        const st = fstatSync(fd);
+        if (!st.isFile()) throw insecureFile(temp, "it is not a regular file");
+        const uid = process.getuid?.();
+        if (uid !== undefined && st.uid !== uid) {
+          throw insecureFile(temp, "it is owned by another user");
+        }
+        fchmodSync(fd, OWNER_RW);
+      }
+      writeFileSync(fd, data, "utf-8");
+    } finally {
+      closeSync(fd);
+    }
+
+    try {
+      linkSync(temp, path);
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === "EEXIST") return false;
+      throw err;
+    }
+  } finally {
+    try {
+      unlinkSync(temp);
+    } catch {
+      // Best-effort cleanup. The random owner-only temp file contains only the
+      // same non-secret synchronization payload as the published file.
+    }
   }
 }
 

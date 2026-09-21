@@ -174,6 +174,19 @@ export function getLegacyCacheFile(): string {
 }
 
 /**
+ * Update-awareness cache file (`<dataDir>/update-check.json`).
+ *
+ * Records the last npm dist-tag probe (its timestamp, outcome, and which target
+ * versions have already been announced) so the check runs at most once per TTL
+ * and each newer version is surfaced to the user exactly once. Written with the
+ * same owner-only secure-fs primitives as the token cache. See `update-check.ts`
+ * (SEC-008).
+ */
+export function getUpdateCacheFile(): string {
+  return join(getDataDir(), "update-check.json");
+}
+
+/**
  * Test-only hooks. Not part of the public API. Used to reset the memoized state
  * between unit tests so env-var precedence and lazy re-resolution can be asserted
  * deterministically.
