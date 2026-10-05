@@ -743,3 +743,4 @@ subject to those third-parties' policies.
 ## License
 
 Licensed under the [MIT License](LICENSE).
+<!-- GitHub publication workflow smoke test; no product changes. -->
