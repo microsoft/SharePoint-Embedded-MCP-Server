@@ -98,61 +98,72 @@ program
     "Do not add install-source or self-reported agent-host metadata to outbound requests.",
   )
   .option("--data-dir <path>", DATA_DIR_OPTION)
-  .action(async (options: {
-    clientId?: string;
-    tenantId?: string;
-    readOnly?: boolean;
-    tools?: string;
-    installSource?: string;
-    installContent?: string;
-    installCampaign?: string;
-    installAttribution?: boolean;
-    dataDir?: string;
-  }) => {
-    try {
-      // Resolve + record the data dir FIRST, before importing ./index.js (which
-      // pulls in state.ts/auth.ts) so every entry point resolves the same dir.
-      await applyDataDir(options.dataDir);
-      const clientId = options.clientId || process.env.SPE_CLIENT_ID;
-      const tenantId = options.tenantId || process.env.SPE_TENANT_ID;
-      // Read-only: CLI flag wins; otherwise a truthy SPE_READ_ONLY env value.
-      const readOnly = options.readOnly === true || isTruthyEnv(process.env.SPE_READ_ONLY);
-      // Tool allowlist/profile: CLI flag wins; otherwise SPE_TOOLS env.
-      const tools = options.tools || process.env.SPE_TOOLS;
-      const attributionEnabled =
-        options.installAttribution !== false &&
-        !["0", "false", "no", "off"].includes(
-          (process.env.SPE_INSTALL_ATTRIBUTION ?? "").trim().toLowerCase(),
-        );
-      const installAttribution = resolveInstallAttribution({
-        source: options.installSource || process.env.SPE_INSTALL_SOURCE,
-        content: options.installContent || process.env.SPE_INSTALL_CONTENT,
-        campaign: options.installCampaign || process.env.SPE_INSTALL_CAMPAIGN,
-        enabled: attributionEnabled,
-      });
+  .option(
+    "--no-update-check",
+    "Do not contact the public npm registry to check whether a newer version of this server has been published. Can also be set via SPE_MCP_UPDATE_CHECK=false (preferred), SPE_NO_UPDATE_CHECK=1 (legacy alias), NO_UPDATE_NOTIFIER=1, or SPE_MCP_COLLECT_TELEMETRY=false.",
+  )
+  .action(
+    async (options: {
+      clientId?: string;
+      tenantId?: string;
+      readOnly?: boolean;
+      tools?: string;
+      installSource?: string;
+      installContent?: string;
+      installCampaign?: string;
+      installAttribution?: boolean;
+      dataDir?: string;
+      updateCheck?: boolean;
+    }) => {
+      try {
+        // Resolve + record the data dir FIRST, before importing ./index.js (which
+        // pulls in state.ts/auth.ts) so every entry point resolves the same dir.
+        await applyDataDir(options.dataDir);
+        const clientId = options.clientId || process.env.SPE_CLIENT_ID;
+        const tenantId = options.tenantId || process.env.SPE_TENANT_ID;
+        // Read-only: CLI flag wins; otherwise a truthy SPE_READ_ONLY env value.
+        const readOnly = options.readOnly === true || isTruthyEnv(process.env.SPE_READ_ONLY);
+        // Tool allowlist/profile: CLI flag wins; otherwise SPE_TOOLS env.
+        const tools = options.tools || process.env.SPE_TOOLS;
+        const attributionEnabled =
+          options.installAttribution !== false &&
+          !["0", "false", "no", "off"].includes(
+            (process.env.SPE_INSTALL_ATTRIBUTION ?? "").trim().toLowerCase(),
+          );
+        const installAttribution = resolveInstallAttribution({
+          source: options.installSource || process.env.SPE_INSTALL_SOURCE,
+          content: options.installContent || process.env.SPE_INSTALL_CONTENT,
+          campaign: options.installCampaign || process.env.SPE_INSTALL_CAMPAIGN,
+          enabled: attributionEnabled,
+        });
+        // Update awareness: commander sets updateCheck=false for --no-update-check.
+        // Environment opt-outs are applied inside the update checker itself.
+        const updateCheck = options.updateCheck !== false;
 
-      // Both are optional. With no client-id the server runs in bootstrap mode:
-      // the Azure CLI provides the control-plane token and the owning app is
-      // provisioned on demand.
-      const { startServer } = await import("./index.js");
-      await startServer({
-        clientId,
-        tenantId,
-        readOnly,
-        tools,
-        installAttribution,
-        attributionEnabled,
-      });
-    } catch (error) {
-      console.error("Failed to start SPE MCP server:");
-      if (error instanceof Error) {
-        console.error(error.stack ?? error.message);
-      } else {
-        console.error(error);
+        // Both are optional. With no client-id the server runs in bootstrap mode:
+        // the Azure CLI provides the control-plane token and the owning app is
+        // provisioned on demand.
+        const { startServer } = await import("./index.js");
+        await startServer({
+          clientId,
+          tenantId,
+          readOnly,
+          tools,
+          updateCheck,
+          installAttribution,
+          attributionEnabled,
+        });
+      } catch (error) {
+        console.error("Failed to start SPE MCP server:");
+        if (error instanceof Error) {
+          console.error(error.stack ?? error.message);
+        } else {
+          console.error(error);
+        }
+        process.exitCode = 1;
       }
-      process.exitCode = 1;
-    }
-  });
+    },
+  );
 
 program
   .command("auth")
@@ -181,6 +192,8 @@ program
       setInteractiveMode();
       if (options.reset) {
         await clearCachedToken();
+        const { removeUpdateCache } = await import("./update-check.js");
+        await removeUpdateCache();
         console.log("Cleared cached tokens before authenticating.");
       }
       await authenticateInteractively();
@@ -198,7 +211,7 @@ program
 
 program
   .command("logout")
-  .description("Clear cached authentication tokens")
+  .description("Clear cached authentication tokens and the local update-check cache")
   .option("--data-dir <path>", DATA_DIR_OPTION)
   .action(async (options: { dataDir?: string }) => {
     try {
@@ -207,7 +220,12 @@ program
       await applyDataDir(options.dataDir);
       const { clearCachedToken } = await import("./auth.js");
       await clearCachedToken();
-      console.log("Logged out. Cached tokens have been cleared.");
+      // Signing out clears every file this server wrote under the data dir,
+      // including the update-check cache (which holds no identifiers, but is
+      // still local state the user asked us to forget).
+      const { removeUpdateCache } = await import("./update-check.js");
+      await removeUpdateCache();
+      console.log("Logged out. Cached tokens and the update-check cache have been cleared.");
     } catch (error) {
       console.error("Failed to clear cached tokens:");
       if (error instanceof Error) {
