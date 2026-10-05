@@ -743,3 +743,5 @@ subject to those third-parties' policies.
 ## License
 
 Licensed under the [MIT License](LICENSE).
+
+This project provides an open-source MCP server for SharePoint Embedded.
