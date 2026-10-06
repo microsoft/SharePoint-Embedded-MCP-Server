@@ -109,36 +109,164 @@ function isUnderHome(dir: string): boolean {
 }
 
 /**
- * Windows: apply an owner-only DACL to an off-profile override directory, or
- * throw. `/inheritance:r` strips inherited ACEs; `/grant:r <user>:(OI)(CI)F`
- * replaces the user's ACE with full control inherited by files + subdirs.
+ * Windows: inspect and apply an owner-only DACL to an off-profile override
+ * directory, or throw. `/inheritance:r` strips inherited ACEs; `/grant:r`
+ * replaces the caller SID's ACE with full control inherited by files + subdirs.
  *
- * icacls is invoked by absolute path (not a bare name) so a planted
- * `icacls.exe` on PATH / in the CWD cannot be run in its place.
- *
- * KNOWN LIMITATION (tracked as a follow-up under Feature AB#3116729): this does
- * NOT remove pre-existing *explicit* ACEs and does not verify the directory
- * owner (Node has no cheap owner read on Windows). An attacker who can
- * pre-create the exact override path with a permissive explicit ACE is not
- * fully mitigated here. The default `~/.spe-mcp` (under %USERPROFILE%) is
- * unaffected — it inherits the per-user profile ACL and never reaches this path.
+ * Executables are invoked by absolute path so planted programs on PATH / in the
+ * CWD cannot be run in their place. The PowerShell command is fixed and receives
+ * the path as base64 data, not source text.
  */
-function secureWindowsDirAclOrThrow(dir: string): void {
-  const user = process.env.USERDOMAIN
-    ? `${process.env.USERDOMAIN}\\${process.env.USERNAME}`
-    : process.env.USERNAME;
-  if (!user) {
-    throw insecureDir(dir, "the current Windows user could not be determined to set an owner-only ACL");
-  }
-  const icacls = process.env.SystemRoot
-    ? `${process.env.SystemRoot}\\System32\\icacls.exe`
-    : "C:\\Windows\\System32\\icacls.exe";
+interface WindowsAccessRule {
+  sid: string;
+  type: "Allow" | "Deny";
+  inherited: boolean;
+  fullControl: boolean;
+  containerInherit: boolean;
+  objectInherit: boolean;
+  propagation: string;
+}
+
+interface WindowsAclInspection {
+  callerSid: string;
+  ownerSid: string;
+  protected: boolean;
+  rules: WindowsAccessRule[];
+}
+
+const WINDOWS_SID_PATTERN = /^S-\d(?:-\d+)+$/i;
+
+function inspectWindowsDirAclOrThrow(dir: string): WindowsAclInspection {
+  const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
+  const powershell = `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+  const encodedPath = Buffer.from(resolve(dir), "utf8").toString("base64");
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    `$path = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedPath}'))`,
+    "$sidType = [Security.Principal.SecurityIdentifier]",
+    "$acl = Get-Acl -LiteralPath $path",
+    "$callerSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
+    "$rules = @($acl.Access | ForEach-Object {",
+    "  $rights = $_.FileSystemRights",
+    "  [ordered]@{",
+    "    sid = $_.IdentityReference.Translate($sidType).Value",
+    "    type = $_.AccessControlType.ToString()",
+    "    inherited = $_.IsInherited",
+    "    fullControl = (($rights -band [Security.AccessControl.FileSystemRights]::FullControl) -eq [Security.AccessControl.FileSystemRights]::FullControl)",
+    "    containerInherit = (($_.InheritanceFlags -band [Security.AccessControl.InheritanceFlags]::ContainerInherit) -ne 0)",
+    "    objectInherit = (($_.InheritanceFlags -band [Security.AccessControl.InheritanceFlags]::ObjectInherit) -ne 0)",
+    "    propagation = $_.PropagationFlags.ToString()",
+    "  }",
+    "})",
+    "[ordered]@{",
+    "  callerSid = $callerSid",
+    "  ownerSid = $acl.GetOwner($sidType).Value",
+    "  protected = $acl.AreAccessRulesProtected",
+    "  rules = $rules",
+    "} | ConvertTo-Json -Depth 4 -Compress",
+  ].join("\n");
+
+  let parsed: unknown;
   try {
-    execFileSync(icacls, [dir, "/inheritance:r", "/grant:r", `${user}:(OI)(CI)F`], {
-      stdio: "ignore",
-    });
+    const output = execFileSync(
+      powershell,
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+      { encoding: "utf8", windowsHide: true },
+    );
+    parsed = JSON.parse(output);
+  } catch {
+    throw insecureDir(dir, "its Windows owner and access rules could not be inspected");
+  }
+
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    !("callerSid" in parsed) ||
+    !("ownerSid" in parsed) ||
+    !("protected" in parsed) ||
+    !("rules" in parsed) ||
+    typeof parsed.callerSid !== "string" ||
+    typeof parsed.ownerSid !== "string" ||
+    typeof parsed.protected !== "boolean" ||
+    !Array.isArray(parsed.rules) ||
+    !WINDOWS_SID_PATTERN.test(parsed.callerSid) ||
+    !WINDOWS_SID_PATTERN.test(parsed.ownerSid)
+  ) {
+    throw insecureDir(dir, "its Windows owner and access rules were malformed");
+  }
+
+  for (const rule of parsed.rules) {
+    if (
+      typeof rule !== "object" ||
+      rule === null ||
+      typeof rule.sid !== "string" ||
+      !WINDOWS_SID_PATTERN.test(rule.sid) ||
+      (rule.type !== "Allow" && rule.type !== "Deny") ||
+      typeof rule.inherited !== "boolean" ||
+      typeof rule.fullControl !== "boolean" ||
+      typeof rule.containerInherit !== "boolean" ||
+      typeof rule.objectInherit !== "boolean" ||
+      typeof rule.propagation !== "string"
+    ) {
+      throw insecureDir(dir, "its Windows owner and access rules were malformed");
+    }
+  }
+
+  return parsed as WindowsAclInspection;
+}
+
+function secureWindowsDirAclOrThrow(dir: string): void {
+  const before = inspectWindowsDirAclOrThrow(dir);
+  if (before.ownerSid.toUpperCase() !== before.callerSid.toUpperCase()) {
+    throw insecureDir(dir, "it is owned by another Windows principal");
+  }
+  if (
+    before.rules.some(
+      (rule) =>
+        !rule.inherited &&
+        rule.type === "Allow" &&
+        rule.sid.toUpperCase() !== before.callerSid.toUpperCase(),
+    )
+  ) {
+    throw insecureDir(dir, "it grants explicit access to another Windows principal");
+  }
+
+  const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
+  const icacls = `${systemRoot}\\System32\\icacls.exe`;
+  try {
+    execFileSync(
+      icacls,
+      [resolve(dir), "/inheritance:r", "/grant:r", `*${before.callerSid}:(OI)(CI)F`],
+      { stdio: "ignore", windowsHide: true },
+    );
   } catch {
     throw insecureDir(dir, "an owner-only ACL could not be applied to this off-profile path");
+  }
+
+  const after = inspectWindowsDirAclOrThrow(dir);
+  const callerSid = before.callerSid.toUpperCase();
+  const hasOwnerFullControl = after.rules.some(
+    (rule) =>
+      !rule.inherited &&
+      rule.type === "Allow" &&
+      rule.sid.toUpperCase() === callerSid &&
+      rule.fullControl &&
+      rule.containerInherit &&
+      rule.objectInherit &&
+      rule.propagation === "None",
+  );
+  const grantsAnotherPrincipal = after.rules.some(
+    (rule) => rule.type === "Allow" && rule.sid.toUpperCase() !== callerSid,
+  );
+  if (
+    after.callerSid.toUpperCase() !== callerSid ||
+    after.ownerSid.toUpperCase() !== callerSid ||
+    !after.protected ||
+    after.rules.some((rule) => rule.inherited) ||
+    grantsAnotherPrincipal ||
+    !hasOwnerFullControl
+  ) {
+    throw insecureDir(dir, "the resulting Windows ACL was not owner-only");
   }
 }
 
