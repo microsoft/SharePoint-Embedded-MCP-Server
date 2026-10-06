@@ -403,3 +403,95 @@ describe("container_type_create — enum/displayName validation", () => {
     );
   });
 });
+
+describe("container_type_create — trial-limit preflight", () => {
+  const threeOtherTrials = [
+    { containerTypeId: "ct-a", owningAppId: "other-a", displayName: "A", billingClassification: "trial" },
+    { containerTypeId: "ct-b", owningAppId: "other-b", displayName: "B", billingClassification: "trial" },
+    { containerTypeId: "ct-c", owningAppId: "other-c", displayName: "C", billingClassification: "trial" },
+  ];
+
+  it("fails with actionable guidance before creating a fourth trial container type", async () => {
+    vi.mocked(graph.listContainerTypes).mockResolvedValue(threeOtherTrials as never);
+
+    const result = await createContainerTypeTool.handler({
+      displayName: "Fourth",
+      billingClassification: "trial",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("maximum number of trial container types");
+    expect(result.content[0].text).toContain("container_type_list");
+    expect(result.content[0].text).toContain("container_type_delete");
+    expect(graph.createContainerType).not.toHaveBeenCalled();
+    expect(graph.registerContainerType).not.toHaveBeenCalled();
+  });
+
+  it("reuses an existing trial container type for the same owning app at the cap", async () => {
+    vi.mocked(graph.listContainerTypes).mockResolvedValue([
+      { containerTypeId: "ct-own", owningAppId: "app-1", displayName: "Mine", billingClassification: "trial" },
+      { containerTypeId: "ct-b", owningAppId: "other-b", displayName: "B", billingClassification: "trial" },
+      { containerTypeId: "ct-c", owningAppId: "other-c", displayName: "C", billingClassification: "trial" },
+    ] as never);
+
+    const result = await createContainerTypeTool.handler({
+      displayName: "Mine",
+      billingClassification: "trial",
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).not.toContain("maximum number of trial container types");
+    expect(graph.createContainerType).not.toHaveBeenCalled();
+  });
+
+  it("creates a trial container type when two trials already exist", async () => {
+    vi.mocked(graph.listContainerTypes).mockResolvedValue([
+      { containerTypeId: "ct-a", owningAppId: "other-a", displayName: "A", billingClassification: "trial" },
+      { containerTypeId: "ct-b", owningAppId: "other-b", displayName: "B", billingClassification: "trial" },
+    ] as never);
+    vi.mocked(graph.createContainerType).mockResolvedValue({
+      containerTypeId: "ct-new",
+      owningAppId: "app-1",
+      displayName: "Third",
+      billingClassification: "trial",
+    });
+    vi.mocked(graph.registerContainerType).mockResolvedValue(undefined as never);
+
+    const result = await createContainerTypeTool.handler({
+      displayName: "Third",
+      billingClassification: "trial",
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(graph.createContainerType).toHaveBeenCalledWith(
+      expect.objectContaining({ billingClassification: "trial", owningAppId: "app-1" }),
+    );
+  });
+
+  it("does not apply the trial cap to standard billing", async () => {
+    vi.mocked(graph.listContainerTypes).mockResolvedValue(threeOtherTrials as never);
+    vi.mocked(azureCli.listSubscriptions).mockResolvedValue([
+      { id: "sub-only", name: "Only", state: "Enabled" },
+    ]);
+    vi.mocked(azureCli.listResourceGroups).mockResolvedValue([
+      { name: "rg-only", location: "eastus", id: "/subscriptions/sub-only/resourceGroups/rg-only" },
+    ]);
+    vi.mocked(graph.createContainerType).mockResolvedValue({
+      containerTypeId: "ct-std",
+      owningAppId: "app-1",
+      displayName: "Std",
+      billingClassification: "standard",
+    });
+    vi.mocked(graph.registerContainerType).mockResolvedValue(undefined as never);
+
+    const result = await createContainerTypeTool.handler({
+      displayName: "Std",
+      billingClassification: "standard",
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(graph.createContainerType).toHaveBeenCalledWith(
+      expect.objectContaining({ billingClassification: "standard" }),
+    );
+  });
+});
