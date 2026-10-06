@@ -48,6 +48,7 @@ import {
   resolveStandardBillingTarget,
   validateProvidedStandardBillingTarget,
 } from "./standard-billing-target.js";
+import { trialLimitPreflight } from "./trial-limit.js";
 import { isContextConfirmedThisSession, stampContextConfirmed } from "../session.js";
 import { readState, writeState } from "../state.js";
 import type { Guid, McpTool, OwnerScope } from "../types.js";
@@ -465,6 +466,16 @@ export const provisionTool: McpTool = {
         existingCts.find((c) => c.owningAppId?.toLowerCase() === app!.appId.toLowerCase())?.containerTypeId;
       let createdCt = false;
       if (!containerTypeId) {
+        const trialLimitError = trialLimitPreflight(billingClassification, existingCts);
+        if (trialLimitError) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: trialLimitError + partialProgress(steps, "trial container-type limit preflight"),
+            }],
+            isError: true,
+          };
+        }
         const ct = await createContainerType({
           displayName: ctName,
           owningAppId: app.appId,

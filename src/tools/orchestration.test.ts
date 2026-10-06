@@ -155,6 +155,57 @@ describe("project_provision", () => {
     expect(stateStore.containerId).toBe("c-1");
   });
 
+  it("blocks a fourth trial container type before creating it", async () => {
+    vi.mocked(graph.findApplicationByName).mockResolvedValue(null);
+    vi.mocked(graph.createApplication).mockResolvedValue({ appId: "app-1", objectId: "obj-1", displayName: "App" });
+    vi.mocked(graph.listContainerTypes).mockResolvedValue([
+      { containerTypeId: "ct-a", owningAppId: "other-a", displayName: "A", billingClassification: "trial" },
+      { containerTypeId: "ct-b", owningAppId: "other-b", displayName: "B", billingClassification: "trial" },
+      { containerTypeId: "ct-c", owningAppId: "other-c", displayName: "C", billingClassification: "trial" },
+    ] as never);
+
+    const result = await provisionTool.handler({
+      appDisplayName: "App",
+      billingClassification: "trial",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("maximum number of trial container types");
+    expect(result.content[0].text).toContain("container_type_list");
+    expect(result.content[0].text).toContain("container_type_delete");
+    expect(graph.createContainerType).not.toHaveBeenCalled();
+    expect(graph.createContainer).not.toHaveBeenCalled();
+  });
+
+  it("proceeds with trial provisioning when two trial container types exist", async () => {
+    vi.mocked(graph.findApplicationByName).mockResolvedValue(null);
+    vi.mocked(graph.createApplication).mockResolvedValue({ appId: "app-1", objectId: "obj-1", displayName: "App" });
+    vi.mocked(graph.listContainerTypes).mockResolvedValue([
+      { containerTypeId: "ct-a", owningAppId: "other-a", displayName: "A", billingClassification: "trial" },
+      { containerTypeId: "ct-b", owningAppId: "other-b", displayName: "B", billingClassification: "trial" },
+    ] as never);
+    vi.mocked(graph.createContainerType).mockResolvedValue({
+      containerTypeId: "ct-1",
+      owningAppId: "app-1",
+      displayName: "App Container Type",
+    });
+    vi.mocked(graph.createContainer).mockResolvedValue({
+      id: "c-1",
+      displayName: "Default Container",
+      containerTypeId: "ct-1",
+      status: "inactive",
+    });
+
+    const result = await provisionTool.handler({
+      appDisplayName: "App",
+      billingClassification: "trial",
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(graph.createContainerType).toHaveBeenCalled();
+    expect(result.content[0].text).toContain("SPE Provisioned");
+  });
+
   it("appends a NON-BLOCKING guest heads-up when signed in as a B2B guest — provisioning is NOT blocked (PR #3 review)", async () => {
     vi.mocked(bootstrap.getSignedInIdentity).mockResolvedValueOnce({
       tenantId: "t-1",

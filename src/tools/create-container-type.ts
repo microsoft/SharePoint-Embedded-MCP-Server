@@ -33,6 +33,7 @@ import {
   resolveStandardBillingTarget,
   validateProvidedStandardBillingTarget,
 } from "./standard-billing-target.js";
+import { trialLimitPreflight } from "./trial-limit.js";
 import type { BillingClassification } from "../types.js";
 import { fail, ok } from "../responses.js";
 import { clientSafeMessage } from "../errors.js";
@@ -143,6 +144,11 @@ async function executeCreateContainerType(args: CreateContainerTypeArgs) {
       containerType: existingCt,
       message: `Container type already exists for app ${owningAppId}. SPE enforces a 1:1 relationship between owning app and container type.`,
     };
+  }
+
+  const trialLimitError = trialLimitPreflight(billingClassification, existing);
+  if (trialLimitError) {
+    return { success: false, error: trialLimitError };
   }
 
   // Create the container type
