@@ -743,3 +743,5 @@ subject to those third-parties' policies.
 ## License
 
 Licensed under the [MIT License](LICENSE).
+
+<!-- Native workflow publication smoke test; no product changes. -->
