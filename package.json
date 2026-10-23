@@ -33,8 +33,17 @@
   "files": [
     "dist",
     "samples",
-    "README.md",
+    "docs/DATA-FLOW.md",
+    "docs/SECURITY-CONTROLS.md",
+    "docs/TROUBLESHOOTING.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
     "LICENSE",
+    "NOTICE.md",
+    "PRIVACY.md",
+    "README.md",
+    "SECURITY.md",
+    "SUPPORT.md",
     "THIRD-PARTY-NOTICES"
   ],
   "scripts": {

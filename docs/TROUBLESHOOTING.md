@@ -89,6 +89,57 @@ content_access_grant confirm=true
 
 Access can be disabled later with `content_access_revoke`.
 
+## Update notice: missing, stale, or registry unreachable
+
+The server checks the public npm registry at most once every 24 hours for the same running
+package version and registry across processes sharing the retained data-directory cache. If a
+newer release exists, it appends a one-line
+`Update available: …` notice to a single tool result. It never blocks, never retries in-band,
+and **never updates itself** — there is no auto-update.
+
+Common situations:
+
+- **No notice appears, but a newer version exists.** The check is skipped by design when
+  running from a source checkout, in CI (`CI`, `GITHUB_ACTIONS`, `TF_BUILD`, …), or when any
+  opt-out is set: `SPE_MCP_UPDATE_CHECK=false` (preferred), `--no-update-check`,
+  `SPE_NO_UPDATE_CHECK=1` (legacy alias), `NO_UPDATE_NOTIFIER=1`, or
+  `SPE_MCP_COLLECT_TELEMETRY=false` (the telemetry opt-out suppresses the registry request
+  entirely; it does not merely omit the `User-Agent`). Channel and stable targets are suppressed
+  independently, so each detected target version is shown only once per cache. Run `status_get`
+  to see the **Update check** row, which reports the exact state
+  and skip reason. When skipped, **no network request, stderr notice, or cache write occurs**.
+- **Offline, proxied, or firewalled registry.** The lookup has a 2-second timeout and fails
+  silently; the failure is cached so the server does not retry on every call. `status_get`
+  reports `— unavailable (registry not reachable)`. This is harmless — no functionality
+  depends on it.
+- **Proxy-only environment.** Routing depends on the Node.js runtime configuration. Releases
+  that support Node's environment-proxy mode (including current Node 24/26 releases) can honor
+  `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` when it is enabled with
+  `NODE_USE_ENV_PROXY=1` or `--use-env-proxy`; Node 22 may ignore those variables and attempt a
+  direct connection. Enforce mandatory proxy routing at the runtime or network layer, or
+  disable the check with `SPE_MCP_UPDATE_CHECK=false`.
+- **Internal/mirror registry.** Set `SPE_NPM_REGISTRY` to your mirror. It must be an `https:`
+  URL with no embedded credentials, query string, or fragment; anything else is ignored and
+  the check is disabled for that run. Redirects and cross-host responses are rejected. The
+  notice and `status_get` identify a configured registry neutrally; its operator and compliance
+  boundary depend on your configuration.
+- **A one-time stderr notice appeared at startup.** Before the first registry request, the
+  server prints a single collection notice to **stderr** naming the endpoint and the opt-out.
+  For the default `registry.npmjs.org` endpoint it names npm, Inc./GitHub and the boundary; for
+  a configured registry it does not guess the operator or boundary. It is informational; stdout
+  is never written to. Set any opt-out above to suppress it entirely.
+- **Delete the cached update state.** The cache lives at `<data dir>/update-check.json` (path
+  shown by `status_get`), contains **no identifier**, and is retained until removed. Delete it
+  with `spe-mcp logout`, `spe-mcp auth --reset`, or by removing the file manually. Deleting it
+  also forces a re-check on the next start.
+- **Multiple server processes start together.** An owner-only `update-check.json.lock` file
+  serializes stale-cache refreshes. The lock owner records the 24-hour attempt before egress;
+  other processes make no request. The lock is normally removed immediately and an abandoned
+  regular-file lock is reclaimed after 30 seconds only after its recorded local process is no
+  longer alive. Lock or cache errors fail closed without contacting the registry. Changing the
+  running package version or registry, or deleting the cache, intentionally starts a new
+  24-hour window.
+
 ## Correlation IDs
 
 When a tool fails, the client-facing error carries a short **correlation ID**,

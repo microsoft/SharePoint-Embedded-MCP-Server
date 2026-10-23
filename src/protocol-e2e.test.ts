@@ -80,6 +80,13 @@ describe("MCP protocol-level e2e (spawned dist/cli.js start)", () => {
     delete env.SPE_TENANT_ID;
     delete env.SPE_READ_ONLY;
     delete env.SPE_TOOLS;
+    // SEC-008: keep this suite hermetic. The update check is fire-and-forget and
+    // would otherwise reach registry.npmjs.org from a test process. Opting out
+    // also exercises the documented kill switch over the real wire — using the
+    // preferred public control (`SPE_NO_UPDATE_CHECK` is only a legacy alias).
+    env.SPE_MCP_UPDATE_CHECK = "false";
+    delete env.SPE_NO_UPDATE_CHECK;
+    delete env.SPE_NPM_REGISTRY;
 
     transport = new StdioClientTransport({
       command: process.execPath,
@@ -227,5 +234,23 @@ describe("MCP protocol-level e2e (spawned dist/cli.js start)", () => {
     expect(res.isError).toBe(true);
     const sc = res.structuredContent as StructuredError | undefined;
     expect(sc?.error?.code).toBe("CONFIRMATION_REQUIRED");
+  });
+
+  // (g) SEC-008 update awareness: the opt-out must be total. With the kill
+  //     switch set, no tool result may be decorated with an update notice or an
+  //     `updateAvailable` payload. Only SAFE, no-network tools are used so the
+  //     assertion stays hermetic and fast.
+  it("never appends an update notice to tool results when the check is disabled", async () => {
+    for (const name of ["content_access_grant", "this_tool_does_not_exist"]) {
+      const res = await client.callTool({ name, arguments: {} }, undefined, {
+        timeout: CALL_TIMEOUT_MS,
+      });
+      const text = (res.content as Array<{ type: string; text: string }>)
+        .map((c) => c.text)
+        .join("\n");
+      expect(text, `${name} leaked an update notice`).not.toMatch(/Update available:/i);
+      const sc = res.structuredContent as Record<string, unknown> | undefined;
+      expect(sc?.updateAvailable, `${name} leaked an updateAvailable payload`).toBeUndefined();
+    }
   });
 });
