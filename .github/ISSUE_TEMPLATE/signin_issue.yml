@@ -1,0 +1,136 @@
+name: 🔑 Sign-in / AADSTS error
+description: Sign-in fails in a scaffolded sample (e.g. AADSTS9002326, AADSTS50011, AADSTS650051).
+title: "[Sign-in]: AADSTS"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This template collects the diagnostics needed to root-cause sign-in
+        failures. Most `AADSTS9002326` reports turn out to be a **configuration
+        mismatch** — the running build signs in as a *different* app/tenant than
+        the one edited in the portal — not a missing redirect URI. See the
+        [sign-in troubleshooting guide](https://github.com/microsoft/SharePoint-Embedded-MCP-Server/blob/main/docs/TROUBLESHOOTING.md#react-spa-sign-in-fails-with-aadsts9002326-redirect-uri-already-registered)
+        before filing; it resolves most cases in a couple of minutes.
+
+        > 🔒 **Do not paste tokens or secrets.** The values below (client id,
+        > tenant id, redirect URIs) are **not** secrets, but if you consider your
+        > tenant/client GUIDs sensitive you may mask the middle characters.
+  - type: input
+    id: aadsts-code
+    attributes:
+      label: Exact AADSTS code
+      placeholder: "e.g. AADSTS9002326"
+    validations:
+      required: true
+  - type: textarea
+    id: error-text
+    attributes:
+      label: Full error text
+      description: The complete error shown in the app and/or browser console.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: request-url
+    attributes:
+      label: Token request URL
+      description: From browser DevTools → Network. Include the path/tenant segment; you may trim query params.
+      placeholder: "https://login.microsoftonline.com/<tenant-guid>/oauth2/v2.0/token?..."
+  - type: markdown
+    attributes:
+      value: |
+        ### The key comparison
+
+        Sign-in uses the `VITE_CLIENT_ID` / `VITE_TENANT_ID` **baked into the running
+        build** (Vite inlines env vars at build time). Confirm they match the app you
+        edited in the portal's **Overview** blade. If you changed `.env`, you must
+        **rebuild** for it to take effect.
+  - type: input
+    id: env-client-id
+    attributes:
+      label: "`VITE_CLIENT_ID` in the sample's `.env`"
+      description: From the scaffolded sample's `.env` (or `.env.local`).
+    validations:
+      required: true
+  - type: input
+    id: env-tenant-id
+    attributes:
+      label: "`VITE_TENANT_ID` in the sample's `.env`"
+    validations:
+      required: true
+  - type: input
+    id: portal-client-id
+    attributes:
+      label: Application (client) ID shown in the portal Overview
+      description: Entra portal → App registrations → your app → Overview. Should equal `VITE_CLIENT_ID`.
+    validations:
+      required: true
+  - type: input
+    id: portal-tenant-id
+    attributes:
+      label: Directory (tenant) ID shown in the portal Overview
+      description: Should equal `VITE_TENANT_ID`.
+    validations:
+      required: true
+  - type: dropdown
+    id: rebuilt
+    attributes:
+      label: Did you rebuild the sample after the most recent `.env` change?
+      options:
+        - "Yes — rebuilt after editing .env"
+        - "No / not sure"
+        - "Did not edit .env"
+    validations:
+      required: true
+  - type: textarea
+    id: spa-redirects
+    attributes:
+      label: The signing-in app's SPA redirect URIs
+      description: |
+        Run this against the **client id from `.env`** and paste the output:
+        ```bash
+        az rest --method GET \
+          --url "https://graph.microsoft.com/v1.0/applications?\$filter=appId eq '<VITE_CLIENT_ID>'&\$select=appId,spa" \
+          -o json
+        ```
+      render: json
+    validations:
+      required: true
+  - type: dropdown
+    id: guest
+    attributes:
+      label: Is the signed-in user a guest/external (B2B) user in this tenant?
+      options:
+        - "No — member of the tenant"
+        - "Yes — guest/external user"
+        - "Not sure"
+  - type: dropdown
+    id: mcp-client
+    attributes:
+      label: MCP client used to scaffold/run
+      options:
+        - VS Code (Copilot)
+        - Cursor
+        - Claude Desktop
+        - Azure AI Foundry
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: server-version
+    attributes:
+      label: Server version
+      description: "`@microsoft/spe-mcp` version or commit SHA."
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I confirmed `VITE_CLIENT_ID` / `VITE_TENANT_ID` against the portal Overview and rebuilt after any `.env` change.
+          required: true
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I did **not** paste any tokens or secrets.
+          required: true

@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 📘 Support & documentation
+    url: https://github.com/microsoft/SharePoint-Embedded-MCP-Server/blob/main/SUPPORT.md
+    about: How to get help and where to find docs. Please search existing issues first.
+  - name: 📖 Troubleshooting guide
+    url: https://github.com/microsoft/SharePoint-Embedded-MCP-Server/blob/main/docs/TROUBLESHOOTING.md
+    about: Fixes for common problems — container-type registration delays, deploy/config, and sign-in (AADSTS) errors. Often resolves the issue without filing.
+  - name: 🔒 Report a security vulnerability
+    url: https://github.com/microsoft/SharePoint-Embedded-MCP-Server/blob/main/SECURITY.md
+    about: Do NOT open a public issue for security problems — follow the private process described here.

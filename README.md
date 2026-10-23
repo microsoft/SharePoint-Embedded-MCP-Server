@@ -16,7 +16,7 @@ Prefer the command line? Run `claude mcp add spe -- npx -y @microsoft/spe-mcp st
 
 - **Get started on Microsoft Learn:** [SharePoint Embedded MCP server](https://learn.microsoft.com/sharepoint/dev/embedded/getting-started/spe-mcp-server)
 - **SharePoint Embedded product docs:** <https://learn.microsoft.com/sharepoint/dev/embedded/>
-- **In this repo:** [Available Tools](#available-tools) · [Configuration](#configuration) · [Security controls](docs/SECURITY-CONTROLS.md) · [Troubleshooting](docs/TROUBLESHOOTING.md)
+- **In this repo:** [Available Tools](#available-tools) · [Configuration](#configuration) · [Security controls](docs/SECURITY-CONTROLS.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Report a bug](https://github.com/microsoft/SharePoint-Embedded-MCP-Server/issues/new/choose)
 
 ## Available Tools
 
