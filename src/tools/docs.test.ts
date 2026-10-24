@@ -62,6 +62,11 @@ describe("docs_search", () => {
   it("requires a query", async () => {
     const result = await searchDocsTool.handler({});
     expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe("Error: query is required");
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_ARGS", message: "query is required" },
+    });
     expect(docs.searchDocs).not.toHaveBeenCalled();
   });
 
@@ -71,9 +76,44 @@ describe("docs_search", () => {
       const result = await searchDocsTool.handler({ query } as Record<string, unknown>);
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toBe("Error: query is required");
+      expect(result.structuredContent).toMatchObject({
+        ok: false,
+        error: { code: "INVALID_ARGS", message: "query is required" },
+      });
       expect(docs.searchDocs).not.toHaveBeenCalled();
     },
   );
+
+  it.each(["", "   ", "\t\r\n"])("rejects a blank query (%p) without calling Learn", async (query) => {
+    const result = await searchDocsTool.handler({ query });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe("Error: query is required");
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_ARGS", message: "query is required" },
+    });
+    expect(docs.searchDocs).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["billing classifications", "billing classifications (SharePoint Embedded)"],
+    ["SharePoint Embedded container limits", "SharePoint Embedded container limits"],
+    ["SPE container limits", "SPE container limits"],
+  ])("trims a padded valid query (%s) before scoping and lookup", async (query, upstreamQuery) => {
+    vi.mocked(docs.searchDocs).mockResolvedValue("Learn results");
+
+    const result = await searchDocsTool.handler({ query: ` \t${query}\r\n ` });
+
+    expect(result.isError).toBeFalsy();
+    expect(docs.searchDocs).toHaveBeenCalledOnce();
+    expect(docs.searchDocs).toHaveBeenCalledWith(upstreamQuery);
+    expect(result.structuredContent).toMatchObject({
+      ok: true,
+      data: { query, text: "Learn results" },
+    });
+    expect(result.content[0].text).toBe(`## Microsoft Learn results for: ${query}\n\nLearn results`);
+  });
 
   it("surfaces upstream errors", async () => {
     vi.mocked(docs.searchDocs).mockRejectedValue(new Error("Learn MCP unreachable"));
@@ -110,6 +150,11 @@ describe("docs_fetch", () => {
   it("requires a url", async () => {
     const result = await fetchDocTool.handler({});
     expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe("Error: url is required");
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_ARGS", message: "url is required" },
+    });
     expect(docs.fetchDoc).not.toHaveBeenCalled();
   });
 
@@ -119,7 +164,39 @@ describe("docs_fetch", () => {
       const result = await fetchDocTool.handler({ url } as Record<string, unknown>);
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toBe("Error: url is required");
+      expect(result.structuredContent).toMatchObject({
+        ok: false,
+        error: { code: "INVALID_ARGS", message: "url is required" },
+      });
       expect(docs.fetchDoc).not.toHaveBeenCalled();
     },
   );
+
+  it.each(["", "   ", "\t\r\n"])("rejects a blank url (%p) without calling Learn", async (url) => {
+    const result = await fetchDocTool.handler({ url });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe("Error: url is required");
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_ARGS", message: "url is required" },
+    });
+    expect(docs.fetchDoc).not.toHaveBeenCalled();
+  });
+
+  it("trims a padded valid url before fetching the page", async () => {
+    const url = "https://learn.microsoft.com/sharepoint/dev/embedded/overview";
+    vi.mocked(docs.fetchDoc).mockResolvedValue("# Full page\n\nbody");
+
+    const result = await fetchDocTool.handler({ url: ` \t${url}\r\n ` });
+
+    expect(result.isError).toBeFalsy();
+    expect(docs.fetchDoc).toHaveBeenCalledOnce();
+    expect(docs.fetchDoc).toHaveBeenCalledWith(url);
+    expect(result.content[0].text).toBe("# Full page\n\nbody");
+    expect(result.structuredContent).toMatchObject({
+      ok: true,
+      data: { url, text: "# Full page\n\nbody" },
+    });
+  });
 });

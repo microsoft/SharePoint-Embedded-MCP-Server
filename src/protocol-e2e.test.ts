@@ -202,6 +202,35 @@ describe("MCP protocol-level e2e (spawned dist/cli.js start)", () => {
     expect(content.some((c) => /unknown tool/i.test(c.text))).toBe(true);
   });
 
+  describe.each([
+    { name: "docs_search", field: "query" },
+    { name: "docs_fetch", field: "url" },
+  ])("$name argument validation over the wire", ({ name, field }) => {
+    it.each([123, {}, [], true, null, undefined])(
+      "returns INVALID_ARGS for a non-string or missing argument (%p) without leaking internals",
+      async (value) => {
+        const res = await client.callTool(
+          { name, arguments: value === undefined ? {} : { [field]: value } },
+          undefined,
+          { timeout: CALL_TIMEOUT_MS },
+        );
+
+        expect(res.isError).toBe(true);
+        const sc = res.structuredContent as StructuredError | undefined;
+        expect(sc).toMatchObject({
+          ok: false,
+          error: {
+            code: "INVALID_ARGS",
+            message: expect.stringContaining(`${field} is required`),
+          },
+        });
+        const content = res.content as Array<{ type: string; text: string }>;
+        expect(content[0].text).toContain(`Error: ${field} is required`);
+        expect(JSON.stringify(res)).not.toMatch(/TypeError|\.trim|not a function/i);
+      },
+    );
+  });
+
   // (e) Content-gate fail-closed: a content tool BEFORE any grant => isError,
   //     returns the gate message, does NOT hang, and makes no Graph call.
   it("fails closed on a content-plane tool before content access is granted", async () => {
