@@ -2,7 +2,7 @@
 // Licensed under the MIT license.
 
 /**
- * Unit tests for project_hydrate_config azure.yaml emission.
+ * Unit tests for project_hydrate_config output allowlisting and azure.yaml emission.
  *
  * The bug: hydrate emitted a constant azure.yaml (name spe-app, language ts,
  * host staticwebapp), clobbering a C# (containerapp) scaffold — flipping the host
@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -42,6 +42,135 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
+});
+
+describe("project_hydrate_config output contract", () => {
+  it("writes only supported configuration and excludes unrelated persisted state from files and results", async () => {
+    const unrelatedState = {
+      appObjectId: "sentinel-app-object-id",
+      appDisplayName: "sentinel-app-display-name",
+      containerTypeName: "sentinel-container-type-name",
+      syntexAccountResourceId: "sentinel-syntex-account-resource-id",
+      containerName: "sentinel-container-name",
+      confirmedSessionId: "sentinel-confirmed-session-id",
+      contextConfirmedAt: "sentinel-context-confirmed-at",
+      clientSecret: "sentinel-client-secret",
+      accessToken: "sentinel-access-token",
+      refreshToken: "sentinel-refresh-token",
+      tokenCache: { credential: "sentinel-nested-token-cache" },
+    };
+    Object.assign(stateStore, unrelatedState, {
+      tenantId: "tenant-allowed",
+      appId: "client-allowed",
+      containerTypeId: "container-type-allowed",
+      containerId: "container-allowed",
+      azureSubscriptionId: "subscription-allowed",
+      resourceGroup: "resource-group-allowed",
+      scaffoldArchitecture: "csharp-web",
+      projectName: "contoso-config",
+      contentAccessGranted: true,
+      owningAppManagesAllContainerTypes: true,
+      ownerScope: "manage-all",
+      billingClassification: "standard",
+    });
+
+    const result = await hydrateConfigTool.handler({ targetDir: dir });
+
+    expect(result.isError).toBeFalsy();
+    expect(readdirSync(dir).sort()).toEqual([".env", "appsettings.Development.json", "azure.yaml"]);
+    const env = readFileSync(join(dir, ".env"), "utf-8");
+    expect(env.split("\n").filter((line) => line && !line.startsWith("#"))).toEqual([
+      "TENANT_ID=tenant-allowed",
+      "CLIENT_ID=client-allowed",
+      "CONTAINER_TYPE_ID=container-type-allowed",
+      "CONTAINER_ID=container-allowed",
+      "VITE_TENANT_ID=tenant-allowed",
+      "VITE_CLIENT_ID=client-allowed",
+      "VITE_CONTAINER_TYPE_ID=container-type-allowed",
+      "VITE_CONTAINER_ID=container-allowed",
+      "AZURE_SUBSCRIPTION_ID=subscription-allowed",
+      "AZURE_RESOURCE_GROUP=resource-group-allowed",
+    ]);
+    const settings = readFileSync(join(dir, "appsettings.Development.json"), "utf-8");
+    expect(JSON.parse(settings)).toEqual({
+      SharePointEmbedded: {
+        TenantId: "tenant-allowed",
+        ClientId: "client-allowed",
+        ContainerTypeId: "container-type-allowed",
+        ContainerId: "container-allowed",
+      },
+    });
+    const yaml = readFileSync(join(dir, "azure.yaml"), "utf-8");
+    expect(yaml).toBe(
+      "# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json\n" +
+      "name: contoso-config\nmetadata:\n  template: spe-builder-mcp\n" +
+      "services:\n  web:\n    project: .\n    language: dotnet\n    host: containerapp\n" +
+      "    docker:\n      path: ./Dockerfile\n",
+    );
+    expect(result.content).toEqual([{
+      type: "text",
+      text:
+        "## Config Hydrated\n\n" +
+        `Wrote 3 file(s) to \`${dir}\`:\n\n` +
+        "- `.env`\n- `appsettings.Development.json`\n- `azure.yaml`\n\n" +
+        "| Key | Value |\n|-----|-------|\n" +
+        "| TENANT_ID | `tenant-allowed` |\n" +
+        "| CLIENT_ID | `client-allowed` |\n" +
+        "| CONTAINER_TYPE_ID | `container-type-allowed` |\n" +
+        "| CONTAINER_ID | `container-allowed` |\n",
+    }]);
+    const emitted = [env, settings, yaml, JSON.stringify(result)].join("\n");
+    for (const [key, value] of Object.entries(unrelatedState)) {
+      expect(emitted).not.toContain(key);
+      expect(emitted).not.toContain(typeof value === "string" ? value : value.credential);
+    }
+  });
+
+  it.each([
+    { azureSubscriptionId: undefined, resourceGroup: undefined },
+    { azureSubscriptionId: "", resourceGroup: "" },
+    { azureSubscriptionId: "subscription-only", resourceGroup: undefined },
+    { azureSubscriptionId: undefined, resourceGroup: "resource-group-only" },
+  ])("preserves optional provisioning values: %j", async (optionalState) => {
+    delete stateStore.tenantId;
+    Object.assign(stateStore, optionalState);
+
+    const result = await hydrateConfigTool.handler({ targetDir: dir });
+
+    expect(result.isError).toBeFalsy();
+    const assignments = [
+      "TENANT_ID=",
+      "CLIENT_ID=app-1",
+      "CONTAINER_TYPE_ID=ct-1",
+      "CONTAINER_ID=",
+      "VITE_TENANT_ID=",
+      "VITE_CLIENT_ID=app-1",
+      "VITE_CONTAINER_TYPE_ID=ct-1",
+      "VITE_CONTAINER_ID=",
+    ];
+    if (optionalState.azureSubscriptionId) {
+      assignments.push(`AZURE_SUBSCRIPTION_ID=${optionalState.azureSubscriptionId}`);
+    }
+    if (optionalState.resourceGroup) {
+      assignments.push(`AZURE_RESOURCE_GROUP=${optionalState.resourceGroup}`);
+    }
+    expect(readFileSync(join(dir, ".env"), "utf-8")
+      .split("\n").filter((line) => line && !line.startsWith("#"))).toEqual(assignments);
+    expect(JSON.parse(readFileSync(join(dir, "appsettings.Development.json"), "utf-8"))).toEqual({
+      SharePointEmbedded: {
+        TenantId: "",
+        ClientId: "app-1",
+        ContainerTypeId: "ct-1",
+        ContainerId: "",
+      },
+    });
+    expect(readFileSync(join(dir, "azure.yaml"), "utf-8")).toBe(
+      "# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json\n" +
+      "name: spe-app\nmetadata:\n  template: spe-builder-mcp\n" +
+      "services:\n  web:\n    project: .\n    language: ts\n    host: staticwebapp\n    dist: dist\n",
+    );
+    expect(result.content[0].text).toContain("| CONTAINER_ID | `(pending)` |");
+  });
 });
 
 describe("project_hydrate_config azure.yaml", () => {
@@ -161,12 +290,15 @@ describe("project_hydrate_config formats validation", () => {
     expect(result.content[0].text).not.toContain("Config Hydrated");
   });
 
-  it("writes only the requested valid format", async () => {
-    const result = await hydrateConfigTool.handler({ targetDir: dir, formats: ["env"] });
+  it.each([
+    ["env", ".env"],
+    ["appsettings", "appsettings.Development.json"],
+    ["azureyaml", "azure.yaml"],
+  ])("writes only the requested %s format", async (format, filename) => {
+    const result = await hydrateConfigTool.handler({ targetDir: dir, formats: [format] });
 
     expect(result.isError).toBeFalsy();
-    expect(existsSync(join(dir, ".env"))).toBe(true);
-    expect(existsSync(join(dir, "appsettings.Development.json"))).toBe(false);
+    expect(readdirSync(dir)).toEqual([filename]);
     expect(result.content[0].text).toContain("Config Hydrated");
   });
 
