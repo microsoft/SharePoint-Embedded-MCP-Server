@@ -175,6 +175,36 @@ describe("MCP protocol-level e2e (spawned dist/cli.js start)", () => {
     expect(del?.annotations?.destructiveHint).toBe(true);
   });
 
+  it("advertises container-type deletion safeguards and optional boolean controls over the wire", async () => {
+    const { tools } = await client.listTools(undefined, { timeout: CALL_TIMEOUT_MS });
+    const del = tools.find((tool) => tool.name === "container_type_delete");
+    expect(del).toBeDefined();
+    expect(del).not.toHaveProperty("handler");
+    expect(del?.annotations?.destructiveHint).toBe(true);
+    expect(del?.annotations?.readOnlyHint).not.toBe(true);
+    expect(del?.description).toContain("Trial-only by default");
+    expect(del?.description).toContain("direct-to-customer");
+    expect(del?.description).toContain("PROTECTED");
+    expect(del?.description).toContain("deleteStandard=true");
+    expect(del?.description).toContain("Requires confirm=true");
+    expect(del?.inputSchema.type).toBe("object");
+    expect(del?.inputSchema.properties).toEqual({
+      containerTypeId: {
+        type: "string",
+        description: expect.stringContaining("Default: the provisioned container type"),
+      },
+      confirm: {
+        type: "boolean",
+        description: expect.stringContaining("Must be true"),
+      },
+      deleteStandard: {
+        type: "boolean",
+        description: expect.stringContaining("Override to delete a STANDARD / direct-to-customer"),
+      },
+    });
+    expect(del?.inputSchema.required ?? []).toEqual([]);
+  });
+
   // (c) tools/call happy path on a SAFE, no-network tool. content_access_grant
   //     with no confirm returns guidance content and touches no Graph/Azure/state.
   it("calls a safe no-network tool (content_access_grant) successfully", async () => {
