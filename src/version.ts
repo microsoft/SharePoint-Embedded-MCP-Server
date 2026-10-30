@@ -21,7 +21,19 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const packageJsonPath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
-const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as { version: string };
+const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
+  version: string;
+  name: string;
+};
 
 /** The product version, sourced from `package.json`. */
 export const PACKAGE_VERSION: string = packageJson.version;
+
+/**
+ * The published npm package name, sourced from `package.json`.
+ *
+ * Consumed by the update-awareness check (update-check.ts) so the registry it
+ * queries and the package spec it reports always name the package this build was
+ * actually cut from, even if the package is ever renamed.
+ */
+export const PACKAGE_NAME: string = packageJson.name;
