@@ -53,6 +53,32 @@ The server exposes **40 tools**, plus an MCP **Prompt** (`provision_spe_app`) an
 | `project_run_local` | Start the scaffolded app locally |
 | `project_deploy` | Deploy to Azure with `azd up`, return the live URL |
 
+### Project names and existing configuration
+
+`project_scaffold` accepts names of 1-64 ASCII letters, digits, hyphens and
+underscores, starting with a letter or digit (default: `spe-app`). Names are
+preserved exactly, not trimmed or renamed. Spaces, punctuation outside this
+set, control characters and multiline names are rejected. Generated
+`azure.yaml` names are quoted strings, including names such as `true` or `123`.
+Hydration validates saved names before writing any selected output and preserves
+existing architecture settings, hooks and custom configuration.
+
+Updating the package does not repair previously generated files. Before running
+or deploying an existing project, its owner should review `azure.yaml`, including
+its root name, services and hooks, against the intended project configuration.
+Review the saved `projectName` in the active data directory's `state.json`
+(default `~/.spe-mcp/state.json`) and explicitly correct unsupported names and
+corresponding project files. Back up files first; hydration only fills missing
+top-level YAML blocks and does not replace existing names or hooks. Do not run
+unreviewed hooks as part of this review. This update does not execute, delete or
+rewrite user-authored hooks.
+
+Deployment still uses `azd up --no-prompt`, which can execute hooks from the
+project configuration. Shell-free process launching does not disable azd hooks,
+and `--no-prompt` is not owner approval. Review the project and approve deployment
+through your MCP host's existing tool policy; deployment permissions and approval
+semantics are unchanged.
+
 **Content plane (opt-in) & lifecycle**
 
 | Tool | Description |

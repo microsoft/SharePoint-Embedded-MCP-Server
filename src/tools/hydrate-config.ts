@@ -15,6 +15,7 @@ import { join, resolve } from "node:path";
 import { buildAzureYaml, findArchitecture } from "../reference-architectures.js";
 import { readState } from "../state.js";
 import type { McpTool } from "../types.js";
+import { requireProjectName } from "../validation.js";
 
 interface HydrateArgs {
   targetDir?: string;
@@ -66,7 +67,7 @@ function appSettings(s: ReturnType<typeof readState>): string {
  * service. We derive name/language/host from the recorded scaffold instead.
  */
 function azureYaml(s: ReturnType<typeof readState>): string {
-  const name = s.projectName ?? "spe-app";
+  const name = s.projectName === undefined ? "spe-app" : s.projectName;
   const arch = s.scaffoldArchitecture ? findArchitecture(s.scaffoldArchitecture) : undefined;
   if (arch) {
     return buildAzureYaml(name, arch.language, arch.host);
@@ -195,6 +196,9 @@ export const hydrateConfigTool: McpTool = {
       selectedFormats = formats;
     }
 
+    const parsedName = requireProjectName(state.projectName === undefined ? "spe-app" : state.projectName);
+    if (!parsedName.ok) return parsedName.error;
+
     if (!state.appId || !state.containerTypeId) {
       return {
         content: [{ type: "text" as const, text: "Error: nothing to hydrate — provision an SPE app first (project_provision)." }],
@@ -204,23 +208,24 @@ export const hydrateConfigTool: McpTool = {
 
     try {
       const dir = resolve(targetDir);
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-
+      const pending: { filename: string; content: string; report: string }[] = [];
       const written: string[] = [];
+      let keptAzureYaml = false;
       if (selectedFormats.includes("env")) {
-        writeFileSync(join(dir, ".env"), envFile(state), "utf-8");
-        written.push(".env");
+        pending.push({ filename: ".env", content: envFile(state), report: ".env" });
       }
       if (selectedFormats.includes("appsettings")) {
-        writeFileSync(join(dir, "appsettings.Development.json"), appSettings(state), "utf-8");
-        written.push("appsettings.Development.json");
+        pending.push({
+          filename: "appsettings.Development.json",
+          content: appSettings(state),
+          report: "appsettings.Development.json",
+        });
       }
       if (selectedFormats.includes("azureyaml")) {
         const azureYamlPath = join(dir, "azure.yaml");
         const generated = azureYaml(state);
         if (!existsSync(azureYamlPath)) {
-          writeFileSync(azureYamlPath, generated, "utf-8");
-          written.push("azure.yaml");
+          pending.push({ filename: "azure.yaml", content: generated, report: "azure.yaml" });
         } else {
           // Preserve the scaffold's (and any user-customized) azure.yaml — only
           // fill top-level keys it is MISSING; never overwrite existing content
@@ -229,13 +234,23 @@ export const hydrateConfigTool: McpTool = {
           const existing = readFileSync(azureYamlPath, "utf-8");
           const { content, filled } = mergeAzureYaml(existing, generated);
           if (filled.length > 0) {
-            writeFileSync(azureYamlPath, content, "utf-8");
-            written.push(`azure.yaml (merged; filled: ${filled.join(", ")})`);
+            pending.push({
+              filename: "azure.yaml",
+              content,
+              report: `azure.yaml (merged; filled: ${filled.join(", ")})`,
+            });
           } else {
-            written.push("azure.yaml (kept existing — scaffold config preserved)");
+            keptAzureYaml = true;
           }
         }
       }
+
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      for (const file of pending) {
+        writeFileSync(join(dir, file.filename), file.content, "utf-8");
+        written.push(file.report);
+      }
+      if (keptAzureYaml) written.push("azure.yaml (kept existing — scaffold config preserved)");
 
       const output =
         "## Config Hydrated\n\n" +

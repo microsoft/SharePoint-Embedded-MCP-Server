@@ -20,6 +20,7 @@ import { existsSync, rmSync } from "node:fs";
 import { getDataDir, getStateFile } from "./paths.js";
 import { ensureSecureDir, readSecureFile, writeSecureFile } from "./secure-fs.js";
 import type { BillingClassification, OwnerScope } from "./types.js";
+import { assertProjectName } from "./validation.js";
 
 export interface ProvisioningState {
   tenantId?: string;
@@ -41,7 +42,7 @@ export interface ProvisioningState {
   contentAccessGranted?: boolean;
   /** Reference architecture id last scaffolded (e.g., 'react-spa-functions', 'csharp-web'). */
   scaffoldArchitecture?: string;
-  /** Project name used by the last scaffold (drives azure.yaml service name on hydrate). */
+  /** Validated project name used by the last scaffold (azure.yaml root name on hydrate). */
   projectName?: string;
   // ── Session confirmation (GitHub PR #3 review, r-appgate) ──────────────────
   /**
@@ -86,6 +87,7 @@ export function readState(): ProvisioningState {
 }
 
 export function writeState(patch: Partial<ProvisioningState>): ProvisioningState {
+  if (patch.projectName !== undefined) assertProjectName(patch.projectName);
   const next = { ...readState(), ...patch };
   ensureSecureDir(getDataDir());
   // SEC-003: state can hold tenant/app/subscription IDs — owner-only (0o600).

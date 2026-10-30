@@ -35,6 +35,28 @@ export function validationError(message: string): McpToolResult {
   };
 }
 
+/** Project names are preserved exactly: 1–64 ASCII alphanumerics, `_` or `-`,
+ * starting with an alphanumeric. No trimming or implicit renaming.
+ */
+export const PROJECT_NAME_PATTERN = "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}(?![\\s\\S])";
+const PROJECT_NAME_RE = new RegExp(PROJECT_NAME_PATTERN);
+const PROJECT_NAME_ERROR =
+  "projectName must be 1-64 ASCII letters, digits, hyphens or underscores, starting with a letter or digit";
+
+export function requireProjectName(
+  value: unknown,
+): { ok: true; value: string } | { ok: false; error: McpToolResult } {
+  if (typeof value !== "string" || value.length > 64 || !PROJECT_NAME_RE.test(value)) {
+    return { ok: false, error: validationError(PROJECT_NAME_ERROR) };
+  }
+  return { ok: true, value };
+}
+
+export function assertProjectName(value: unknown): asserts value is string {
+  const parsed = requireProjectName(value);
+  if (!parsed.ok) throw new Error(PROJECT_NAME_ERROR);
+}
+
 /**
  * Require that `value` is a non-empty (after trim) string.
  *

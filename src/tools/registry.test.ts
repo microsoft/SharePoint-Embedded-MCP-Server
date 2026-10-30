@@ -196,6 +196,17 @@ describe("Tool Registry", () => {
 });
 
 describe("Tool Input Validation", () => {
+  it("advertises the exact project-name contract while keeping the default optional", () => {
+    expect(scaffoldTool.inputSchema.properties?.projectName).toEqual({
+      type: "string",
+      minLength: 1,
+      maxLength: 64,
+      pattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}(?![\\s\\S])",
+      description: expect.stringContaining("Preserved exactly. Default: 'spe-app'."),
+    });
+    expect(scaffoldTool.inputSchema.required ?? []).not.toContain("projectName");
+  });
+
   it("tools with required params list them in schema", () => {
     // Tools that should have required params
     const toolsWithRequired = [

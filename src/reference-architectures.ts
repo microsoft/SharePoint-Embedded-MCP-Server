@@ -21,6 +21,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertProjectName } from "./validation.js";
 
 export interface ReferenceArchitecture {
   id: string;
@@ -43,9 +44,10 @@ export interface ReferenceArchitecture {
  * emitted so azd builds the image from the project's Dockerfile.
  */
 export function buildAzureYaml(name: string, language: string, host: string): string {
+  assertProjectName(name);
   const lines = [
     "# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json",
-    `name: ${name}`,
+    `name: ${JSON.stringify(name)}`,
     "metadata:",
     "  template: spe-builder-mcp",
     "services:",

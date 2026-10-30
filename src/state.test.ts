@@ -2,7 +2,7 @@
 // Licensed under the MIT license.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, normalize } from "node:path";
 import { readState, writeState, clearState } from "./state.js";
@@ -34,6 +34,22 @@ describe("state — per-instance isolation via the data-dir seam", () => {
     expect(getStateFile()).toBe(join(normalize(dirA), "state.json"));
     expect(readState().tenantId).toBe("tenant-A");
   });
+
+  it.each(["a\n", "a: b", "", "a".repeat(65), null, 123, {}, []])(
+    "rejects invalid project-name patches without creating or changing state (%p)",
+    (projectName) => {
+      setDataDirOverride(dirA);
+      // @ts-expect-error Deliberately malformed runtime state patch.
+      expect(() => writeState({ projectName })).toThrow("projectName must be");
+      expect(existsSync(getStateFile())).toBe(false);
+      writeState({ projectName: "Valid_123", tenantId: "original" });
+      const before = readFileSync(getStateFile(), "utf-8");
+      // @ts-expect-error Deliberately malformed runtime state patch.
+      expect(() => writeState({ projectName, tenantId: "changed" })).toThrow("projectName must be");
+      expect(readFileSync(getStateFile(), "utf-8")).toBe(before);
+      expect(readState().projectName).toBe("Valid_123");
+    },
+  );
 
   it("keeps two instances isolated: writing dir B leaves dir A byte-identical", () => {
     // Instance A writes its state.
