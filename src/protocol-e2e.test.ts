@@ -204,6 +204,66 @@ describe("MCP protocol-level e2e (spawned dist/cli.js start)", () => {
     expect(hydrate?.annotations?.readOnlyHint).not.toBe(true);
   });
 
+  it("discovers registration-scoped app-grant tools without legacy aliases", async () => {
+    const { tools } = await client.listTools(undefined, { timeout: CALL_TIMEOUT_MS });
+    const names = tools.map((tool) => tool.name);
+    for (const [name, required] of [
+      ["container_type_registration_app_grant_add", []],
+      ["container_type_registration_app_grants_list", []],
+      ["container_type_registration_app_grant_remove", ["appId"]],
+    ] as const) {
+      expect(names.filter((entry) => entry === name)).toHaveLength(1);
+      const tool = tools.find((entry) => entry.name === name);
+      expect(tool?.description).toContain("container type registration");
+      expect(tool?.description).toContain("Microsoft Graph v1.0");
+      expect(tool?.inputSchema.required ?? []).toEqual(required);
+    }
+    expect(tools.find((tool) => tool.name === "container_type_registration_app_grants_list")?.annotations?.readOnlyHint).toBe(true);
+    expect(tools.find((tool) => tool.name === "container_type_registration_app_grant_remove")?.annotations?.destructiveHint).toBe(true);
+    for (const name of [
+      "container_type_app_grant_add",
+      "container_type_app_grants_list",
+      "container_type_app_grant_remove",
+    ]) {
+      expect(names).not.toContain(name);
+    }
+  });
+
+  it.each([
+    "container_type_registration_app_grant_add",
+    "container_type_registration_app_grants_list",
+    "container_type_registration_app_grant_remove",
+  ])("dispatches %s to its handler offline with no provisioning state", async (name) => {
+    const result = await client.callTool(
+      { name, arguments: { appId: "app-test" } },
+      undefined,
+      { timeout: CALL_TIMEOUT_MS },
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content).toEqual([
+      { type: "text", text: "Error: no containerTypeId provided and none in provisioning state." },
+    ]);
+  });
+
+  it.each([
+    "container_type_app_grant_add",
+    "container_type_app_grants_list",
+    "container_type_app_grant_remove",
+  ])("returns the existing UNKNOWN_TOOL response for removed name %s", async (name) => {
+    const result = await client.callTool(
+      { name, arguments: { appId: "app-test" } },
+      undefined,
+      { timeout: CALL_TIMEOUT_MS },
+    );
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      error: { code: "UNKNOWN_TOOL", message: `Unknown tool: ${name}` },
+      durationMs: expect.any(Number),
+    });
+    expect(result.content).toContainEqual({ type: "text", text: `Error: Unknown tool: ${name}` });
+  });
+
   it("preserves project names as data over scaffold and hydration protocol calls", async () => {
     const stateFile = join(isolatedHome, "data", "state.json");
     for (const architecture of ["react-spa-functions", "csharp-web"]) {

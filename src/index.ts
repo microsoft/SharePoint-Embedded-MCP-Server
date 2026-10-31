@@ -136,7 +136,7 @@ const TOOLS: McpTool[] = [
   // CRUD map (the *registration* is the tenant↔containerType binding):
   //   Create → container_type_register (registerContainerTypeTool, above)
   //   Read   → container_type_registration_get / _list (below)
-  //   Update → container_type_app_grant_add (change the app permission grants;
+  //   Update → container_type_registration_app_grant_add (change the app permission grants;
   //            registration has no other mutable fields exposed here)
   //   Delete → container_type_registration_delete (below)
   // There is intentionally no standalone "registration create/update" tool: PUT

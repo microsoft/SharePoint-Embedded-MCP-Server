@@ -33,7 +33,23 @@ The server exposes **40 tools**, plus an MCP **Prompt** (`provision_spe_app`) an
 | `container_type_list` / `container_list` / `container_get` / `container_type_get` | Read operations |
 | `container_type_update` / `container_type_delete` | Update or delete a container type |
 | `container_type_grant_owner` / `container_type_revoke_owner` / `container_type_owners_list` | Manage container-type owners (beta; enables PCA container creation) |
-| `container_type_app_grant_add` / `container_type_app_grant_remove` / `container_type_app_grants_list` | Manage application permission grants on a container type registration (authorize consuming apps; v1.0) |
+| `container_type_registration_app_grant_add` / `container_type_registration_app_grant_remove` / `container_type_registration_app_grants_list` | Manage application permission grants on a container type registration (authorize consuming apps; v1.0) |
+
+**Breaking tool-name change:** app grants belong to container type registrations.
+The following public names replace the old names; no legacy aliases are retained.
+Update saved tool calls, prompts and explicit `--tools` / `SPE_TOOLS` allowlists,
+and refresh your client's tool discovery.
+
+| Removed name | Replacement |
+|--------------|-------------|
+| `container_type_app_grant_add` | `container_type_registration_app_grant_add` |
+| `container_type_app_grants_list` | `container_type_registration_app_grants_list` |
+| `container_type_app_grant_remove` | `container_type_registration_app_grant_remove` |
+
+Calls to removed names return the existing `UNKNOWN_TOOL` error. Only the public
+names change: Microsoft Graph v1.0 `applicationPermissionGrants` behavior,
+arguments and defaults, permissions, authentication and confirmation requirements
+remain unchanged.
 
 **Billing**
 
