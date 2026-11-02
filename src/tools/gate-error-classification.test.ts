@@ -68,8 +68,8 @@ beforeEach(() => {
 const gatedTools: Array<{ label: string; tool: McpTool; contains: string }> = [
   { label: "container_type_register", tool: registerContainerTypeTool, contains: "registering container type" },
   { label: "container_type_create", tool: createContainerTypeTool, contains: "creating container type" },
-  { label: "container_type_app_grant_add", tool: addContainerTypeAppGrantTool, contains: "granting app permission" },
-  { label: "container_type_app_grant_remove", tool: removeContainerTypeAppGrantTool, contains: "removing app permission grant" },
+  { label: "container_type_registration_app_grant_add", tool: addContainerTypeAppGrantTool, contains: "granting app permission" },
+  { label: "container_type_registration_app_grant_remove", tool: removeContainerTypeAppGrantTool, contains: "removing app permission grant" },
   { label: "container_type_grant_owner", tool: grantContainerTypeOwnerTool, contains: "granting owner" },
   { label: "container_type_revoke_owner", tool: revokeContainerTypeOwnerTool, contains: "revoking owner" },
 ];

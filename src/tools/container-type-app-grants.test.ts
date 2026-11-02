@@ -2,7 +2,7 @@
 // Licensed under the MIT license.
 
 /**
- * Unit tests for the container-type application-permission-grant tools
+ * Unit tests for the container-type-registration application-permission-grant tools
  * (v1.0 `applicationPermissionGrants` on a container type registration).
  * graph-client / auth / state are mocked so these run offline.
  */
@@ -45,7 +45,7 @@ beforeEach(() => {
   Object.assign(stateStore, { appId: "app-1", tenantId: "t-1", containerTypeId: "ct-1", confirmedSessionId: getSessionId() });
 });
 
-describe("container_type_app_grant_add", () => {
+describe("container_type_registration_app_grant_add", () => {
   it("defaults the container type + appId to state and grants `full` delegated / `none` app-only (opt-in)", async () => {
     const r = await addContainerTypeAppGrantTool.handler({});
     expect(setAuthConfig).toHaveBeenCalledWith({ clientId: "app-1", tenantId: "t-1" });
@@ -94,7 +94,7 @@ describe("container_type_app_grant_add", () => {
   });
 });
 
-describe("container_type_app_grants_list", () => {
+describe("container_type_registration_app_grants_list", () => {
   it("lists grants for the provisioned container type", async () => {
     const r = await listContainerTypeAppGrantsTool.handler({});
     expect(graph.listContainerTypeAppPermissions).toHaveBeenCalledWith("ct-1");
@@ -110,7 +110,7 @@ describe("container_type_app_grants_list", () => {
   });
 });
 
-describe("container_type_app_grant_remove", () => {
+describe("container_type_registration_app_grant_remove", () => {
   it("removes a grant by appId", async () => {
     const r = await removeContainerTypeAppGrantTool.handler({ appId: "app-2" });
     expect(graph.revokeContainerTypeAppPermission).toHaveBeenCalledWith("ct-1", "app-2");
@@ -120,6 +120,33 @@ describe("container_type_app_grant_remove", () => {
   it("requires an appId", async () => {
     const r = await removeContainerTypeAppGrantTool.handler({});
     expect(r.isError).toBe(true);
+    expect(r.content[0].text).toContain("see container_type_registration_app_grants_list");
     expect(graph.revokeContainerTypeAppPermission).not.toHaveBeenCalled();
   });
+});
+
+describe("registration app-grant public contract", () => {
+  it.each([
+    [addContainerTypeAppGrantTool, "container_type_registration_app_grant_add", { plane: "control" }, []],
+    [listContainerTypeAppGrantsTool, "container_type_registration_app_grants_list", { readOnly: true }, []],
+    [removeContainerTypeAppGrantTool, "container_type_registration_app_grant_remove", { destructive: true, plane: "control" }, ["appId"]],
+  ] as const)("preserves registration-scoped names and metadata (%#)", (tool, name, annotations, required) => {
+    expect(tool.name).toBe(name);
+    expect(tool.annotations).toEqual(annotations);
+    expect(tool.inputSchema.required ?? []).toEqual(required);
+    expect(tool.description).toContain("container type registration");
+    expect(tool.description).toContain("Microsoft Graph v1.0");
+  });
+
+  it.each([addContainerTypeAppGrantTool, removeContainerTypeAppGrantTool])(
+    "$name still asks to confirm a remembered context before mutating grants",
+    async (tool) => {
+      delete stateStore.confirmedSessionId;
+      const r = await tool.handler({ appId: "app-2" });
+      expect(r.content[0].text).toContain("Confirm the active SharePoint Embedded context");
+      expect(graph.grantContainerTypeAppPermission).not.toHaveBeenCalled();
+      expect(graph.revokeContainerTypeAppPermission).not.toHaveBeenCalled();
+      expect(setAuthConfig).not.toHaveBeenCalled();
+    },
+  );
 });

@@ -22,10 +22,19 @@ Use these natural-language prompts for MCP UX regression across clients.
 - `container_type_grant_owner`: "Grant another app owner access to this container type."
 - `container_type_owners_list`: "List owner grants on this container type."
 - `container_type_revoke_owner`: "Revoke an owner grant from this container type."
-- `container_type_app_grant_add`: "Authorize a consuming app for this registered container type."
-- `container_type_app_grants_list`: "List consuming app grants for this container type registration."
-- `container_type_app_grant_remove`: "Remove a consuming app grant from this container type registration."
+- `container_type_registration_app_grant_add`: "Authorize a consuming app on this container type registration."
+- `container_type_registration_app_grants_list`: "List consuming app grants for this container type registration."
+- `container_type_registration_app_grant_remove`: "Remove a consuming app grant from this container type registration."
 - `container_type_delete`: "Delete this unused trial container type after confirming what will be removed."
+
+### App-grant tool-name migration
+
+Use the registration-scoped names above for discovery and invocation. This is an
+intentional breaking change with no aliases; see the [old-to-new mapping](../README.md#available-tools).
+Verify that `container_type_app_grant_add`, `container_type_app_grants_list` and
+`container_type_app_grant_remove` are absent from discovery and each returns
+`UNKNOWN_TOOL` when called. Arguments, defaults, Graph v1.0 behavior, permissions,
+authentication and confirmation requirements are unchanged.
 
 ## Billing flow
 
