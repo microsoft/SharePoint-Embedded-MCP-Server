@@ -62,7 +62,43 @@ describe("docs_search", () => {
   it("requires a query", async () => {
     const result = await searchDocsTool.handler({});
     expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_ARGS", message: "query is required" },
+    });
     expect(docs.searchDocs).not.toHaveBeenCalled();
+  });
+
+  it.each(["", " ", "\t\r\n"])(
+    "rejects a blank query (%p) without calling Learn",
+    async (query) => {
+      const result = await searchDocsTool.handler({ query });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toBe("Error: query is required");
+      expect(result.structuredContent).toMatchObject({
+        ok: false,
+        error: { code: "INVALID_ARGS", message: "query is required" },
+      });
+      expect(docs.searchDocs).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [" \tcontainer limits\r\n ", "container limits (SharePoint Embedded)"],
+    [" \tSharePoint Embedded container limits\r\n ", "SharePoint Embedded container limits"],
+  ])("trims a padded query (%p) before calling Learn", async (query, expectedQuery) => {
+    vi.mocked(docs.searchDocs).mockResolvedValue("container limits result");
+
+    const result = await searchDocsTool.handler({ query });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain("container limits result");
+    expect(result.structuredContent).toMatchObject({
+      ok: true,
+      data: { query: query.trim(), text: "container limits result" },
+    });
+    expect(docs.searchDocs).toHaveBeenCalledExactlyOnceWith(expectedQuery);
   });
 
   it.each([123, {}, [], true, null])(
@@ -71,6 +107,10 @@ describe("docs_search", () => {
       const result = await searchDocsTool.handler({ query } as Record<string, unknown>);
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toBe("Error: query is required");
+      expect(result.structuredContent).toMatchObject({
+        ok: false,
+        error: { code: "INVALID_ARGS", message: "query is required" },
+      });
       expect(docs.searchDocs).not.toHaveBeenCalled();
     },
   );
@@ -110,7 +150,41 @@ describe("docs_fetch", () => {
   it("requires a url", async () => {
     const result = await fetchDocTool.handler({});
     expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_ARGS", message: "url is required" },
+    });
     expect(docs.fetchDoc).not.toHaveBeenCalled();
+  });
+
+  it.each(["", " ", "\t\r\n"])(
+    "rejects a blank url (%p) without calling Learn",
+    async (url) => {
+      const result = await fetchDocTool.handler({ url });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toBe("Error: url is required");
+      expect(result.structuredContent).toMatchObject({
+        ok: false,
+        error: { code: "INVALID_ARGS", message: "url is required" },
+      });
+      expect(docs.fetchDoc).not.toHaveBeenCalled();
+    },
+  );
+
+  it("trims a padded url before calling Learn", async () => {
+    const url = "https://learn.microsoft.com/sharepoint/dev/embedded/overview";
+    vi.mocked(docs.fetchDoc).mockResolvedValue("# Full page\n\nbody");
+
+    const result = await fetchDocTool.handler({ url: ` \t${url}\r\n ` });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toBe("# Full page\n\nbody");
+    expect(result.structuredContent).toMatchObject({
+      ok: true,
+      data: { url, text: "# Full page\n\nbody" },
+    });
+    expect(docs.fetchDoc).toHaveBeenCalledExactlyOnceWith(url);
   });
 
   it.each([123, {}, [], true, null])(
@@ -119,6 +193,10 @@ describe("docs_fetch", () => {
       const result = await fetchDocTool.handler({ url } as Record<string, unknown>);
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toBe("Error: url is required");
+      expect(result.structuredContent).toMatchObject({
+        ok: false,
+        error: { code: "INVALID_ARGS", message: "url is required" },
+      });
       expect(docs.fetchDoc).not.toHaveBeenCalled();
     },
   );
