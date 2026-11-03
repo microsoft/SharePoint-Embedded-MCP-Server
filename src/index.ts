@@ -33,6 +33,7 @@ import {
   setInstallAttribution,
 } from "./user-agent.js";
 import { PACKAGE_VERSION } from "./version.js";
+import { startUpdateCheck, takePendingUpdateNotice, type UpdateAvailable } from "./update-check.js";
 import type { McpTool, ServerConfig } from "./types.js";
 import { createLogger } from "./logger.js";
 import { redact } from "./logging.js";
@@ -211,6 +212,37 @@ function withDuration(structuredContent: unknown, durationMs: number): unknown {
   return { data: structuredContent, durationMs };
 }
 
+/**
+ * SEC-008 update awareness. When a background npm check has found a newer
+ * published version, append exactly one short notice to the next successful
+ * tool result and mirror it into `structuredContent.updateAvailable`.
+ *
+ * The notice is consumed by the first caller, so it appears once per process.
+ * This never waits on the network: `takePendingUpdateNotice()` only reads
+ * already-resolved in-memory state and returns `null` when the check is
+ * disabled, still running, failed, or found nothing newer.
+ *
+ * When the tool produced no structured content, a fresh `{ updateAvailable }`
+ * object is created rather than dropping the machine-readable twin: a client
+ * that only reads `structuredContent` would otherwise never see the update.
+ */
+function withUpdateNotice(
+  content: { type: "text"; text: string }[],
+  structuredContent: unknown,
+): { content: { type: "text"; text: string }[]; structuredContent: unknown } {
+  const notice = takePendingUpdateNotice();
+  if (!notice) return { content, structuredContent };
+  const updateAvailable: UpdateAvailable = notice.updateAvailable;
+  const merged =
+    structuredContent && typeof structuredContent === "object" && !Array.isArray(structuredContent)
+      ? { ...(structuredContent as Record<string, unknown>), updateAvailable }
+      : { updateAvailable };
+  return {
+    content: [...content, { type: "text" as const, text: notice.text }],
+    structuredContent: merged,
+  };
+}
+
 function validateArgs(args: Record<string, unknown>, tool: McpTool): { ok: true; args: Record<string, unknown> } | { ok: false; result: ReturnType<typeof fail> } {
   if (tool.validateArgs) {
     return { ok: true, args: tool.validateArgs(args) };
@@ -355,10 +387,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const result = await tool.handler(validated.args);
     const durationMs = Date.now() - startTime;
     log(`${name} completed in ${durationMs}ms`);
+    const mapped = result.content.map((c) => ({ type: "text" as const, text: c.text }));
+    const structured = withDuration(result.structuredContent, durationMs);
+    // Only decorate genuinely successful results, so the notice never rides
+    // along with an error payload (and is not consumed by one).
+    const decorated = result.isError === true
+      ? { content: mapped, structuredContent: structured }
+      : withUpdateNotice(mapped, structured);
     return {
-      content: result.content.map((c) => ({ type: "text" as const, text: c.text })),
+      content: decorated.content,
       isError: result.isError,
-      structuredContent: withDuration(result.structuredContent, durationMs),
+      structuredContent: decorated.structuredContent,
     } as const;
   } catch (error) {
     const safeError = toSafeError(error);
@@ -414,6 +453,9 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 export async function startServer(config: ServerConfig) {
   log("Starting SharePoint Embedded MCP Server...");
   attributionEnabled = config.attributionEnabled ?? true;
+  // Do not carry a prior MCP client's host label into startup requests if this
+  // module is reused for another server lifecycle in the same process.
+  setAgentHostAttribution(undefined);
   setInstallAttribution(
     attributionEnabled ? config.installAttribution : undefined,
   );
@@ -450,6 +492,12 @@ export async function startServer(config: ServerConfig) {
   // User-facing startup status. Emitted on stderr (not stdout) for the same
   // reason as log() above: stdout carries the MCP JSON-RPC protocol only.
   console.error("[SPE MCP Server] Started and ready for connections");
+
+  // SEC-008 update awareness. Fire-and-forget: never awaited, never blocks the
+  // handshake or any tool call, and every failure is swallowed inside. When the
+  // check finds a newer published version, a short notice is appended to the
+  // next successful tool result (see withUpdateNotice above).
+  startUpdateCheck({ enabled: config.updateCheck !== false });
 
   if (config.clientId) {
     // Bring-your-own-app mode: the caller has ALREADY pre-created an owning Entra
@@ -511,3 +559,6 @@ export async function startServer(config: ServerConfig) {
     }
   }
 }
+
+/** Test-only hooks. Not part of the public API and not used at runtime. */
+export const __testing = { withUpdateNotice };
