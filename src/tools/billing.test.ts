@@ -91,6 +91,21 @@ describe("billing_check", () => {
 // ─── billing_setup ──────────────────────────────────────────────────────
 
 describe("billing_setup", () => {
+  it("keeps its description concise while preserving setup requirements and warnings", () => {
+    const description = setupBillingTool.description;
+    expect(description.length).toBeGreaterThanOrEqual(10);
+    expect(description.length).toBeLessThanOrEqual(500);
+    expect(description).toContain("Standard (Azure) billing");
+    expect(description).toContain("created as standard");
+    expect(description).toContain("Microsoft.Syntex");
+    expect(description).toContain("Microsoft.Syntex/accounts (RaaS)");
+    expect(description).toContain("Azure CLI");
+    expect(description).toContain("subscription, resource group, and region");
+    expect(description).toContain("Defaults container type, subscription, and resource group from provisioning state");
+    expect(description).toContain("trial types cannot be converted");
+    expect(description).toContain("Standard billing cannot be reverted to trial");
+  });
+
   it("creates the Microsoft.Syntex billing account for a standard CT (confirm=true)", async () => {
     vi.mocked(graph.getContainerType).mockResolvedValue({
       containerTypeId: "ct1", owningAppId: "app1", displayName: "Test",
