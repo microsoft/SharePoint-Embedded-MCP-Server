@@ -15,6 +15,10 @@
  * success, and then probes the derived port with a bounded TCP connect poll.
  * A listener may belong to another process, so startup remains explicitly
  * unverified rather than claiming the launched app owns that URL.
+ *
+ * Shell-free process launch prevents shell interpolation; it does not sandbox
+ * npm lifecycle scripts or project code. Existing local-execution opt-in and
+ * process policy remain the execution boundary.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -206,6 +210,8 @@ export const runLocalTool: McpTool = {
     "Install dependencies and start the scaffolded SharePoint Embedded app locally, returning the " +
     "candidate local URL. Detects Node (npm) or .NET (dotnet) projects and probes the expected port " +
     "(e.g. Vite's 5173). Startup is unverified because a TCP listener may belong to another app. " +
+    "Shell-free launch does not sandbox npm lifecycle scripts or project code; " +
+    "use only projects you intend to execute under the existing local-execution policy. " +
     "Run after scaffolding and hydrating config.",
   inputSchema: {
     type: "object" as const,
