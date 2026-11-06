@@ -126,6 +126,21 @@ describe("container_type_registration_app_grant_remove", () => {
 });
 
 describe("registration app-grant public contract", () => {
+  it("keeps the add description concise without losing grant semantics or defaults", () => {
+    const description = addContainerTypeAppGrantTool.description;
+    expect(description.length).toBeGreaterThanOrEqual(10);
+    expect(description.length).toBeLessThanOrEqual(500);
+    expect(description.trim().replace(/\s+/g, " ").length).toBeLessThanOrEqual(500);
+    expect(description).toContain("delegated/application");
+    expect(description).toContain("Idempotent upsert");
+    expect(description).toContain("same appId's permissions are overwritten");
+    expect(description).toContain("other grants are preserved");
+    expect(description).toContain("container_type_register, which replaces all grants");
+    expect(description).toContain("provisioned container type and owning appId");
+    expect(description).toContain("delegated `full`");
+    expect(description).toContain("application (app-only) `none` (opt-in)");
+  });
+
   it.each([
     [addContainerTypeAppGrantTool, "container_type_registration_app_grant_add", { plane: "control" }, []],
     [listContainerTypeAppGrantsTool, "container_type_registration_app_grants_list", { readOnly: true }, []],

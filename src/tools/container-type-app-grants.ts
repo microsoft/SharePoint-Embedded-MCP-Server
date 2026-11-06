@@ -56,13 +56,10 @@ export const addContainerTypeAppGrantTool: McpTool = {
   name: "container_type_registration_app_grant_add",
   annotations: { plane: "control" },
   description:
-    "Add or update an application permission grant on a SharePoint Embedded container type registration " +
-    "(Microsoft Graph v1.0). Authorizes one consuming app (by appId) to act on the container type with the " +
-    "given delegated/application permissions. Idempotent upsert — re-running for the same appId overwrites its " +
-    "permissions. Defaults the container type to the provisioned one and the appId to the provisioned owning app; " +
-    "delegated permissions default to `full` and application (app-only) permissions default to `none` (opt-in). " +
-    "Use this to authorize additional apps without overwriting existing grants " +
-    "(unlike container_type_register, which replaces the whole collection).",
+    "Add or update one app's delegated/application permission grant on a SharePoint Embedded container type registration " +
+    "(Microsoft Graph v1.0). Idempotent upsert: the same appId's permissions are overwritten; other grants are preserved, " +
+    "unlike container_type_register, which replaces all grants. Defaults: provisioned container type and owning appId; " +
+    "delegated `full`, application (app-only) `none` (opt-in).",
   inputSchema: {
     type: "object" as const,
     properties: {
