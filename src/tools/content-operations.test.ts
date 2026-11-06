@@ -36,6 +36,7 @@ import { createFolderTool } from "../tools/create-folder.js";
 import { searchContentTool } from "../tools/search-content.js";
 import { previewFileTool } from "../tools/preview-file.js";
 import { manageSharingTool } from "../tools/manage-sharing.js";
+import { revokeContentAccessTool } from "../tools/content-access.js";
 import { seedSampleDataTool } from "../tools/seed-sample-data.js";
 
 beforeEach(() => {
@@ -176,17 +177,59 @@ describe("content_sharing_manage", () => {
     });
   });
 
-  it("creates a sharing link", async () => {
+  it("defaults sharing links to view access within the organization", async () => {
     vi.mocked(graph.createSharingLink).mockResolvedValue({
       id: "sl1",
       link: { type: "view", scope: "organization", webUrl: "https://share.example.com/link1" },
     });
 
     const result = await manageSharingTool.handler({
-      containerId: "c1", filePath: "report.pdf", action: "create", linkType: "view",
+      containerId: "c1", filePath: "report.pdf", action: "create",
     });
+    expect(result.isError).toBeFalsy();
+    expect(graph.createSharingLink).toHaveBeenCalledExactlyOnceWith("d1", "item1", "view", "organization");
     expect(result.content[0].text).toContain("Sharing link created");
     expect(result.content[0].text).toContain("https://share.example.com/link1");
+  });
+
+  it.each(["anonymous", "organization", "users"])("preserves explicit %s sharing scope", async (scope) => {
+    vi.mocked(graph.createSharingLink).mockResolvedValue({
+      id: "sl1",
+      link: { type: "edit", scope, webUrl: "https://share.example.com/link1" },
+    });
+
+    const result = await manageSharingTool.handler({
+      containerId: "c1", filePath: "report.pdf", action: "create", linkType: "edit", linkScope: scope,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(graph.createSharingLink).toHaveBeenCalledExactlyOnceWith("d1", "item1", "edit", scope);
+  });
+
+  describe.each(["create", "revoke"])("%s requires content access", (action) => {
+    it.each(["missing", "revoked"])("blocks all Graph effects when content access is %s", async (access) => {
+      if (access === "missing") {
+        delete stateStore.contentAccessGranted;
+      } else {
+        expect(stateStore.contentAccessGranted).toBe(true);
+        const revoked = await revokeContentAccessTool.handler({});
+        expect(revoked.isError).toBeFalsy();
+        expect(stateStore.contentAccessGranted).toBe(false);
+      }
+
+      const result = await manageSharingTool.handler({
+        containerId: "c1", filePath: "report.pdf", action, permissionId: "sl1",
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Content access not enabled");
+      expect(result.content[0].text).toContain("content_access_grant");
+      expect(graph.getContainerDrive).not.toHaveBeenCalled();
+      expect(graph.getDriveItem).not.toHaveBeenCalled();
+      expect(graph.createSharingLink).not.toHaveBeenCalled();
+      expect(graph.listDriveItemPermissions).not.toHaveBeenCalled();
+      expect(graph.revokeSharingLink).not.toHaveBeenCalled();
+    });
   });
 
   it("lists sharing links", async () => {
