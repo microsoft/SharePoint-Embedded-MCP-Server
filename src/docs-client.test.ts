@@ -75,6 +75,47 @@ describe("Learn endpoint resolution", () => {
 });
 
 describe("schema-discovered documentation calls", () => {
+  it.each([
+    "not a URL", "/relative/page", "",
+    "http://learn.microsoft.com/page", "ftp://learn.microsoft.com/page",
+    "https://example.test/page", "https://sub.learn.microsoft.com/page",
+    "https://learn.microsoft.com.example.test/page",
+    "https://user@learn.microsoft.com/page", "https://user:pass@learn.microsoft.com/page",
+    "https://:pass@learn.microsoft.com/page", "https://learn.microsoft.com:8443/page",
+  ])("rejects unsupported page URL %p before any provider work", async (url) => {
+    vi.stubEnv("SPE_LEARN_MCP_URL", "http://localhost:9000/mcp");
+    vi.stubEnv("SPE_ALLOW_INSECURE_DOCS_ENDPOINT", "1");
+    await expect(fetchDoc(url)).rejects.toThrow("url must be an HTTPS URL on learn.microsoft.com");
+    expect(mocks.transport).not.toHaveBeenCalled();
+    expect(mocks.connect).not.toHaveBeenCalled();
+    expect(mocks.listTools).not.toHaveBeenCalled();
+    expect(mocks.callTool).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "https://learn.microsoft.com/page?view=graph-rest-1.0#section",
+    "https://learn.microsoft.com:443/page?view=graph-rest-1.0#section",
+    "https://LEARN.MICROSOFT.COM/page",
+  ])("trims and preserves supported page URL %p with a configured provider", async (url) => {
+    vi.stubEnv("SPE_LEARN_MCP_URL", "http://localhost:9000/mcp");
+    vi.stubEnv("SPE_ALLOW_INSECURE_DOCS_ENDPOINT", "1");
+    expect(await fetchDoc(` \t${url}\r\n `)).toBe("documentation");
+    expect(mocks.transport).toHaveBeenCalledWith(new URL("http://localhost:9000/mcp"));
+    expect(mocks.callTool).toHaveBeenCalledWith(
+      { name: "microsoft_docs_fetch", arguments: { url } },
+      undefined, { timeout: 25000 },
+    );
+  });
+
+  it("rejects unsupported page URLs even when the provider is already connected", async () => {
+    await searchDocs("SPE");
+    mocks.callTool.mockClear();
+    await expect(fetchDoc("https://example.test/page")).rejects.toThrow("url must be an HTTPS URL");
+    expect(mocks.connect).toHaveBeenCalledTimes(1);
+    expect(mocks.listTools).toHaveBeenCalledTimes(1);
+    expect(mocks.callTool).not.toHaveBeenCalled();
+  });
+
   it("reuses one connection and keeps only text blocks in order", async () => {
     mocks.callTool.mockResolvedValue({
       content: [

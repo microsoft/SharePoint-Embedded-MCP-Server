@@ -28,6 +28,24 @@ const SEARCH_TOOL = "microsoft_docs_search";
 const FETCH_TOOL = "microsoft_docs_fetch";
 const CALL_TIMEOUT_MS = 25_000;
 
+export const DOCS_PAGE_URL_ERROR =
+  "url must be an HTTPS URL on learn.microsoft.com without userinfo or a non-default port";
+
+/** Page URLs are independent of the configurable MCP provider endpoint. */
+export function isSupportedDocsPageUrl(value: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(value.trim());
+  } catch {
+    return false;
+  }
+  return parsed.protocol === "https:" &&
+    parsed.hostname === ALLOWED_DOCS_HOST &&
+    parsed.username === "" &&
+    parsed.password === "" &&
+    parsed.port === "";
+}
+
 function isTruthyEnv(value: string | undefined): boolean {
   if (!value) return false;
   return /^(1|true|yes|on)$/i.test(value.trim());
@@ -211,6 +229,10 @@ export async function searchDocs(query: string): Promise<string> {
  * Fetch the full markdown content of a Microsoft Learn documentation page.
  */
 export async function fetchDoc(url: string): Promise<string> {
+  if (!isSupportedDocsPageUrl(url)) {
+    throw new Error(DOCS_PAGE_URL_ERROR);
+  }
+  url = url.trim();
   await connect();
   const tool = resolveTool(FETCH_TOOL, "fetch");
   const args = buildArgs(tool, url, ["url", "uri", "link"]);

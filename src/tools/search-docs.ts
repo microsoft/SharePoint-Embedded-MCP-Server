@@ -13,7 +13,7 @@
  * as an upstream dependency; see docs-client.ts.
  */
 
-import { searchDocs, fetchDoc } from "../docs-client.js";
+import { searchDocs, fetchDoc, isSupportedDocsPageUrl, DOCS_PAGE_URL_ERROR } from "../docs-client.js";
 import { defineTool, z } from "../tooling/define-tool.js";
 import { fail, ok } from "../responses.js";
 
@@ -30,13 +30,15 @@ const searchDocsSchema = z.object({
 });
 
 const fetchDocSchema = z.object({
-  url: z.string().trim().min(1, "url is required").describe("The Microsoft Learn documentation page URL to fetch in full."),
+  url: z.string().trim().min(1, "url is required")
+    .refine((url) => url.length === 0 || isSupportedDocsPageUrl(url), DOCS_PAGE_URL_ERROR)
+    .describe("The HTTPS documentation page URL on exact learn.microsoft.com, without userinfo or a non-default port, to fetch in full."),
 });
 
 function firstValidationMessage(error: z.ZodError): string {
   const issue = error.issues[0];
   if (issue?.path[0] === "query") return "query is required";
-  if (issue?.path[0] === "url") return "url is required";
+  if (issue?.path[0] === "url") return issue.code === "custom" ? issue.message : "url is required";
   return issue?.message ?? "Invalid documentation tool arguments";
 }
 
@@ -71,7 +73,7 @@ export const fetchDocTool = defineTool({
   name: "docs_fetch",
   description:
     "Fetch the full markdown content of a Microsoft Learn documentation page by URL " +
-    "(typically a 'learn.microsoft.com' URL returned by docs_search). " +
+    "(HTTPS on exact learn.microsoft.com, without userinfo or a non-default port). " +
     "Use when a search excerpt is not enough to answer accurately.",
   annotations: {
     readOnly: true,
